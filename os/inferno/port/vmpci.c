@@ -29,12 +29,14 @@
  * function it had loses bus
  * mastering, goes from the guest's domain straight into the IOMMU's
  * blocking domain (iommurelease), where DMA it still makes reaches
- * nothing, and is reset by FLR where it has one; it stays blocked
+ * nothing, and is reset (pcifnreset: FLR, or a secondary bus reset
+ * where it is alone below its bridge); it stays blocked
  * until it is assigned again or claimed through #Q.
  *
  * Not done: I/O BARs, MSI (only MSI-X), INTx, extended configuration
  * space (the guest sees 256 bytes, through either), reset on
- * assignment, a reset for functions without FLR, and taking a
+ * assignment, a reset for a function that has no FLR and shares its
+ * bus, and taking a
  * function back from a host driver -- assign
  * only functions the host has no driver for.  An interrupt raised on
  * a processor other than the vCPU's is seen at the vCPU's next exit,
@@ -153,14 +155,17 @@ vmpcifree(void *a)
 static void
 release(Vpcidev *d)
 {
-	int j, blocked, flr;
+	int j, blocked;
+	char *how;
 
 	for(j = 0; j < d->msixn; j++)
 		if(d->msix[j].hosted){
 			pcimsixintrdisable(d->p, j, msixintr, &d->msix[j], d->name);
 			d->msix[j].hosted = 0;
 		}
-	pcicfgw16(d->p, PciPCR, pcicfgr16(d->p, PciPCR) & ~MASen);
+	/* the guest wrote the command register directly; the Pcidev's copy follows it */
+	d->p->pcr = pcicfgr16(d->p, PciPCR);
+	pcidisable(d->p);
 	blocked = 0;
 	if(d->dom != nil){
 		if(!waserror()){
@@ -175,9 +180,9 @@ release(Vpcidev *d)
 		}
 		d->dom = nil;
 	}
-	flr = pciflr(d->p);
-	print("%s: released: %s, %s\n", d->name,
-		blocked ? "blocked" : "NOT blocked", flr ? "reset by FLR" : "no FLR");
+	how = pcifnreset(d->p);
+	print("%s: released: %s, %s%s\n", d->name,
+		blocked ? "blocked" : "NOT blocked", how != nil ? "reset by " : "not reset", how != nil ? how : "");
 }
 
 /*

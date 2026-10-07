@@ -235,13 +235,16 @@ str2int(s: string): (int, string)
 # QEMU's edu device, a DMA engine driven through BAR0, stands in for a
 # function that DMAs after its guest is done.  Its buffer is loaded
 # with a pattern through a #Q domain of this test's (pages A and B at
-# IOVA Iova), it is assigned to a machine that is then killed, and,
-# bus mastering turned back on behind the kernel's back, told to write
-# its buffer to page B's host physical address.  Released into the
-# host domain, as before, that lands; released into the blocking
+# IOVA Iova), it is assigned to a machine that is then killed.  The
+# release must have reset it (edu has no FLR; a secondary bus reset,
+# with scripts/qemu-patches/0011's reset in the model): its BAR
+# answers again and a register the test set is clear.  Then, bus
+# mastering turned back on behind the kernel's back, it is told to
+# write its buffer to page B's host physical address.  Released into
+# the host domain, as before, that lands; released into the blocking
 # domain it must fault and leave page B as it was.  Then the test
-# claims edu back into its own domain, from the blocking one, and the
-# same DMA through the domain must arrive.  Every line starts VMTEST.
+# claims edu back into its own domain, from the blocking one, and a
+# DMA through the domain must arrive.  Every line starts VMTEST.
 
 Eduvid: con 16r1234;
 Edudid: con 16r11e8;
@@ -425,6 +428,7 @@ releasetest()
 	}
 	sys->print("VMTEST: release: edu %s assigned to machine %s\n", edu, string nb[0:n]);
 	busmaster(dir, 1);		# as the guest's driver would
+	barwr(bar, 16r04, 4, big 16r5a5a1234);	# and some state of its own
 	if(sys->fprint(vctl, "kill") < 0){
 		fail(sys->sprint("release: kill: %r"));
 		return;
@@ -432,9 +436,19 @@ releasetest()
 	vctl = nil;
 	sys->print("VMTEST: release: machine killed; edu in %s", findin(edu));
 
-	# edu DMAs after it: to page B, by its host physical address
-	zero := array[256] of {* => byte 0};
-	sys->pwrite(mem, zero, len zero, big (Iova+4096));
+	# reset (edu has no FLR; alone below its root port, a secondary
+	# bus reset): its registers back to nothing, its BAR put back
+	id := barrd(bar, 0, 4);
+	a4 := barrd(bar, 16r04, 4);
+	if(id == big 16r010000ed && a4 == big 0)
+		sys->print("VMTEST: RELEASE-RESET-OK edu answers at its BAR (ident %bux) and its liveness register is clear\n", id);
+	else
+		fail(sys->sprint("release: reset: ident %bux liveness %bux (%bux before)", id, a4, ~big 16r5a5a1234 & big 16rffffffff));
+
+	# edu DMAs after it: to page B, by its host physical address; page B
+	# holds a pattern of its own, which a DMA that landed would change
+	fill := array[256] of {* => byte 16r3c};
+	sys->pwrite(mem, fill, len fill, big (Iova+4096));
 	nf := nlines(readall("/dev/iommu/faults"));
 	busmaster(dir, 1);
 	edudma(bar, big 16r40000, pageb, len pat, 3);
@@ -442,7 +456,7 @@ releasetest()
 	sys->pread(mem, got, len got, big (Iova+4096));
 	untouched := 1;
 	for(i = 0; i < len got; i++)
-		if(got[i] != byte 0)
+		if(got[i] != byte 16r3c)
 			untouched = 0;
 	nf = nlines(readall("/dev/iommu/faults")) - nf;
 	if(untouched && nf > 0)
@@ -455,6 +469,8 @@ releasetest()
 		fail("release: claim: " + e);
 		return;
 	}
+	# its buffer, cleared by the reset, loaded again from page A
+	edudma(bar, big Iova, big 16r40000, len pat, 1);
 	edudma(bar, big 16r40000, big (Iova+4096), len pat, 3);
 	sys->pread(mem, got, len got, big (Iova+4096));
 	same := 1;

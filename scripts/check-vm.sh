@@ -90,7 +90,8 @@ else
 fi
 # device release (phase 17): edu, assigned to a machine that is then
 # killed, DMAs to a host page; it must be in the blocking domain and
-# fault, then be claimable from it.  On VT-d (this boot) and AMD-Vi.
+# fault, have been reset (a secondary bus reset: edu has no FLR), then
+# be claimable from it.  On VT-d (this boot) and AMD-Vi.
 for iommu in intel amd; do
 	name=vt-d
 	log="$WORK/m1.log"
@@ -100,7 +101,8 @@ for iommu in intel amd; do
 		VMHOST_IOMMU=amd sh "$ROOT/scripts/vmhost.sh" run 120 >"$log" 2>&1 || true
 	fi
 	if grep -q 'released: blocked' "$log" && grep -q 'VMTEST: RELEASE-BLOCKED-OK' "$log" \
-	&& grep -q 'VMTEST: RELEASE-CLAIMED-OK' "$log" && ! grep -q 'VMTEST: FAIL release' "$log"; then
+	&& grep -q 'VMTEST: RELEASE-CLAIMED-OK' "$log" && grep -q 'VMTEST: RELEASE-RESET-OK' "$log" \
+	&& ! grep -q 'VMTEST: FAIL release' "$log"; then
 		echo "check-vm: device release ($name): pass"
 		grep 'released: \|VMTEST: release\|VMTEST: RELEASE' "$log" | sed 's/^/	/'
 	else

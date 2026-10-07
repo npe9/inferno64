@@ -1,0 +1,42 @@
+--- a/hw/misc/edu.c
++++ b/hw/misc/edu.c
+@@ -387,6 +387,31 @@
+     memory_region_init_io(&edu->mmio, OBJECT(edu), &edu_mmio_ops, edu,
+                     "edu-mmio", 1 * MiB);
+     pci_register_bar(pdev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY, &edu->mmio);
++}
++
++/*
++ * A reset -- the bus's (a bridge's secondary bus reset) or the
++ * machine's -- returns the card to how realize left it: no DMA under
++ * way or pending, its buffer, registers and interrupt status clear.
++ * Without it the PCI core cleared only the configuration space and the
++ * card went on as before, which no real function does.
++ */
++static void edu_reset(DeviceState *dev)
++{
++    EduState *edu = EDU(dev);
++
++    timer_del(&edu->dma_timer);
++    memset(&edu->dma, 0, sizeof(edu->dma));
++    memset(edu->dma_buf, 0, sizeof(edu->dma_buf));
++    qemu_mutex_lock(&edu->thr_mutex);
++    edu->fact = 0;
++    edu->status = 0;
++    qemu_mutex_unlock(&edu->thr_mutex);
++    edu->addr4 = 0;
++    if (edu->irq_status) {
++        edu_lower_irq(edu, edu->irq_status);
++    }
++    edu->irq_status = 0;
+ }
+ 
+ static void pci_edu_uninit(PCIDevice *pdev)
+@@ -422,6 +447,7 @@
+ 
+     k->realize = pci_edu_realize;
+     k->exit = pci_edu_uninit;
++    device_class_set_legacy_reset(dc, edu_reset);
+     k->vendor_id = PCI_VENDOR_ID_QEMU;
+     k->device_id = 0x11e8;
+     k->revision = 0x10;

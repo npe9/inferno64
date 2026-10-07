@@ -558,10 +558,35 @@ ends, "vm0.PCI.5.0.0: released: blocked, reset by FLR", and it is
 assigned again to the next boot, whose console it carries
 ("device release and reuse: pass"); check-styxvm's M9 releases it
 the same way, and check-vf's VFs of the 82576 and the 82599, each
-with FLR, pass.  Not yet:
-a reset for functions without FLR (the PM capability's D3hot, a
-secondary bus reset), and a function that DMAs on its own after
-release (the misbehaving device of phase 16; edu only DMAs when told).
+with FLR, pass.
+.IP
+The reset, then, on the PCI layer this kernel already had rather than
+beside it: the release stops the function with
+.CW pcidisable
+(MSI, MSI-X, bus mastering, keeping the Pcidev's copy of the command
+register), and
+.CW pcifnreset
+resets it by FLR
+.CW pciflr ) (
+or, for a function alone below its bridge, a secondary bus reset
+.CW pcisbr ), (
+both putting back the configuration the host keeps in the Pcidev
+.CW pcirestore , (
+taken out of
+.CW pcienable 's
+return from D3, which did the same).  QEMU's edu had no reset at all:
+a bus reset cleared its configuration space and left its registers,
+DMA buffer and interrupt status, which no real function does;
+.CW scripts/qemu-patches/0011
+gives it one.  check-vm's release test (SVM and VMX, QEMU TCG) now
+sets one of edu's registers before the machine is killed and finds it
+clear after: "vm0.PCI.4.0.0: released: blocked, reset by secondary bus
+reset", "RELEASE-RESET-OK edu answers at its BAR (ident 10000ed) and
+its liveness register is clear", on VT-d and on AMD-Vi.  Not yet: a
+function with neither, or sharing its bus (the PM capability's D3hot
+reset, where NoSoftRst is clear: no bench function has one without
+FLR), and a function that DMAs on its own after release (the
+misbehaving device of phase 16; edu only DMAs when told).
 .IP \(bu 2
 Interrupt virtualization.  Interrupts reach guests by injection only:
 no APIC virtualization or posted interrupts (VMX), no AVIC (SVM).

@@ -992,6 +992,27 @@ matchhtcap(Pcidev *p, int cap, int off, int arg)
 	return (cap & mask) != arg;
 }
 
+/*
+ * Put back the configuration the host keeps in the Pcidev -- BARs,
+ * interrupt line, latency, cache line, then the command register --
+ * after something cleared it: D3, a reset.
+ */
+static void
+pcirestore(Pcidev *p)
+{
+	int i;
+
+	for(i = 0; i < nelem(p->mem); i++){
+		if(p->mem[i].size == 0)
+			continue;
+		pcisetbar(p, PciBAR0+i*4, p->mem[i].bar);
+	}
+	pcicfgw8(p, PciINTL, p->intl);
+	pcicfgw8(p, PciLTR, p->ltr);
+	pcicfgw8(p, PciCLS, p->cls);
+	pcicfgw16(p, PciPCR, p->pcr);
+}
+
 static void
 pcidelay(int ms)
 {
@@ -1005,32 +1026,70 @@ pcidelay(int ms)
  * Function-level reset (PCIe base specification, 6.6.2): wait for the
  * function's outstanding transactions, start the reset, wait the 100
  * ms the specification gives it, and put back what the host had
- * configured -- BARs, cache line and latency, interrupt line, then the
- * command register -- which the reset cleared.  Returns 0 for a
- * function without FLR.
+ * configured (pcirestore, from the Pcidev, as pcienable does after
+ * D3), which the reset cleared.  Returns 0 for a function without
+ * FLR.  The caller has stopped the function first (pcidisable).
  */
 int
 pciflr(Pcidev *p)
 {
-	u32int save[16];
 	int cap, i;
 
 	cap = pcicap(p, PciCapPCIe);
 	if(cap < 0 || (pcicfgr32(p, cap+PcieDEVCAP) & 1<<28) == 0)
 		return 0;
-	for(i = 0; i < nelem(save); i++)
-		save[i] = pcicfgr32(p, 4*i);
 	for(i = 0; i < 100 && (pcicfgr16(p, cap+PcieDEVSTS) & 1<<5) != 0; i++)
 		pcidelay(1);	/* transactions pending */
 	pcicfgw16(p, cap+PcieDEVCTL, pcicfgr16(p, cap+PcieDEVCTL) | 1<<15);
 	pcidelay(100);
 	for(i = 0; i < 1000 && (pcicfgr32(p, 0) & 0xFFFF) == 0xFFFF; i++)
 		pcidelay(1);
-	for(i = 3; i < nelem(save); i++)
-		if(i != 10 && i != 11)		/* CardBus CIS, subsystem: read-only */
-			pcicfgw32(p, 4*i, save[i]);
-	pcicfgw16(p, PciPCR, save[1] & 0xFFFF);
+	pcirestore(p);
 	return 1;
+}
+
+/*
+ * Secondary bus reset (PCI-to-PCI bridge specification, 3.2.5.17):
+ * the bridge above p resets everything below it, so only when p is
+ * all that is there.  The reset held 2 ms (Trst is 1 ms), then the
+ * 100 ms a function gets to come back, then the host's configuration
+ * put back.  Returns 0 where it cannot be done.
+ */
+int
+pcisbr(Pcidev *p)
+{
+	Pcidev *b, *q;
+	int i;
+
+	b = p->parent;
+	if(b == nil || b->bridge == nil)
+		return 0;
+	for(q = pcilist; q != nil; q = q->list)
+		if(q != p && q->parent == b)
+			return 0;
+	pcicfgw16(b, PciBCR, pcicfgr16(b, PciBCR) | 1<<6);
+	pcidelay(2);
+	pcicfgw16(b, PciBCR, pcicfgr16(b, PciBCR) & ~(1<<6));
+	pcidelay(100);
+	for(i = 0; i < 1000 && (pcicfgr32(p, 0) & 0xFFFF) == 0xFFFF; i++)
+		pcidelay(1);
+	pcirestore(p);
+	return 1;
+}
+
+/*
+ * Reset one function as well as can be done without touching others:
+ * FLR, else a secondary bus reset where it is alone below its bridge.
+ * Says which, or nil.
+ */
+char*
+pcifnreset(Pcidev *p)
+{
+	if(pciflr(p))
+		return "FLR";
+	if(pcisbr(p))
+		return "secondary bus reset";
+	return nil;
 }
 
 int
@@ -1305,18 +1364,7 @@ pcienable(Pcidev *p)
 	case 3:
 		print("pcienable %T: wakeup from D3\n", p->tbdf);
 		delay(100);		/* D3: minimum delay 50ms */
-
-		/* restore registers */
-		for(i = 0; i < nelem(p->mem); i++){
-			if(p->mem[i].size == 0)
-				continue;
-			pcisetbar(p, PciBAR0+i*4, p->mem[i].bar);
-		}
-
-		pcicfgw8(p, PciINTL, p->intl);
-		pcicfgw8(p, PciLTR, p->ltr);
-		pcicfgw8(p, PciCLS, p->cls);
-		pcicfgw16(p, PciPCR, p->pcr);
+		pcirestore(p);
 		break;
 	}
 
