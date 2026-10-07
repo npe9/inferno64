@@ -8551,3 +8551,52 @@ whether a given board will push it, and a reserve that is sometimes
 absent means the two ends can disagree about msize \- which is a
 negotiation fault rather than a seven per cent one.
 .B "Worth having written down rather than silently paid."
+.NH 2
+And the band is quiet, so the abandoned frames are ours
+.PP
+The control that had been attempted twice and botched twice \- once by
+.BR "^R^R" ,
+which reboots the kernel rather than silencing it, and once by a build
+that could not produce a hex \- was finally taken.
+.B "The satellite carries the SHELL image,"
+which the flash-size fix above made buildable again, so nothing is
+attached to
+.B #a
+and its radio never keys.  The ground ran its station against it for
+four minutes:
+.DS
+.CW "styx: no link to N0CALL-2"
+.CW "rssi -125 offset -102 csthr -90 last 0"
+.CW "sent 10 recv 0"
+.CW "crcerr 0 toobig 0 txtimeout 0"
+.CW "rxoverflow 0 txunderflow 0 txnever 0"
+.CW "rxstall 0 rxpartial 0 resume 0 rxstale 0 rxunder 0"
+.CW "status 0 crcbad 0"
+.CW "ARMV7M-STYX-NOLINK"
+.DE
+.B "Nothing arrived."
+.B status
+is the count of frames whose appended bytes were read and it is
+.BR 0 ,
+so not one frame reached the part \- no partials, no CRC failures, no
+out-of-range lengths.
+.PP
+.B "So the 82-byte and 125-byte frames that get abandoned are OURS."
+They are not something else on an unlicensed band, which was the last
+live hypothesis.  With the far end's
+.B "txunderflow 0 txnever 0"
+saying the sender transmitted them in full, and the receiving end
+abandoning them part way, the loss is in the receiver's demodulation of
+our own signal.
+.PP
+.B "Which makes it item 9 and nothing else:"
+error rate against attenuation, on cables, with the antennas off.  The
+counters to plot are
+.B rxstale
+and
+.B crcbad
+against attenuation, and the two numbers to beware of are leakage \-
+above about 40dB the air path between two boards a metre apart will
+dominate and the curve will floor \- and the CC1120's own +14dBm
+absolute maximum input, which is why fixed attenuation should be
+permanent and the sweep taken on top of it.
