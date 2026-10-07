@@ -11691,3 +11691,39 @@ What is NOT closed:
 can no longer PRODUCE the shape, but every object has to be rebuilt by the new
 compiler for the existing instances to go away, and only the raspi3b kernel has
 been.
+.NH 3
+The other aarch64 boards, because a compiler change is not one board's business
+.LP
+.CW 7c
+and
+.CW 7l
+generate code for every
+.CW OBJTYPE=aarch64
+target in this tree, and only
+.CW raspi3b
+had been verified.  There are two others:
+.P1
+virtarm64   builds; under QEMU -M virt cortex-a72 reaches an
+            interactive shell with its own markers passing --
+            KPROF-DONE, DIS-STRESS-OK, HELLO-FROM-SH, VIRT-OK,
+            ROOT-APPS-OK, ROOT-CMDS-OK
+raspi4      builds, 147 diagnostics all pre-existing, no errors,
+            and umulladd reports 0 candidates
+.P2
+.CW raspi4
+is NOT booted \(em no board on this desk and no QEMU machine for it \(em so it
+is a build and a scan and is offered as nothing more.
+.PP
+Doing this found a
+.CW kbuild
+bug of the kind the file already warns about:
+.CW kernel8.img
+was hardcoded, so
+.CW CONF=virtarm64
+linked
+.CW ivirtarm64
+correctly, installed it, and then kbuild said "the build failed".
+.B "A tool that reports a correct build as a failure is a tool that gets ignored"
+\(em which is written down in that same file about the link-count guard, which
+demanded exactly one link and refused good builds.  Twice now in one file.  It
+asks the mkfile for the target instead of assuming.
