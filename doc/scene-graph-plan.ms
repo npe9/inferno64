@@ -597,6 +597,44 @@ the fixup, which is why the symptom is board-only.
 .B "and is not ours to change;"
 it is recorded here so whoever owns it has the line numbers and knows
 the symbol resolves.
+.PP
+.B "AND ELEVEN OF TWELVE WORKTREES HAVE THE DEFECT."
+Surveyed comment-aware, because comment state is not line-local and the
+live fix carries an extra condition
+.CW ( "if(p == heapmem && c == ptr)" ):
+.DS
+.CW
+	raspi3b-port                                   FIXED
+	cloud-port genesize inferno-bt inferno-ports
+	jit-research multicore nixos parallelgc
+	pr-bluetooth rio-pi-tk xip                     DEFECT
+.R
+.DE
+.LP
+Two of those \(em
+.CW jit-research
+and
+.CW parallelgc
+\(em the raspi3b session's own survey had missed.
+.CW parallelgc
+is the one to note beside
+.CW multicore :
+a branch whose subject is the garbage collector, missing the fixup that
+keeps the collector's own sweep cursor valid across a free. And
+.CW multicore
+runs
+.CW parallelvm=1
+by default, so a second context freeing concurrently WIDENS the window
+in which a free can swallow the cursor between quanta.
+.PP
+.B "The survey's control is what makes it worth quoting."
+The first version of this check reported 0/2 for all twelve
+.I including
+.CW raspi3b-port ,
+which is fixed \(em confidently and uniformly wrong, and a uniform clean
+result is the dangerous kind. Before trusting a survey over N cases,
+make it classify the one case whose answer is already known; if it
+cannot, the other N\(mi1 are noise that looks like a result.
 .NH 1
 Item 5: where this work should live, which is a decision and not a task
 .PP
