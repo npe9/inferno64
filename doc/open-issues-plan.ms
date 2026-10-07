@@ -11918,3 +11918,86 @@ What must NOT happen \(em the same rule H3 states for
 .CW 8l
 \(em is this gap being closed by argument.  A flip paced into bucket 0 is
 PLAUSIBLY tear-free and that is not the same as being tear-free.
+.NH 3
+H2: the zero-fill is free, measured, so the three candidates are still the only three
+.LP
+H2 priced
+.CW clustok()
+in reads and stopped.  But reads are only half of what
+.CW falloc()
+does: having allocated a cluster it ZERO-FILLS the whole thing \(em
+.CW getosect ,
+.CW BMOD ,
+.CW putsect
+over every sector \(em and the caller then writes those same sectors with real
+data.
+.CW getosect
+passes
+.CW rflag
+0 so nothing is read in, but the tracks are dirty, so whether that costs a
+SECOND PASS over the medium depends on whether they survive in dossrv's track
+cache until the data arrives.  A question about cache size against cluster
+size, which is a measurement.
+.PP
+.B "Both readings were written down before the numbers existed,"
+in
+.CW tests/dossrv-bytes ,
+so the conclusion could not be fitted to them: 1.0x means the fill is absorbed
+and H2's three candidates remain the only ones; 2.0x means a saving exists that
+does not weaken
+.CW clustok
+at all, namely skipping the fill for a cluster the caller is about to overwrite
+completely.
+.PP
+2MB payload, 4096 sectors, 16KB clusters, on
+.CW sdmem (3):
+.P1
+arm              reads ops/secs    writes ops/secs
+clustok ON        133 / 4141        459 / 4131
+clustok OFF         5 /   45        459 / 4131
+.P2
+.B "The writes are IDENTICAL, and 1.008x the payload."
+Twenty track buffers are enough, so the zero-fill never reaches the medium and
+costs CPU only.
+.B "There is no saving there and the 2.0x branch is dead."
+.PP
+.B "And clustok's cost is EXACTLY 1.00x the payload:"
+4141 \- 45 = 4096 sectors in 133 \- 5 = 128 operations, one 32-sector read per
+cluster allocated.  Total traffic 8272 sectors against 4096, so the check
+exactly DOUBLES the bytes a sequential write moves.  H2 predicted that from the
+code and it is now measured instead of inferred.
+.PP
+So H2 is unchanged in substance and better grounded: the only lever is
+.CW clustok
+itself, and every way to move it weakens detection on a premise that needs the
+failing card.
+.NH 3
+Two of my own bugs in that test, both caught by its output and not by reading
+.LP
+.IP \(bu
+.B "/tmp is not writable by the poller's user,"
+and
+.CW "mkdir: permission denied"
+is the whole of the diagnosis.  The log goes to the host worktree over styx, as
+.CW tests/dossrv-badclust
+already does.
+.IP \(bu
+.B "`arm \(aa\(aa \(aalabel\(aa' passes dossrv an EMPTY POSITIONAL ARGUMENT,"
+and
+.CW dossrv
+refuses a stray argument on purpose \(em
+.CW dossrv-badclust
+records that it used to ignore one silently and mount on its default
+.CW /n/dos ,
+which looked like success.  So the no-flag arm mounted nothing, wrote nothing
+and reported 0 sectors, with
+.CW "unmount: not mounted"
+three lines up as the only hint.
+.B "A zero that was my shell quoting and not a result."
+The label now comes first and the flags are
+.CW "${tl $*}" :
+an empty list expands to no argument, an empty string IS an argument.
+.PP
+Both are the same shape as the rest of this session: a confident zero that came
+from the instrument rather than from the subject.  The thing that caught them
+both was having a second arm to disagree with.
