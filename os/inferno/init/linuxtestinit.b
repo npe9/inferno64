@@ -44,6 +44,7 @@ Init: module
 init()
 {
 	sys = load Sys Sys->PATH;
+	setclock();
 	sys->bind("#c", "/dev", Sys->MAFTER);	# /dev/user, which memfs takes its owner from
 	sys->bind("#H", "/dev", Sys->MAFTER);
 	sys->bind("#Q", "/dev", Sys->MAFTER);
@@ -76,7 +77,7 @@ init()
 	# characters a line, and quietly drops the rest
 	args := "-s" :: "7200" :: "-m" :: "256" :: "-q" :: "LINUXGUEST: ran" :: "-d" :: "20"
 		:: "-i" :: "/guest/initramfs.cpio"
-		:: "-t" :: "echo LINUXGUEST: typed; uname -sr; for d in /sys/bus/pci/devices/*; do echo LINUXGUEST: pci $d `cat $d/vendor $d/device`; done; ls /sys/bus/virtio/devices; grep -iE 'virtio|LOC|timer|ttyS' /proc/interrupts; ls -l /sys/bus/virtio/devices/virtio0/driver; dmesg | grep -iE 'virtio|vport|hvc|console' | tail -12\necho hello-from-the-guest > /dev/hvc0 && echo LINUXGUEST: wrote hvc0\nif [ -b /dev/vda ]; then echo LINUXGUEST: vda says $(dd if=/dev/vda bs=512 count=1 2>/dev/null | head -c 19); echo guest-wrote-this | dd of=/dev/vda bs=512 seek=1 conv=sync,fsync 2>/dev/null && echo LINUXGUEST: wrote vda; fi\nif [ -b /dev/vdb ]; then mke2fs -q /dev/vdb && mkdir -p /mnt && mount -t ext2 /dev/vdb /mnt && cp -a /bin /lib /init /mnt/ && mkdir /mnt/proc /mnt/sys /mnt/dev /mnt/tmp /mnt/newroot && touch /mnt/ONDISK && umount /mnt && echo LINUXGUEST: made a root on vdb; fi\nif [ -e /sys/class/net/eth0 ]; then ip link set eth0 up; udhcpc -i eth0 -n -q -t 3 -s /bin/true 2>&1 | sed 's/^/LINUXGUEST: dhcp /'; echo LINUXGUEST: eth0 rx $(cat /sys/class/net/eth0/statistics/rx_packets) packets $(cat /sys/class/net/eth0/statistics/rx_length_errors) length errors tx $(cat /sys/class/net/eth0/statistics/tx_packets); fi\n/bin/acguest; echo LINUXGUEST: acguest status $?; echo LINUXGUEST: \"r\"an"
+		:: "-t" :: "echo LINUXGUEST: typed; uname -sr; for d in /sys/bus/pci/devices/*; do echo LINUXGUEST: pci $d `cat $d/vendor $d/device`; done; ls /sys/bus/virtio/devices; grep -iE 'virtio|LOC|timer|ttyS' /proc/interrupts; ls -l /sys/bus/virtio/devices/virtio0/driver; dmesg | grep -iE 'virtio|vport|hvc|console' | tail -12\necho hello-from-the-guest > /dev/hvc0 && echo LINUXGUEST: wrote hvc0\nif [ -b /dev/vda ]; then echo LINUXGUEST: vda says $(dd if=/dev/vda bs=512 count=1 2>/dev/null | head -c 19); echo guest-wrote-this | dd of=/dev/vda bs=512 seek=1 conv=sync,fsync 2>/dev/null && echo LINUXGUEST: wrote vda; fi\nif [ -b /dev/vdb ]; then mke2fs -q /dev/vdb && mkdir -p /mnt && mount -t ext2 /dev/vdb /mnt && cp -a /bin /lib /init /mnt/ && mkdir /mnt/proc /mnt/sys /mnt/dev /mnt/tmp /mnt/newroot && touch /mnt/ONDISK && umount /mnt && echo LINUXGUEST: made a root on vdb; fi\nif [ -e /sys/class/net/eth0 ]; then ip link set eth0 up; udhcpc -i eth0 -n -q -t 3 -s /bin/true 2>&1 | sed 's/^/LINUXGUEST: dhcp /'; echo LINUXGUEST: eth0 rx $(cat /sys/class/net/eth0/statistics/rx_packets) packets $(cat /sys/class/net/eth0/statistics/rx_length_errors) length errors tx $(cat /sys/class/net/eth0/statistics/tx_packets); fi\n/bin/acguest; echo LINUXGUEST: acguest status $?; echo LINUXGUEST: clocksource $(cat /sys/devices/system/clocksource/clocksource0/current_clocksource); dmesg | grep -i 'kvm-clock' | head -3 | sed 's/^/LINUXGUEST: /'; echo LINUXGUEST: epoch $(date +%s); echo LINUXGUEST: \"r\"an"
 		:: "/guest/vmlinuz" :: nil;
 	{
 		vmlinux->init(nil, "vmlinux" :: concat(assign, args));
@@ -184,4 +185,22 @@ readall(path: string): string
 	while((n := sys->read(fd, buf, len buf)) > 0)
 		s += string buf[0:n];
 	return s;
+}
+
+# The host's time of day from the hardware clock, as Plan 9's init sets
+# it: #r/rtc's seconds into #c/time.  Until then the kernel's clock
+# counts from boot, and the guests' wall clock (kvmclock's record,
+# pc/vmplat.c) is taken from it.
+setclock()
+{
+	fd := sys->open("#r/rtc", Sys->OREAD);
+	if(fd == nil)
+		return;
+	b := array[64] of byte;
+	n := sys->read(fd, b, len b);
+	if(n <= 0 || big string b[0:n] <= big 16r20000000)
+		return;		# not set
+	tfd := sys->open("#c/time", Sys->OWRITE);
+	if(tfd == nil || sys->write(tfd, b[0:n], n) != n)
+		sys->print("init: setting the clock: %r\n");
 }

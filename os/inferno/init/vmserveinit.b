@@ -26,6 +26,7 @@ Init: module
 init()
 {
 	sys = load Sys Sys->PATH;
+	setclock();
 	sys->bind("#H", "/dev", Sys->MAFTER);
 	sys->bind("#Q", "/dev", Sys->MAFTER);
 	sys->bind("#$", "/dev", Sys->MAFTER);
@@ -85,4 +86,22 @@ init()
 			if(len hd l > 5 && ((hd l)[0:5] == "txck " || (hd l)[0:4] == "tso " || (hd l)[0:3] == "rxq"))
 				sys->print("VMSERVE: ether0 %s\n", hd l);
 	}
+}
+
+# The host's time of day from the hardware clock, as Plan 9's init sets
+# it: #r/rtc's seconds into #c/time.  Until then the kernel's clock
+# counts from boot, and the guests' wall clock (kvmclock's record,
+# pc/vmplat.c) is taken from it.
+setclock()
+{
+	fd := sys->open("#r/rtc", Sys->OREAD);
+	if(fd == nil)
+		return;
+	b := array[64] of byte;
+	n := sys->read(fd, b, len b);
+	if(n <= 0 || big string b[0:n] <= big 16r20000000)
+		return;		# not set
+	tfd := sys->open("#c/time", Sys->OWRITE);
+	if(tfd == nil || sys->write(tfd, b[0:n], n) != n)
+		sys->print("init: setting the clock: %r\n");
 }

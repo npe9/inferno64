@@ -77,6 +77,14 @@ struct Plat
 	uvlong	nipi;
 	int	ioignore;
 	uvlong	tschz;
+
+	/* the paravirtual clock (kvmclock) */
+	uvlong	tscboot;	/* the TSC when the machine was made: its time 0 */
+	vlong	todboot;	/* the host's time of day then, ns */
+	u32int	pvmul;		/* TSC ticks to ns: (t << pvshift) * pvmul >> 32 */
+	int	pvshift;
+	uvlong	pvtime[Maxvcpu];	/* each vCPU's MSR_KVM_SYSTEM_TIME */
+	uvlong	pvwall;		/* MSR_KVM_WALL_CLOCK */
 	Rendez	consr;		/* readers of the console wait here */
 	int	hungup;
 
@@ -304,6 +312,134 @@ vmplatsipipending(Vcpu *v)
 	return PLAT(v->vm)->sipi[v->id] >= 0;
 }
 
+/*
+ * The paravirtual clock: KVM's (Linux's Documentation/virt/kvm/x86/
+ * msr.rst, "kvmclock"), the one Linux guests know.  The guest runs on
+ * the host's TSC, unoffset, so one record per vCPU, written when the
+ * guest gives its address, says it all: nanoseconds since the machine
+ * was made at a TSC value, and the scale from TSC ticks to
+ * nanoseconds; with the stable bit the guest needs no more.  The
+ * wall clock record is the host's time of day at the machine's time 0.
+ * CPUID offers it at 0x40000100 (KVM's signature, a block after this
+ * hypervisor's own), with nothing else of KVM's.
+ */
+enum {
+	MsrKvmWall	= 0x4B564D00,
+	MsrKvmTime	= 0x4B564D01,
+	MsrKvmWallOld	= 0x11,
+	MsrKvmTimeOld	= 0x12,
+
+	Kvmbase		= 0x40000100,
+	KvmClocksource2	= 1<<3,
+	KvmStable	= 1<<24,
+
+	PvTscStable	= 1<<0,		/* the record's flags */
+};
+
+static uchar*	gpaptr(Vm*, uvlong, int);
+
+/* the scale from hz ticks to ns, as KVM's kvm_get_time_scale makes it */
+static void
+pvclockinit(Plat *p)
+{
+	uvlong tps, scaled;
+	u32int tps32;
+	int shift;
+
+	cycles(&p->tscboot);
+	p->todboot = todget(nil);
+	tps = p->tschz;
+	scaled = 1000000000ULL;
+	shift = 0;
+	while(tps > scaled*2 || (tps & 0xFFFFFFFF00000000ULL) != 0){
+		tps >>= 1;
+		shift--;
+	}
+	tps32 = tps;
+	while(tps32 <= scaled || (scaled & 0xFFFFFFFF00000000ULL) != 0){
+		if((scaled & 0xFFFFFFFF00000000ULL) != 0 || (tps32 & 0x80000000) != 0)
+			scaled >>= 1;
+		else
+			tps32 <<= 1;
+		shift++;
+	}
+	p->pvmul = (scaled << 32) / tps32;
+	p->pvshift = shift;
+}
+
+/* TSC ticks to ns, by the record's own arithmetic */
+static uvlong
+pvns(Plat *p, uvlong t)
+{
+	if(p->pvshift < 0)
+		t >>= -p->pvshift;
+	else
+		t <<= p->pvshift;
+	/* t * pvmul >> 32, in 64 bits */
+	return (t >> 32) * p->pvmul + (((t & 0xFFFFFFFFULL) * p->pvmul) >> 32);
+}
+
+static void
+pvput32(uchar *b, u32int v)
+{
+	b[0] = v; b[1] = v>>8; b[2] = v>>16; b[3] = v>>24;
+}
+
+static void
+pvput64(uchar *b, uvlong v)
+{
+	pvput32(b, v);
+	pvput32(b+4, v>>32);
+}
+
+/* a vCPU's record (struct pvclock_vcpu_time_info, 32 bytes) */
+static int
+pvtimewrite(Plat *p, uvlong val)
+{
+	uchar *b;
+	uvlong now;
+	u32int ver;
+
+	if((val & 1) == 0)
+		return 1;		/* disabled */
+	if((b = gpaptr(p->vm, val & ~1ULL, 32)) == nil)
+		return 0;
+	ver = b[0] | b[1]<<8 | b[2]<<16 | b[3]<<24;
+	ver |= 1;		/* odd: being written */
+	pvput32(b, ver);
+	coherence();
+	cycles(&now);
+	pvput64(b+8, now);
+	pvput64(b+16, pvns(p, now - p->tscboot));
+	pvput32(b+24, p->pvmul);
+	b[28] = p->pvshift;
+	b[29] = PvTscStable;
+	coherence();
+	pvput32(b, ver + 1);		/* even: done */
+	return 1;
+}
+
+/* the wall clock record (struct pvclock_wall_clock, 12 bytes) */
+static int
+pvwallwrite(Plat *p, uvlong gpa)
+{
+	uchar *b;
+	u32int ver;
+	vlong t;
+
+	if((b = gpaptr(p->vm, gpa, 12)) == nil)
+		return 0;
+	ver = (b[0] | b[1]<<8 | b[2]<<16 | b[3]<<24) | 1;
+	pvput32(b, ver);
+	coherence();
+	t = p->todboot;
+	pvput32(b+4, t / 1000000000LL);
+	pvput32(b+8, t % 1000000000LL);
+	coherence();
+	pvput32(b, ver + 1);
+	return 1;
+}
+
 void*
 vmplatnew(Vm *vm)
 {
@@ -316,6 +452,7 @@ vmplatnew(Vm *vm)
 	p->vm = vm;
 	vvmsi = vmplatmsi;	/* the virtio functions' interrupts */
 	p->tschz = MACHP(0)->cpuhz;
+	pvclockinit(p);
 	vpicreset(&p->pic);
 	vpitreset(&p->pit, p->tschz);
 	vuartreset(&p->uart);
@@ -378,13 +515,24 @@ cpuidfilter(Vcpu *v, u32int leaf, u32int sub, u32int r[4])
 	USED(sub);
 	cpuid(0, 0, h);
 	max = h[0] > 7 ? 7 : h[0];
-	if(leaf >= 0x40000000 && leaf < 0x40000100){
+	if(leaf >= 0x40000000 && leaf < 0x40000200){
 		r[0] = r[1] = r[2] = r[3] = 0;
-		if(leaf == 0x40000000){
+		switch(leaf){
+		case 0x40000000:
 			r[0] = 0x40000000;
 			memmove(&r[1], "Infe", 4);
 			memmove(&r[2], "rnoH", 4);
 			memmove(&r[3], "yper", 4);
+			break;
+		case Kvmbase:		/* the paravirtual clock, as KVM's */
+			r[0] = Kvmbase + 1;
+			memmove(&r[1], "KVMK", 4);
+			memmove(&r[2], "VMKV", 4);
+			memmove(&r[3], "M\0\0\0", 4);
+			break;
+		case Kvmbase + 1:
+			r[0] = KvmClocksource2 | KvmStable;
+			break;
 		}
 		return;
 	}
@@ -503,6 +651,10 @@ domsr(Vcpu *v, Plat *p, Vmexit *e)
 			val = 1;
 		else if(msr == 0x17 || msr == 0x8B)	/* platform id, microcode revision */
 			val = 0;
+		else if(msr == MsrKvmTime || msr == MsrKvmTimeOld)
+			val = p->pvtime[v->id];
+		else if(msr == MsrKvmWall || msr == MsrKvmWallOld)
+			val = p->pvwall;
 		else if(msr >= 0x800 && msr < 0x900 && (a->base & ApicX2) && msr != 0x80B && msr != 0x83F)
 			val = msr == 0x830 ? (uvlong)a->icrhi << 32 | a->icrlo : vlapicread(a, msr - 0x800);
 		else
@@ -533,6 +685,12 @@ domsr(Vcpu *v, Plat *p, Vmexit *e)
 		}else if(msr == 0x6E0){
 			cycles(&now);
 			vlapicsetdeadline(a, val, now);
+		}else if(msr == MsrKvmTime || msr == MsrKvmTimeOld){
+			if(ok = pvtimewrite(p, val))
+				p->pvtime[v->id] = val;
+		}else if(msr == MsrKvmWall || msr == MsrKvmWallOld){
+			if(ok = pvwallwrite(p, val))
+				p->pvwall = val;
 		}else if(msr == 0x10 || msr == 0x8B || msr == 0x1A0)
 			;	/* TSC writes, microcode loads, MISC_ENABLE: dropped */
 		else if(msr >= 0x800 && msr < 0x900 && (a->base & ApicX2)){

@@ -618,9 +618,34 @@ allocated whole: no ballooning, no overcommit, no huge-page choice,
 and a host's largest free run caps the largest machine.  Memory in
 pieces mapped by NPT/EPT, and a balloon (virtio-balloon in vmvirtio).
 .IP \(bu 2
-A paravirtual clock.  Guests run on the TSC; there is no kvmclock or
-Hyper-V reference time, so a guest's clock across a stop, or on
-another host, is not kept.  Needed with migration.
+A paravirtual clock: kvmclock, paid for a machine that stays where it
+is; across a stop or a move it is migration's.  vmplat offers it as
+KVM's, at CPUID 0x40000100 (a block after this hypervisor's own
+signature at 0x40000000, which Linux's search for KVM's passes over),
+with CLOCKSOURCE2 and the stable bit and nothing else of KVM's.
+MSR_KVM_SYSTEM_TIME (new and old numbers) gets each vCPU's record
+written at the address it gives: the TSC then, nanoseconds since the
+machine was made, and the TSC-to-nanoseconds scale (made as KVM's
+kvm_get_time_scale makes it, from the host's TSC rate; the guest's
+TSC is the host's, no offset, so one record stays good).
+MSR_KVM_WALL_CLOCK gets the host's time of day at the machine's time
+0, from
+.CW todget
+\(en which on a native host counts from boot until init sets it, as
+Plan 9's does, from
+.CW #r/rtc
+into
+.CW #c/time ;
+linuxtestinit and vmserveinit now do.  check-vm's M2 guest prints
+its clocksource and time of day: (SVM and VMX, QEMU TCG)
+"kvm-clock: Using msrs 4b564d01 and 4b564d00", "clocksource: Switched
+to clocksource kvm-clock", "LINUXGUEST: clocksource kvm-clock",
+"LINUXGUEST: epoch 1791407164" with this machine's clock at
+1791407172; M3's four vCPUs on it (SVM), and check-styxvm, pass.
+Before the host set its clock the same check failed,
+"epoch 94".  Not done: updating the records when the machine is
+stopped and resumed (nothing stops one yet but kill), Hyper-V's
+reference time for other guests.
 .IP \(bu 2
 Hotplug.  A machine's PCI devices are fixed at creation; nothing is
 added or removed while it runs (PCIe native hotplug on the guest's

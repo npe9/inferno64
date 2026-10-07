@@ -143,6 +143,22 @@ else
 	grep '^pci 00\|PCI-MSIX\|virtio' "$WORK/m2.log" | sort -u | sed 's/^/	/' | tail -8
 	fail=1
 fi
+# the paravirtual clock (phase 17): Linux takes kvmclock, offered as
+# KVM's, for its clocksource, and its time of day from the record's
+# wall clock -- the host's -- within this run's length of this
+# machine's own
+gnow=`tr -d '\r' <"$WORK/m2.log" | sed -n 's/^LINUXGUEST: epoch \([0-9]*\).*/\1/p' | head -1`
+now=`date +%s`
+if tr -d '\r' <"$WORK/m2.log" | grep -q '^LINUXGUEST: clocksource kvm-clock$' && [ -n "$gnow" ] \
+&& [ `expr $now - $gnow` -ge 0 ] && [ `expr $now - $gnow` -lt 1800 ]; then
+	echo "check-vm: kvmclock ($B): pass"
+	grep 'LINUXGUEST: clocksource\|LINUXGUEST: .*kvm-clock' "$WORK/m2.log" | sed 's/^/	/'
+	echo "	guest epoch $gnow, here $now at the end of the run"
+else
+	echo "check-vm: kvmclock ($B): FAIL"
+	grep 'LINUXGUEST: clocksource\|kvm-clock\|LINUXGUEST: epoch' "$WORK/m2.log" | sed 's/^/	/'
+	fail=1
+fi
 # the function M5 assigned, released when its machine ended (blocked,
 # reset by FLR, its configuration put back) and assigned again to the
 # boot on the virtio disk, whose console it carries
