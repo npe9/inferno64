@@ -11666,3 +11666,28 @@ candidates are closed.  This is the compiler fix for the class, so new code
 cannot produce it, but every object in the tree has to be rebuilt by this
 compiler for the existing instances to go away, and only the raspi3b kernel has
 been.
+.NH 3
+A7 closes the umulladd candidate list, by construction and not by reading
+.LP
+The open item was "98 signed and unknown candidates outside
+.CW libmemdraw / libdraw / libmemlayer / screenbcm
+are unaudited".  A read-audit of 98 instruction sites would have been hours of
+work with a high false-clear rate \(em this plan already records an audit
+cleared by resemblance.
+.B "The compiler fix removes them instead:"
+.P1
+                             UMULL tier   wide tier
+pre-fix image  (old 7c)            0         120
+post-fix image (new 7c)            0           0
+.P2
+Same scanner, same invocation, same symbol table.
+.B "And the control was re-run, not assumed:"
+a scanner reading zero is indistinguishable from a scanner that has stopped
+working, and this one's own header records two occasions when its inference went
+wrong.  120 on the old image is the control firing.
+.PP
+What is NOT closed:
+.CW 7c
+can no longer PRODUCE the shape, but every object has to be rebuilt by the new
+compiler for the existing instances to go away, and only the raspi3b kernel has
+been.
