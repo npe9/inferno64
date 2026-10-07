@@ -11670,7 +11670,7 @@ been.
 A7 closes the umulladd candidate list, by construction and not by reading
 .LP
 The open item was "98 signed and unknown candidates outside
-.CW libmemdraw / libdraw / libmemlayer / screenbcm
+.CW "libmemdraw / libdraw / libmemlayer / screenbcm"
 are unaudited".  A read-audit of 98 instruction sites would have been hours of
 work with a high false-clear rate \(em this plan already records an audit
 cleared by resemblance.
