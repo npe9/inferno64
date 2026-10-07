@@ -997,6 +997,29 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		report(d == 0, sys->sprint("scene == direct: %s (%d bytes differ)", names[i], d));
 	}
 
+	#
+	# The per-type table, for item 1.1 of doc/scene-graph-plan.ms: a
+	# retained tree is only possible over a subtree no DIRECT painter
+	# enters, so what is wanted is the list of types that paint without
+	# joining -- not a ratio, which would average over a population
+	# whose members behave differently.
+	#
+	# Printed rather than asserted.  It is a reading list: a type with
+	# joins of 0 either paints directly or paints nothing, and only
+	# reading the widget separates those.  Asserting on it would be
+	# asserting on whatever this test happens to exercise.
+	#
+	# Reset first and repaint, because the cases above reset the
+	# counters twice for their own checks, so whatever survives to here
+	# is a tail of the run and not its population.
+	#
+	tk->cmd(tk->toplevel(disp, ""), "render scene");
+	for(i = 0; i < len cases; i++)
+		paint(disp, names[i], cases[i]);
+	t := tk->cmd(tk->toplevel(disp, ""), "render types");
+	if(t != nil && len t > 0 && t[0] != '!')
+		sys->print("tkscenetest: types (name drew joined): %s\n", t);
+
 	if(skipped > 0)
 		sys->print("tkscenetest: %d ok, %d fail, %d skipped\n", ok, fail, skipped);
 	else

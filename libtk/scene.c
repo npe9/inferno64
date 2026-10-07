@@ -685,6 +685,8 @@ static struct {
 	int	anybounds;	/* whether bounds means anything yet */
 	int	drawnodes;	/* nodes that mark pixels */
 	int	undesc;		/* ...of those, how many describe no extent */
+	int	drew[TKwidgets];	/* times each type's draw ran */
+	int	joined[TKwidgets];	/* ...of those, times it joined a tree */
 } walk;
 
 /*
@@ -1002,9 +1004,60 @@ tkwalkbounds(Rectangle *r)
 	return walk.anybounds;
 }
 
+/*
+ * Per widget TYPE, how many times its draw method ran and how many of
+ * those joined a tree.  This answers item 1.1 of
+ * doc/scene-graph-plan.ms: a retained tree is only possible over a
+ * subtree no DIRECT painter enters, so what is wanted is not a ratio
+ * but the list of types that paint without joining.
+ *
+ * A RATIO WOULD BE THE WRONG SHAPE.  "n% of widgets are node-capable"
+ * averages over a population whose members behave differently, which is
+ * the error doc/raspi3b-draw-plan.ms made three times over bytes per
+ * line.  The table is the output.
+ *
+ * TWO THINGS IT CANNOT TELL YOU, so read it as a candidate list:
+ *
+ *	A type with drew > 0 and joined == 0 either paints DIRECTLY or
+ *	paints nothing at all.  An empty frame is indistinguishable here
+ *	from a separator drawing its own line; only reading the widget
+ *	separates them.
+ *
+ *	A parent whose own draw method draws sub-widgets -- menus.c and
+ *	textw.c both do -- is credited with their joins, because the
+ *	attribution brackets one draw call and cannot see inside it.  So
+ *	joined > 0 does not prove the type itself emits.
+ */
+void
+tkwalknote(int type, int joined)
+{
+	if(type < 0 || type >= TKwidgets)
+		return;
+	walk.drew[type]++;
+	if(joined)
+		walk.joined[type]++;
+}
+
+void
+tkwalktypes(int type, int *drew, int *joined)
+{
+	if(type < 0 || type >= TKwidgets)
+		return;
+	if(drew != nil)
+		*drew = walk.drew[type];
+	if(joined != nil)
+		*joined = walk.joined[type];
+}
+
 void
 tkwalkreset(void)
 {
+	int i;
+
+	for(i = 0; i < TKwidgets; i++){
+		walk.drew[i] = 0;
+		walk.joined[i] = 0;
+	}
 	walk.runs = 0;
 	walk.widgets = 0;
 	walk.nodes = 0;

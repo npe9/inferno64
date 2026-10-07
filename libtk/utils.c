@@ -1369,6 +1369,46 @@ tkrendercmd(TkTop *t, char *arg, char **ret)
 	 * draw the same pixels, so the identity check cannot see batching
 	 * at all and this is what a test asks instead.
 	 */
+	/*
+	 * `render types' answers, per widget type, how many times its draw
+	 * method ran and how many of those joined a tree -- the table item
+	 * 1.1 of doc/scene-graph-plan.ms needs.  Types printed with a join
+	 * count of zero are the candidates for direct painting; see
+	 * tkwalknote() for the two things this cannot distinguish.
+	 */
+	if(strcmp(buf, "types") == 0){
+		/*
+		 * NOT buf: it is Tkmaxitem, 128 bytes, and seventeen types
+		 * need about 340.  Writing the table into it stopped after
+		 * exactly eight entries -- the first eight in enum order --
+		 * which read as "only eight types ever draw" and is instead
+		 * the instrument running out of room.  And it broke out of
+		 * the loop SILENTLY, so nothing in the output said so.
+		 */
+		char tbuf[32*TKwidgets], *q, *e;
+		int i, drew, joined, cut;
+
+		if(ret == nil)
+			return nil;
+		q = tbuf;
+		e = tbuf + sizeof(tbuf);
+		cut = 0;
+		for(i = 0; i < TKwidgets; i++){
+			tkwalktypes(i, &drew, &joined);
+			if(drew == 0)
+				continue;
+			if(q + 32 >= e){
+				cut = 1;	/* say so rather than stop quietly */
+				break;
+			}
+			q += snprint(q, e - q, "%s %d %d ",
+				tkmethod[i]->name, drew, joined);
+		}
+		if(cut)
+			snprint(q, e - q, "TRUNCATED");
+		tkwalkreset();
+		return tkvalue(ret, "%s", tbuf);
+	}
 	if(strcmp(buf, "count") == 0){
 		int runs, widgets, nodes;
 

@@ -867,6 +867,8 @@ extern	void		tkwalkclipend(void);
 extern	TkScene*	tkwalkjoin(TkCtxt*, Image*);
 extern	void		tkscenefinish(TkScene*, TkCtxt*, Image*);
 extern	void		tkwalkcount(int*, int*, int*);
+extern	void		tkwalknote(int, int);
+extern	void		tkwalktypes(int, int*, int*);
 extern	void		tkwalkreset(void);
 extern	int		tkwalkbounds(Rectangle*);
 extern	void		tkwalknodebox(int*, int*);
