@@ -687,7 +687,28 @@ void
 poolfree(Pool *p, void *v)
 {
 	Bhdr *b, *c;
-	/* extern Bhdr *ptr; defined in libinterp/gc.c */
+	/*
+	 * libinterp/gc.c's sweep cursor, and it is a global there rather
+	 * than a static for exactly this: the sweep is incremental --
+	 * base/ptr/limit persist across rungc() calls and it resumes where
+	 * the last quantum stopped -- and a free here can coalesce away the
+	 * very block ptr names.  A merge zeroes the swallowed header's
+	 * magic, so the next resume fails okbhdr(), abandons the sweep and
+	 * starts over.
+	 *
+	 * The two fixups below move the cursor onto the surviving block.
+	 * They were commented out, along with this extern, because this
+	 * file arrived from a 9front-derived port that had no libinterp for
+	 * the symbol to resolve against; libinterp came later and nobody
+	 * turned them back on.  emu/port/alloc.c has had them live all
+	 * along, which is why the symptom was board-only.
+	 *
+	 * Found and measured by the raspi3b-port session, which saw 17 and
+	 * 12 broken chains a boot go to 0 with these three lines in, and
+	 * the identity "broken chains == resumes on a swallowed cursor"
+	 * holding exactly at both counts.
+	 */
+	extern Bhdr *ptr;
 
 	D2BPC(b, v, getcallerpc(&p), "alloc:D2B:poolfree");
 
@@ -711,8 +732,8 @@ poolfree(Pool *p, void *v)
 
 	c = B2NB(b);
 	if(c->magic == MAGIC_F) {	/* Join forward */
-		/*if(c == ptr)
-			ptr = b; */
+		if(c == ptr)
+			ptr = b;
 		pooldel(p, c);
 		c->magic = 0;
 		b->size += c->size;
@@ -721,8 +742,8 @@ poolfree(Pool *p, void *v)
 
 	c = B2PT(b)->hdr;
 	if(c->magic == MAGIC_F) {	/* Join backward */
-		/*if(b == ptr)
-			ptr = c; */
+		if(b == ptr)
+			ptr = c;
 		pooldel(p, c);
 		b->magic = 0;
 		c->size += b->size;
