@@ -1,0 +1,177 @@
+#!/dis/sh.dis
+#
+# dossrv-bytes - how many sectors does a sequential write through dossrv
+#		 actually move, and where do the extra ones go?
+#
+# THIS RUNS ON A BOARD, like tests/dossrv-badclust, because it needs
+# sdmem(3) -- a RAM block device that counts sectors in and out.  It uses
+# that test's image, so run its host half first:
+#
+#	sh tests/dossrv-badclust.host	# makes tmp/f16k.img
+#	sh tools/jtag/boot.sh
+#	sh /n/remote/tests/dossrv-bytes
+#
+# WHY IT EXISTS.  H2 in doc/open-issues-plan.ms measured clustok()'s cost
+# in READS -- 1284 of them in a 2.6MB write at 2KB clusters, 22 to 39 per
+# cent of the write -- and then stopped, because all three ways to make
+# the check cheaper weaken what it detects on a premise nobody can verify
+# without the failing card.
+#
+# But reads are only half of what falloc() does.  Having allocated a
+# cluster it ZERO-FILLS the whole thing:
+#
+#	k := clust2sect(bp, n);
+#	for(i:=0; i<bp.clustsize; i++) {
+#		p := getosect(xf, k+i);
+#		for(j:=0; j<len p.iobuf; j++) p.iobuf[j] = byte 0;
+#		p.flags = BMOD;
+#		putsect(p);
+#	}
+#
+# and the caller then writes the same sectors with real data.  getosect
+# passes rflag 0, so nothing is read in -- but the tracks are marked BMOD,
+# so whether that costs a SECOND PASS over the medium depends entirely on
+# whether they are still in dossrv's track cache when the data arrives.
+# That is a question about cache size against cluster size, so it is a
+# measurement and not an argument.
+#
+# WHAT TO CONCLUDE FROM WHICH READING, stated before the numbers exist so
+# the reading cannot be fitted to them afterwards.  Compare written
+# sectors against the payload:
+#
+#	~1.0x	the zero-fill is absorbed by the cache and costs CPU
+#		only.  H2's three candidates remain the only ones.
+#	~2.0x	it reaches the medium, and a saving exists that does NOT
+#		weaken clustok at all: skip the fill for a cluster the
+#		caller is about to overwrite completely.  That would be
+#		the first H2 candidate with no unverified premise.
+#
+# 16KB clusters and nothing else, because that is what the Pi's own card
+# uses and it is the arm H2 says the cost is carried on.  A 2KB arm would
+# need a second host image for a configuration this board does not have.
+#
+# IT CHANGES NOTHING.  It prints counters and says which reading implies
+# which conclusion, because H2's rule is that a candidate's cost has to be
+# a number before it is a plan.
+#
+# WHAT IT ANSWERED, first run that worked, 2MB payload = 4096 sectors:
+#
+#	arm		reads ops/secs	writes ops/secs
+#	clustok ON	133 / 4141	459 / 4131
+#	clustok OFF	  5 /   45	459 / 4131
+#
+# THE WRITES ARE IDENTICAL, 4131 sectors against 4096 of payload = 1.008x.
+# So the zero-fill never reaches the medium: dossrv's 20 track buffers hold
+# the cluster long enough for the real data to overwrite it, and the cost
+# is CPU only.  The 2.0x reading is dead and there is NO zero-fill saving
+# to be had -- H2's three candidates remain the only ones.
+#
+# AND clustok's COST IS EXACTLY 1.00x THE PAYLOAD: 4141 - 45 = 4096 sectors
+# in 133 - 5 = 128 operations, one 32-sector read per cluster allocated.
+# Total traffic 8272 sectors against 4096, so the check exactly DOUBLES the
+# bytes moved by a sequential write, which is what H2 predicted from the
+# code and is now measured rather than inferred.
+#
+load std
+
+D = /dev/sdZ0
+#
+# /n/dos2 and NOT /n/dos, and not a fresh directory either: /n/dos is
+# where the board's boot mounts the CARD's own FAT partition, and
+# "unmount /n/dos" with no server named removes every mount there -- so a
+# test that borrows it unmounts the board's boot filesystem on the way
+# out.  /n/dos2 is an empty directory in the kernel root with nothing
+# mounted on it, which tests/dossrv-badclust already relies on.  A new
+# name fails with "mount: file does not exist", because the kernel root
+# is not writable and the mount point has to be declared in the config.
+#
+M = /n/dos2
+#
+# The log goes in the host worktree over styx, not /tmp: the board's /tmp
+# is not writable by the poller's user and "mkdir: permission denied"
+# is the whole of the diagnosis you get.  tests/dossrv-badclust does the
+# same and is the model.
+#
+LOG = /n/remote/tmp
+IMG = /n/remote/tmp/f16k.img
+
+if {! cat $D^/ctl >/dev/null >[2]/dev/null} {
+	echo 'dossrv-bytes: no '^$D^' -- needs a kernel with sdmem(3)'
+	echo 'dossrv-bytes: (dev sdmem in the config); board only'
+	raise 'fail:no sdmem'
+}
+if {! cat $IMG >/dev/null >[2]/dev/null} {
+	echo 'dossrv-bytes: no '^$IMG^' -- run tests/dossrv-badclust.host'
+	raise 'fail:no image'
+}
+
+#
+# 128 clusters of 16KB = 2MB, written as 16KB writes so each one covers
+# exactly one cluster.  dd and not a shell loop: the point is to move
+# bytes, not to measure sh.
+#
+NCLUST = 128
+BS = 16384
+
+#
+# THE LABEL COMES FIRST AND THE FLAGS ARE THE TAIL, which is not style.
+# Calling "arm '' 'label'" passes dossrv an EMPTY POSITIONAL ARGUMENT, and
+# dossrv refuses a stray argument on purpose -- tests/dossrv-badclust
+# records why: it used to ignore one silently and mount on its default
+# /n/dos, which looked like success.  So the no-flag arm mounted nothing,
+# the dd wrote nothing, the counters read 0, and the only hint was
+# "unmount: not mounted" three lines up.  An empty list expands to no
+# argument at all; an empty string is an argument.
+#
+fn arm {
+	lbl = ${hd $*}
+	flags = ${tl $*}
+	echo
+	echo '=== '^$lbl
+
+	echo 'fail 0' > $D^/ctl
+	echo 'failevery 0' > $D^/ctl
+	echo 'failsect 0 0' > $D^/ctl
+	echo 'size 131072' > $D^/ctl
+	# a resize is a media change: touch the directory so devsd re-reads
+	# the partition table before anything writes past the old end
+	ls $D >/dev/null
+	cp $IMG $D^/data
+
+	# AFTER the image copy, so the copy's own traffic is not counted.
+	echo 'reset' > $D^/ctl
+
+	dossrv $flags -m $M -f $D^/data >[2] $LOG^/dossrv-bytes.log
+	dd -if /dev/zero -of $M^/p.bin -bs $BS -count $NCLUST >[2]/dev/null
+	#
+	# The unmount is the measurement point, not the dd: a count taken
+	# before the server has written back is a count of the cache.
+	#
+	unmount $M
+
+	c = `{cat $D^/ctl}
+	echo '  '^$"c
+	if {grep -s 'marking it bad' $LOG^/dossrv-bytes.log} {
+		echo '  NOTE a cluster was condemned with no fault set;'
+		echo '  NOTE this arm is not measuring a healthy write'
+	}
+}
+
+#
+# NO ARITHMETIC HERE.  Inferno sh has no expr and math/pi returns an empty
+# string, which tests/dossrv-badclust records as having made every failing
+# run print "FAILED  checks".  The expected figure is stated as a constant
+# and the division is left to whoever reads the output.
+#
+echo 'dossrv-bytes: payload '^$NCLUST^' x '^$BS^' bytes = 2MB through 16KB clusters'
+echo 'dossrv-bytes: 1.0x is 4096 written sectors; 2.0x is 8192'
+echo 'dossrv-bytes: read the "writes N ops M secs" field; M against 4096'
+echo 'dossrv-bytes: the payload is the amplification.  ~1.0x means the'
+echo 'dossrv-bytes: zero-fill never reaches the medium; ~2.0x means it'
+echo 'dossrv-bytes: does and a saving exists that does not weaken clustok.'
+
+arm 'clustok ON (shipping)'
+arm 'clustok OFF (-A), the floor' -A
+
+echo
+echo 'DOSSRV-BYTES-DONE'
