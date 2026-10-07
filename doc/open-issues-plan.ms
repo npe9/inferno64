@@ -12366,3 +12366,80 @@ started.
 Nothing here says whether that is the driver, the hub, the LAN9514 or the
 cable.  The registers say the channel is disabled with the port up, which is
 where the next person starts.
+.NH 3
+The sweep-cursor fixup is still commented out in NINE other worktrees
+.LP
+A peer verified the finding in their own tree rather than taking it, at exact
+line numbers
+.CW ( os/inferno/port/alloc.c:672-673 ,
+.CW 682-683 ,
+the extern at
+.CW 646 ,
+.CW libinterp/gc.c:45 's
+.CW ptr
+live, and
+.CW emu/port/alloc.c:707-718
+present), and confirmed uncommenting those three lines is the whole fix on
+.CW rio-pi-tk
+too.  Checked here read-only: their line numbers are exact.
+.PP
+Surveying every worktree that has the file:
+.P1
+worktree          live / total "ptr = b|c;" assignments
+raspi3b-port             2 / 2    FIXED
+cloud-port               0 / 2    defect
+genesize                 0 / 2    defect
+inferno-bt               0 / 2    defect
+inferno-ports            0 / 2    defect
+multicore                0 / 2    defect
+nixos                    0 / 2    defect
+pr-bluetooth             0 / 2    defect
+rio-pi-tk                0 / 2    defect
+xip                      0 / 2    defect
+.P2
+.B "multicore is the one that matters most and is the one not to touch casually."
+It owns arm64 SMP with
+.CW parallelvm=1
+as the default, so a second context frees concurrently and the window in which
+.CW poolfree
+can swallow the cursor between quanta is WIDER there, not narrower.  The same
+three lines fix it.
+.PP
+Nothing is changed in those nine here.  Each has its own owner and its own
+session; this is a pointer for whoever works them, which is what the peer did
+for this branch.
+.NH 3
+Three classifiers in a row got this survey wrong
+.LP
+Worth recording because the failure is generic.
+.IP 1.
+.CW "grep 'if(c == ptr)'"
+for the fixed state.
+.B "It could not recognise THIS tree's own fix,"
+because the fix is written
+.CW "if(p == heapmem && c == ptr)"
+inside a counting block.  It reported raspi3b-port UNCLASSIFIED, which is what
+exposed it \(em the one case whose answer I knew.
+.IP 2.
+.CW "grep '^[[:space:]]*ptr = [bc];'"
+for a live assignment.
+.B "That matches the COMMENTED form too,"
+because the comment's second line is
+.CW "ptr = b; */" .
+Everything came out FIXED, and a uniform answer across ten branches is as
+implausible as the first one.
+.IP 3.
+The same, excluding lines containing
+.CW */ .
+.B "That excluded this tree's fix,"
+whose lines end
+.CW "ptr = b;	/* THE FIXUP, see above */" .
+Everything came out DEFECT, including the branch that is fixed.
+.PP
+.B "Comment state is not line-local, and no line-local grep can decide it."
+The answer is to strip
+.CW "/* ... */"
+across newlines and then look.
+.B "Each wrong classifier was confident and uniform,"
+and what caught all three was the same control: the survey must classify
+correctly the one case whose answer is already known.
