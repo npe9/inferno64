@@ -383,6 +383,111 @@ driver before this kernel's runs on it.  M11 itself, the workstation's
 X520, stays on the hardware.  The X520 modelled is the single-port
 82599 (8086:10fb) with a direct-attach SFP+ cable; which one the
 workstation has is not recorded here.
+.IP
+Codesign.  An emulator feature and this kernel's use of it are one
+piece of work, not two.  Nothing is added to a model that this kernel
+does not then use and check, and nothing is added to this kernel that
+a bench cannot exercise: a model's feature lands with the Inferno
+driver or hypervisor change that drives it, and a check that runs
+Inferno on it, beside the check against Linux.  A feature a model
+carries only because the real part has it, and which this kernel
+leaves alone on purpose, says so in the plan and in the driver, with
+the reason.  The same holds the other way: a kernel feature that needs
+hardware the benches lack (APIC virtualization, posted interrupts)
+waits on the model or is listed as needing real hardware, not merged
+untested.  Where this was not done, it is owed:
+.RS
+.IP \(bu 2
+NVMe APST (patch 0008): the model has it, Linux turns it on, sdnvme
+does not.  Either sdnvme programs a transition table (Features 0Ch)
+from the drive's power states, with a latency bound in plan9.ini, and
+a check shows the drive idle in a non-operational state and back on
+the next read; or the plan records why the host leaves it off.
+.IP \(bu 2
+The FL1100's MSI-X (patch 0009): the part's MSI-X works and Linux uses
+it; usbxhci takes the pin.  usbxhci on MSI-X (and MSI), checked on
+.CW VMHOST_USB=fl1100 .
+.IP \(bu 2
+The 82599's offloads (patch 0007): checksum, TSO and RSS are modelled
+and checked against Linux; ether82598 uses none of them, and one
+queue.  Transmit checksum and TSO, receive checksum, and more than one
+queue pair with RSS, each checked on the model and against the
+X520-backed bench.
+.IP \(bu 2
+#AC (TCG, item 8 of the housekeeping): QEMU now raises it; the VMX and
+SVM backends neither intercept nor test it.  A guest at CPL 3 with
+CR0.AM and EFLAGS.AC set takes its own #AC under each backend
+(tests/vm), and the exception bitmap's choice is written down.
+.RE
+.IP "17. What a hypervisor still lacks." 4
+Found by looking at
+.CW devvm.c ,
+.CW vmx.c ,
+.CW svm.c
+and
+.CW vmplat.c
+against what QEMU's models now offer and what hardware has.  Each
+item, under phase 16's codesign, is a model change (where an emulator
+lacks the feature), the kernel's support, and a check on both
+backends; or, where only hardware has it, a check on the workstation.
+In rough order of consequence:
+.RS
+.IP \(bu 2
+Device release.  When a machine ends,
+.CW vmpcifree
+clears bus mastering and returns the function to the host domain,
+which passes everything through; there is no FLR and no blocking
+domain in between, so a function that keeps DMAing (or a queued DMA
+after the guest's last command) reaches host memory.  A released
+function goes to a blocking domain, is reset (FLR, or the PF's
+reset for a VF), and stays blocked until a driver claims it.  The
+misbehaving device of phase 16 is what checks it.
+.IP \(bu 2
+Interrupt virtualization.  Interrupts reach guests by injection only:
+no APIC virtualization or posted interrupts (VMX), no AVIC (SVM).
+QEMU's TCG VMX does not advertise them (phase 16), so this needs them
+modelled first or waits for the workstation.  The assigned functions'
+MSIs go through the host and are re-delivered; with posted interrupts
+the IRTE would post them straight to the vCPU.
+.IP \(bu 2
+The VMX features QEMU's model lacks and the backend therefore cannot
+use or be tested with: virtual NMIs, the preemption timer, MTF, PML,
+VMCS shadowing, VM functions.  Each is taken up when the kernel has a
+use for it (PML for migration's dirty tracking, the preemption timer
+for scheduling), model first.
+.IP \(bu 2
+Save, restore and migration.
+.CW #H
+gives registers and memory but not the state of the platform's
+devices (APIC, I/O APIC, PIT, 16550, virtio queues), so a machine
+cannot be stopped, written out and resumed, here or on another host
+\(en which phase 11's scheduler would want.  A machine's whole state
+as files under
+.CW #H/vm/N ,
+then copying one between hosts over Styx.  (QEMU's own migration of
+VMX state and of the 82599 model is the emulators' half and is
+housekeeping, item 8.)
+.IP \(bu 2
+Memory.  A machine's memory is one contiguous run of host memory,
+allocated whole: no ballooning, no overcommit, no huge-page choice,
+and a host's largest free run caps the largest machine.  Memory in
+pieces mapped by NPT/EPT, and a balloon (virtio-balloon in vmvirtio).
+.IP \(bu 2
+A paravirtual clock.  Guests run on the TSC; there is no kvmclock or
+Hyper-V reference time, so a guest's clock across a stop, or on
+another host, is not kept.  Needed with migration.
+.IP \(bu 2
+Hotplug.  A machine's PCI devices are fixed at creation; nothing is
+added or removed while it runs (PCIe native hotplug on the guest's
+bus, or ACPI).  Wanted for phase 12's namespace-built machines.
+.IP \(bu 2
+Nesting.  A guest cannot run a hypervisor of its own: VMX and SVM are
+not exposed to guests.  The patched QEMU's VMX and the kvm-unit-tests
+are the model and the check for it.
+.IP \(bu 2
+Limits.  At most 16 machines (\f(CWNvm\fP in
+.CW devvm.c ).
+.RE
 .NH 1
 Where things go
 .DS
@@ -2142,8 +2247,11 @@ against Linux's ixgbe and ixgbevf, and this kernel is its PF: M7 on
 the X520's VFs and the whole PF to a Linux guest, on SVM and VMX.
 The newer NVMe features are done, checked against Linux's nvme, and
 sdnvme uses them.  The FL1100 is modelled from its datasheet and Linux's
-history with it, and usbxhci runs on it.  Next: the misbehaving DMA
-device (its design to come), the ConnectX-4 Lx; then the
+history with it, and usbxhci runs on it.  Next: the codesign debts of
+phase 16 (sdnvme's APST, usbxhci's MSI-X, ether82598's offloads, #AC
+under both backends); the misbehaving DMA device (its design to come)
+with phase 17's device release; the ConnectX-4 Lx; then the rest of
+phase 17 and the
 workstation (phase 13), and real hardware for everything QEMU and Bochs
 have stood in for.  On QEMU, check-vm (SVM; M4 under VT-d and AMD-Vi)
 and check-rv, on both the PLIC and the AIA machine and on hosts of one

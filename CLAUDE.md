@@ -19,3 +19,9 @@ the next item comes from `doc/genesize-plan.ms` instead.
   names VMX is not met by SVM.
 - Keep the progress section of `doc/genesize-plan.ms` current as each
   piece lands, with what the booted kernel printed.
+- Codesign (phase 16 of `doc/genesize-plan.ms`): an emulator feature
+  lands with the Inferno support that uses it and a check that runs
+  Inferno on it, not only Linux.  A feature added to a model that
+  Inferno does not use is a debt, listed in the plan with its reason,
+  and Inferno features that no bench can exercise are not merged
+  untested.
