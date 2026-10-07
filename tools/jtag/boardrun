@@ -81,7 +81,20 @@ done
 # than a blind write, which is what a shared channel needs.
 #
 idle() {
-	if [ -n "${TOK:-}" ] && ! grep -q "$TOK" "$CMD" 2>/dev/null; then
+	#
+	# NO TOKEN MEANS THIS RUN NEVER WROTE board.cmd, so it has nothing to
+	# clear and must not write.  The first version fell through to the
+	# write in that case, which turned every early exit -- the usage
+	# error, and now the consctl refusal below -- into the very
+	# cross-run clobber the compare-and-clear was added to prevent: an
+	# exit before TOK is set would overwrite a CONCURRENT run's command
+	# with idle, and that run would then poll for a token the board was
+	# never asked to print.
+	#
+	if [ -z "${TOK:-}" ]; then
+		return
+	fi
+	if ! grep -q "$TOK" "$CMD" 2>/dev/null; then
 		return
 	fi
 	printf 'load std; echo BR-IDLE-%s\n' "`date +%s`" > "$CMD"
@@ -99,6 +112,46 @@ trap 'idle' 0 1 2 15
 # command was still executing.  A guard that collides with the signal it was
 # added to protect.
 #
+#
+# AND IT REFUSES A WRITE TO /dev/consctl, which is not a warning because the
+# cost is not a wrong number but a DEAD POLLER.  Measured three times on this
+# board: a command containing
+#
+#	echo rawoff > /dev/consctl
+#
+# prints everything up to that point and nothing after it, the token never
+# appears, and NO LATER boardrun is picked up at all -- board.out keeps showing
+# the old RCMD line until the board is rebooted.  Recovery is a reboot, which
+# is four minutes, and the first two times it was read as a styx wedge and
+# written into the plan as one.
+#
+# WHAT IT IS NOT: the obvious reading, that conswrite's rawon/rawoff arms block
+# on kbd's QLock while consread holds it across a blocking qread of a console
+# nobody can type at, IS WRONG.  Read over JTAG with the target halted, the
+# whole kbd structure past Lock.pc is zero -- QLock.locked 0, owner 0, and
+# kbd.ctl 0 -- so the open, the write and the close all completed and that lock
+# is free.  Where the poller actually stops is NOT diagnosed, and this refusal
+# does not pretend to be a fix.
+#
+# THE COMMANDS THAT LOOK LIKE THEY BELONG THERE ARE ON /dev/sysctl.
+# conswrite dispatches its cmdtab under Qsysctl, not Qconsctl: sched,
+# procdump, ilock, signfault, panic, reboot.  /dev/consctl takes rawon and
+# rawoff only and silently ignores anything else, so writing a ctl word there
+# does nothing useful even when it does not wedge.
+#
+case "$1" in
+*consctl*)
+	echo "boardrun: REFUSING -- this command writes to /dev/consctl," >&2
+	echo "boardrun:   which stops the remote-command poller dead on this" >&2
+	echo "boardrun:   board (measured 3 times; recovery is a reboot)." >&2
+	echo "boardrun:   The ctl commands are on /dev/sysctl: sched, procdump," >&2
+	echo "boardrun:   ilock, signfault.  /dev/consctl takes only rawon and" >&2
+	echo "boardrun:   rawoff and ignores everything else." >&2
+	echo "boardrun:   Override with BOARDRUN_CONSCTL=1 if you mean it." >&2
+	[ "${BOARDRUN_CONSCTL:-0}" = 1 ] || exit 2
+	;;
+esac
+
 case "$1" in
 *'&'*)
 	echo "boardrun-note: this command backgrounds something with '&', and" >&2
