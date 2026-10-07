@@ -88,6 +88,18 @@ else
 	echo "check-vm: nil dereference ($B host): FAIL"
 	fail=1
 fi
+# a process with hardware (phase 18): the same context with "traps
+# sys", its hypercalls this kernel's system calls in the test's
+# namespace -- it opens /dev/sysname, reads it, writes through a pipe
+# and exits 7
+if grep -q 'VMTEST: DUNE-OK' "$WORK/m1.log" && ! grep -q 'VMTEST: FAIL dune' "$WORK/m1.log"; then
+	echo "check-vm: process with hardware ($B): pass"
+	grep 'VMTEST: dune: \(exit\|it wrote\)\|syscalls' "$WORK/m1.log" | sed 's/^/	/'
+else
+	echo "check-vm: process with hardware ($B): FAIL"
+	grep 'VMTEST: dune\|VMTEST: FAIL dune\|vmsys' "$WORK/m1.log" | sed 's/^/	/' | tail -8
+	fail=1
+fi
 # device release (phase 17): edu, assigned to a machine that is then
 # killed, DMAs to a host page; it must be in the blocking domain and
 # fault, have been reset (a secondary bus reset: edu has no FLR), then

@@ -89,6 +89,7 @@ static char *xkindname[VxNkind] = {
 [VxStopped]	"stopped",
 [VxOther]	"other",
 [VxShutdown]	"shutdown",
+[VxExited]	"exited",
 };
 
 static char *vcpustate[] = {
@@ -245,6 +246,34 @@ vmwatch(void*)
 	}
 }
 
+/*
+ * A process (traps sys) runs in the namespace of whoever said so: its
+ * vCPUs' kprocs take that namespace and one file descriptor table
+ * between them, as the threads of a process do.  On the vCPU's own
+ * kproc (vcpucmd, or as it starts).
+ */
+int	(*vmsysp)(Vcpu*, Vmexit*);
+
+static void
+adoptns(Vcpu *v, void*)
+{
+	Vm *vm;
+
+	vm = v->vm;
+	if(up->pgrp != vm->spgrp){
+		if(up->pgrp != nil)
+			closepgrp(up->pgrp);
+		incref(vm->spgrp);
+		up->pgrp = vm->spgrp;
+	}
+	if(up->fgrp != vm->sfgrp){
+		if(up->fgrp != nil)
+			closefgrp(up->fgrp);
+		incref(vm->sfgrp);
+		up->fgrp = vm->sfgrp;
+	}
+}
+
 static void
 vcpuproc(void *a)
 {
@@ -277,6 +306,8 @@ vcpuproc(void *a)
 	}
 	vmops->cpuon();
 	vmops->vcpuinit(v);
+	if(v->vm->traps == Trapsys)
+		adoptns(v, nil);
 	v->state = VcpuStopped;
 	wakeup(&v->cmdr);
 
@@ -298,7 +329,7 @@ vcpuproc(void *a)
 			continue;
 		}
 		/* an application processor is started by its SIPI, not by "go" */
-		if(!v->go && !vmplatsipi(v))
+		if(!v->go && (v->vm->traps != Trapplatform || !vmplatsipi(v)))
 			continue;
 		v->go = 0;
 		v->stop = 0;
@@ -321,12 +352,13 @@ vcpuproc(void *a)
 			if(up->delaysched)
 				sched();
 			/* an INIT stopped it: back to waiting, no exit to report */
-			if(vmplatinit(v)){
+			if(v->vm->traps == Trapplatform && vmplatinit(v)){
 				memset(&e, 0, sizeof e);	/* VxNone */
 				break;
 			}
 			memset(&e, 0, sizeof e);
-			vmplatintr(v);
+			if(v->vm->traps == Trapplatform)
+				vmplatintr(v);
 			vmops->run(v, &e);
 			v->nexit++;
 			v->lastexit = MACHP(0)->ticks;
@@ -342,7 +374,19 @@ vcpuproc(void *a)
 				v->lasttrace = MACHP(0)->ticks;
 				heartbeat(v, &e);
 			}
-			if(vmplatexit(v, &e)){
+			if(v->vm->traps == Trapsys && e.kind == VxCall){
+				if((*vmsysp)(v, &e) == 0)
+					break;		/* exited: e says how */
+				v->nhandled++;
+				if(v->stop || v->quit || v->cmd != nil){
+					memset(&e, 0, sizeof e);
+					e.kind = VxStopped;
+					e.rip = vmops->getreg(v, vmops->pc);
+					break;
+				}
+				continue;
+			}
+			if(v->vm->traps == Trapplatform && vmplatexit(v, &e)){
 				v->nhandled++;
 				if(v->stop || v->quit || v->cmd != nil){
 					memset(&e, 0, sizeof e);
@@ -507,6 +551,51 @@ newvcpu(Vm *vm)
 }
 
 /*
+ * "traps platform|none|sys": who answers the vCPUs' exits -- the
+ * emulated machine (the default), nothing (all to Limbo), or this
+ * kernel's system calls (vmsys.c), which makes the machine a process
+ * running in the writer's namespace with a copy of its file
+ * descriptors.  Before it first runs.
+ */
+static void
+settraps(Vm *vm, char *how)
+{
+	int i, t;
+
+	t = Trapplatform;
+	if(strcmp(how, "platform") == 0)
+		t = Trapplatform;
+	else if(strcmp(how, "none") == 0)
+		t = Trapnone;
+	else if(strcmp(how, "sys") == 0){
+		if(vmsysp == nil)
+			error("no system calls for guests on this platform");
+		t = Trapsys;
+	}
+	else
+		error(Ebadarg);
+	qlock(vm);
+	if(waserror()){
+		qunlock(vm);
+		nexterror();
+	}
+	for(i = 0; i < vm->nvcpu; i++)
+		if(vm->vcpu[i]->nexit != 0)
+			error("the machine has run");
+	if(vm->spgrp == nil && t == Trapsys){
+		incref(up->pgrp);
+		vm->spgrp = up->pgrp;
+		vm->sfgrp = dupfgrp(up->fgrp);
+	}
+	vm->traps = t;
+	poperror();
+	qunlock(vm);
+	if(t == Trapsys)
+		for(i = 0; i < vm->nvcpu; i++)
+			vcpucmd(vm->vcpu[i], adoptns, nil);
+}
+
+/*
  * "vcpus n": processors 1 to n-1 of the machine, each a kproc on a
  * processor of its own where there are enough; they wait, as an
  * application processor does, for the INIT and SIPI that start them.
@@ -584,6 +673,10 @@ vmput(Vm *vm)
 	for(i = 0; i < vm->nvcpu; i++)
 		free(vm->vcpu[i]);
 	vmplatfree(vm);
+	if(vm->spgrp != nil)
+		closepgrp(vm->spgrp);
+	if(vm->sfgrp != nil)
+		closefgrp(vm->sfgrp);
 	free(vm);
 }
 
@@ -923,6 +1016,9 @@ exitread(Vcpu *v, char *a, s32 n, s64 off)
 	case VxException:
 		p = seprint(p, e, " vec %d errcode %#ux", x.vec, x.errcode);
 		break;
+	case VxExited:
+		p = seprint(p, e, " status %lld", (vlong)x.data);
+		break;
 	}
 	seprint(p, e, "\n");
 	return readstr(0, a, n, buf);
@@ -982,8 +1078,9 @@ vmread(Chan *c, void *a, s32 n, s64 off)
 			nexterror();
 		}
 		e = buf + READSTR;
-		p = seprint(buf, e, "vm %d backend %s mem %llud vcpus %d\n",
-			vm->id, vmops->name, vm->memsize, vm->nvcpu);
+		p = seprint(buf, e, "vm %d backend %s mem %llud vcpus %d traps %s\n",
+			vm->id, vmops->name, vm->memsize, vm->nvcpu,
+			vm->traps == Trapsys ? "sys" : vm->traps == Trapnone ? "none" : "platform");
 		for(i = 0; i < vm->nvcpu; i++){
 			v = vm->vcpu[i];
 			p = seprint(p, e, "vcpu%d cpu %d state %s exits %llud%s%s\n", i, v->machno,
@@ -993,6 +1090,8 @@ vmread(Chan *c, void *a, s32 n, s64 off)
 			for(k = 0; k < VxNkind; k++)
 				if(v->nkind[k] != 0)
 					p = seprint(p, e, " %s %llud", xkindname[k], v->nkind[k]);
+			if(v->nsys != 0)
+				p = seprint(p, e, " syscalls %llud", v->nsys);
 			p = seprint(p, e, "\n");
 		}
 		p = vmplatstatus(vm, p, e);
@@ -1067,6 +1166,8 @@ vmwrite(Chan *c, void *a, s32 n, s64 off)
 			killvm(vm);
 		else if(cb->nf == 2 && strcmp(cb->f[0], "vcpus") == 0)
 			setvcpus(vm, atoi(cb->f[1]));
+		else if(cb->nf == 2 && strcmp(cb->f[0], "traps") == 0)
+			settraps(vm, cb->f[1]);
 		else if(cb->nf == 2 && strcmp(cb->f[0], "trace") == 0){
 			vm->trace = atoi(cb->f[1]);
 			if(vm->trace > 0 && !watching){

@@ -846,6 +846,47 @@ gwalk(Vcpu *v, uvlong va, uvlong *gpa)
 	return 0;
 }
 
+/*
+ * For vmsys.c (traps sys): the system call's registers, Linux's x86-64
+ * ones -- the number in rax, the arguments in rdi, rsi, rdx, r10, r8,
+ * the result in rax -- and guest-virtual memory through the guest's
+ * page tables, page by page.
+ */
+static int sysregs[6] = { VRax, VRdi, VRsi, VRdx, VR10, VR8 };
+
+uvlong
+vmplatsysarg(Vcpu *v, int i)
+{
+	return vmops->getreg(v, sysregs[i]);
+}
+
+void
+vmplatsysret(Vcpu *v, uvlong r)
+{
+	vmops->setreg(v, VRax, r);
+}
+
+int
+vmplatgcopy(Vcpu *v, uvlong va, uchar *buf, int n, int towrite)
+{
+	uvlong gpa;
+	uchar *p;
+	int i, m;
+
+	for(i = 0; i < n; i += m){
+		m = BY2PG - ((va + i) & (BY2PG-1));
+		if(m > n - i)
+			m = n - i;
+		if(gwalk(v, va + i, &gpa) < 0 || (p = gpaptr(v->vm, gpa, m)) == nil)
+			break;
+		if(towrite)
+			memmove(p, buf + i, m);
+		else
+			memmove(buf + i, p, m);
+	}
+	return i;
+}
+
 static int
 fetch(Vcpu *v, uvlong rip, uchar *buf, int n)
 {

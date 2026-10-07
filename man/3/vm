@@ -100,6 +100,55 @@ lowest-priority, NMI, INIT, SIPI) and MSIs to the APICs they name; a
 vCPU in guest mode on another processor is taken out to see one by a
 host IPI.
 .TP
+.BI traps " how"
+Who answers the vCPUs' exits, before the machine first runs:
+.B platform
+(the default) the emulated machine below, making it a virtual
+machine for a guest kernel;
+.B none
+nothing in the kernel, every exit going to
+.BR exit ;
+.B sys
+this kernel's system calls, making it a process with hardware: its
+own address space, rings and exceptions on the processor's
+virtualization extension, its system calls Inferno's.  It runs in the
+writer's namespace with a copy of the writer's file descriptors,
+shared by its vCPUs.  A hypercall (VMCALL, or SVM's VMMCALL) is a
+system call: the number in
+.BR rax ,
+the arguments in
+.BR rdi ,
+.BR rsi ,
+.BR rdx ,
+.B r10
+and
+.BR r8 ,
+the result in
+.B rax
+(\-1 for an error);
+buffers are guest-virtual addresses.  The calls are 0
+.IR exits ( status ),
+1
+.IR open ( path , mode ),
+2
+.IR close ( fd ),
+3
+.IR read ( fd , buf , n ),
+4
+.IR write ( fd , buf , n ),
+5
+.IR pread ( fd , buf , n , off ),
+6
+.IR pwrite ( fd , buf , n , off ),
+7
+.IR seek ( fd , off , type )
+and 8
+.IR errstr ( buf , n ).
+.I Exits
+stops the vCPU with an
+.B exited
+exit carrying its status.
+.TP
 .BI trace " seconds"
 While a vCPU runs, print on the host's console, at most every
 .I seconds
@@ -174,6 +223,7 @@ blocks until the vCPU stops and says why: the kind
 .BR entryfail ,
 .BR stopped ,
 .BR shutdown ,
+.BR exited ,
 .BR other ),
 the guest's
 .BR rip ,
@@ -266,6 +316,8 @@ Styx mount of another host's
 .B /os/inferno/port/vmpci.c
 .br
 .B /os/inferno/port/vmvirtio.c
+.br
+.B /os/inferno/port/vmsys.c
 .SH SEE ALSO
 .IR iommu (3),
 .IR pci (10),
@@ -294,3 +346,6 @@ have no state files, and the kvmclock records are not rewritten
 across a stop.
 .PP
 No XSAVE state beyond x87/SSE is offered to guests.
+.PP
+.B "traps sys"
+is x86 only so far, and its system calls are Inferno's, not Linux's.

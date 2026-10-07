@@ -658,6 +658,114 @@ are the model and the check for it.
 Limits.  At most 16 machines (\f(CWNvm\fP in
 .CW devvm.c ).
 .RE
+.IP "18. Computation as a bindable resource." 4
+A VM is one kind of computation; a remote computer, a cloud instance
+and this host are others, and commands run on any of them.  They
+should plug into a spawner the way ethers plug into
+.I ip (3)
+.CW "bind ether /net/ether0" , (
+a medium table chosen by name), with the control plane a namespace
+that Inferno serves itself \(em not an SDK, not ssh, not a foreign
+guest agent.  Arrakis's split is the frame: the kernel is the control
+plane (naming, protection, allocation, which a namespace, Styx's
+authentication and clone/ctl already are) and the data plane goes
+where the substrate puts it.
+.IP
+Layers, Dune and Arrakis being substrates, not kinds:
+.RS
+.IP L0 6
+the hardware: VMX, SVM, RISC-V H; the IOMMU; SR-IOV.
+.IP L1 6
+substrates.  CPU (Dune's): a context, its guest memory, its traps \(em
+#H's
+.CW devvm.c
+and the backends.  Device (Arrakis's): a VF or queue, its IOMMU domain,
+its interrupts \(em now inside
+.CW vmpci.c .
+.IP L2 6
+computations, compositions of L1 and what answers the context's traps:
+a Dis process (neither substrate); a process with hardware (CPU, its
+traps this kernel's system calls); the same with a device (CPU and
+device, the data plane on the VF); a VM (CPU, the emulated platform and
+a guest kernel, devices optional); a remote or cloud instance (someone
+else's L0\-L2, reached over Styx).
+.IP L3 6
+the control plane:
+.CW /compute ,
+media for each kind
+.CW "bind vm /n/h0/dev/vm" , (
+.CW "bind inferno /n/h1" ,
+.CW "bind gce project/zone" ),
+and commands on any instance in #C's shape
+(clone,
+.CW N/{ctl,data,stderr,wait} ).
+.RE
+.IP
+An agent \(em something inside the computation the control plane must
+talk to \(em is needed exactly where a foreign kernel answers the traps,
+since then the host no longer sees processes; Inferno guests and remote
+Inferno need none (their own
+.CW "export /" ),
+and an agent where needed speaks Styx.
+.IP
+Order: (1) the CPU substrate apart from the platform, and the
+system-call trap server (the process with hardware); (2) the device
+substrate apart from the guest's PCI bus, and a VF on such a process;
+(3)
+.CW /compute
+with the
+.CW inferno
+and
+.CW vm
+media,
+.I vmsched
+its placement policy; (4) a
+.CW gce
+medium over Compute Engine's REST API, with
+.I cloudfs 's
+token.
+.IP
+(1): done on x86.  A machine's ctl takes
+.CW "traps platform|none|sys" :
+who answers its vCPUs' exits \(em the emulated machine (the default,
+.CW vmplat.c ),
+nothing (every exit to Limbo), or this kernel's system calls
+.CW port/vmsys.c ). (
+With
+.CW sys
+the context runs in the writer's namespace with a copy of its file
+descriptors, shared by its vCPUs (each vCPU's kproc takes them), and
+its hypercall (VMCALL, VMMCALL) is a system call: the number in rax,
+the arguments in rdi rsi rdx r10 r8 (Linux's x86-64 registers), the
+result in rax, buffers guest-virtual through the guest's page tables;
+exits, open, close, read, write, pread, pwrite, seek, errstr.
+.CW exits
+stops the vCPU with an
+.CW "exited ... status n"
+exit.  The platform gives
+.CW vmsys.c
+the registers and guest memory
+.CW vmplatsysarg , (
+.CW vmplatsysret ,
+.CW vmplatgcopy );
+.CW vmsyslink
+sets the pointer devvm calls, so a platform without them refuses
+.CW "traps sys"
+rather than not linking.  check-vm's M1 boot runs a 32-bit payload so
+made: it opens
+.CW /dev/sysname
+(there because the test bound #c), reads it, writes a greeting and the
+name to its fd 1 \(em a pipe the test had there when it wrote
+.CW "traps sys"
+\(em and exits 7.  SVM and VMX, QEMU TCG: "VMTEST: dune: exit exited
+rip 0x105f ... status 7", "it wrote "DUNE: a process with hardware, on
+vmtest-host"", "vcpu0 handled 4 exits vmcall 5 syscalls 5", "check-vm:
+process with hardware: pass".  Owed: the RISC-V hooks (ECALL, a7 and
+a0\-a4, VS-stage walk), whose platform file a permission refusal kept
+this work from reading; a 64-bit process with its own page tables
+(this payload runs with paging off); and Linux's system calls in place
+of these, which would make a Linux binary a process with hardware \(em
+the gVisor problem.
 .NH 1
 Where things go
 .DS

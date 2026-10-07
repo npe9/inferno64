@@ -91,6 +91,7 @@ link
 	svm
 	vtd
 	amdvi
+	vmsys
 ##	ether82557	pci
 #	ether83815	pci
 #	etherelnk3	pci

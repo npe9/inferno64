@@ -36,7 +36,19 @@ enum {
 	VxStopped,	/* stopped by request, not by the guest */
 	VxOther,	/* anything else; raw names the backend's code */
 	VxShutdown,	/* the guest asked to be switched off (SBI SRST); raw the reset type */
+	VxExited,	/* a process (traps sys) called exits; data its status */
 	VxNkind,
+};
+
+/*
+ * Vm.traps: who answers a context's exits.  The CPU substrate -- a
+ * context, its guest memory, its exits -- is the same for all three;
+ * what serves it makes it a machine or a process.
+ */
+enum {
+	Trapplatform,	/* the emulated machine (vmplat.c): a VM, its guest kernel above */
+	Trapnone,	/* nothing in the kernel: every exit goes up to Limbo */
+	Trapsys,	/* hypercalls are this kernel's system calls (vmsys.c): a process */
 };
 
 struct Vmexit
@@ -176,6 +188,7 @@ struct Vcpu
 	int	silent;		/* the watchdog has reported this silence */
 	Proc	*kproc;		/* the vCPU's kproc, for the watchdog */
 	uvlong	nkind[VxNkind];	/* and of each kind */
+	uvlong	nsys;		/* Trapsys: system calls made */
 
 	/* a request for the kproc to run on its own processor */
 	QLock	cmdlk;
@@ -206,10 +219,25 @@ struct Vm
 	uvlong	memsize;
 	void	*gp;		/* the backend's nested page tables */
 	void	*plat;		/* the platform's devices (vmplat.c) */
+	int	traps;		/* Trapplatform, Trapnone, Trapsys */
+	Pgrp	*spgrp;		/* Trapsys: the namespace its system calls see */
+	Fgrp	*sfgrp;		/* and its file descriptors, shared by its vCPUs */
 	int	trace;		/* seconds between vCPU heartbeats on the console, 0 none */
 	int	nvcpu;
 	Vcpu	*vcpu[Maxvcpu];
 };
 
 extern Vmops *vmops;
+
+/*
+ * vmsys.c: Trapsys's system calls; 0 when the process has exited (e
+ * is then VxExited).  Set by vmsyslink where the kernel has them and
+ * the platform the hooks below.
+ */
+extern int	(*vmsysp)(Vcpu*, Vmexit*);
+
+/* from the platform, for vmsys.c: the call's registers, and guest-virtual memory */
+uvlong	vmplatsysarg(Vcpu*, int);	/* 0 the call's number, 1-5 its arguments */
+void	vmplatsysret(Vcpu*, uvlong);
+int	vmplatgcopy(Vcpu*, uvlong va, uchar *buf, int n, int towrite);
 void	vmregister(Vmops*);

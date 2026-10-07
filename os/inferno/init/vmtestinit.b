@@ -100,6 +100,7 @@ init()
 
 	sys->bind("#H", "/dev", Sys->MAFTER);
 	m1();
+	dunetest();
 	releasetest();
 }
 
@@ -514,4 +515,170 @@ stripnl(s: string): string
 	while(len s > 0 && s[len s - 1] == '\n')
 		s = s[0:len s - 1];
 	return s;
+}
+
+# ---- a process with hardware (doc/genesize-plan.ms, phase 18) ----
+#
+# The same CPU substrate as M1's machine, with "traps sys": its
+# hypercalls are this kernel's system calls, made in this program's
+# namespace with a copy of its file descriptors.  The payload, 32-bit
+# with paging off, opens /dev/sysname (there because this program
+# binds #c there first), reads it, writes a greeting and the name to
+# fd 1 -- a pipe this program reads -- and exits with status 7:
+#
+#	mov $1,%eax; mov $0x2000,%edi; mov $0,%esi; vmcall	open
+#	mov %eax,%ebx
+#	mov $3,%eax; mov %ebx,%edi; mov $0x2100,%esi; mov $64,%edx; vmcall	read
+#	mov %eax,%ebp
+#	mov $4,%eax; mov $1,%edi; mov $0x2020,%esi; mov $len,%edx; vmcall	write
+#	mov $4,%eax; mov $1,%edi; mov $0x2100,%esi; mov %ebp,%edx; vmcall
+#	mov $0,%eax; mov $7,%edi; vmcall		exits
+#	hlt
+#
+# The hypercall is VMX's VMCALL (0f 01 c1) or SVM's VMMCALL (0f 01 d9),
+# chosen by the backend.
+
+Dunegreet: con "DUNE: a process with hardware, on ";
+
+dunepayload(svm: int): array of byte
+{
+	c3 := byte 16rc1;
+	if(svm)
+		c3 = byte 16rd9;
+	call := array[] of {byte 16r0f, byte 16r01, c3};
+	p := array[0] of byte;
+	p = cat(p, movi(16rb8, 1));
+	p = cat(p, movi(16rbf, 16r2000));
+	p = cat(p, movi(16rbe, 0));
+	p = cat(p, call);
+	p = cat(p, array[] of {byte 16r89, byte 16rc3});	# mov %eax,%ebx
+	p = cat(p, movi(16rb8, 3));
+	p = cat(p, array[] of {byte 16r89, byte 16rdf});	# mov %ebx,%edi
+	p = cat(p, movi(16rbe, 16r2100));
+	p = cat(p, movi(16rba, 64));
+	p = cat(p, call);
+	p = cat(p, array[] of {byte 16r89, byte 16rc5});	# mov %eax,%ebp
+	p = cat(p, movi(16rb8, 4));
+	p = cat(p, movi(16rbf, 1));
+	p = cat(p, movi(16rbe, 16r2020));
+	p = cat(p, movi(16rba, len Dunegreet));
+	p = cat(p, call);
+	p = cat(p, movi(16rb8, 4));
+	p = cat(p, movi(16rbf, 1));
+	p = cat(p, movi(16rbe, 16r2100));
+	p = cat(p, array[] of {byte 16r89, byte 16rea});	# mov %ebp,%edx
+	p = cat(p, call);
+	p = cat(p, movi(16rb8, 0));
+	p = cat(p, movi(16rbf, 7));
+	p = cat(p, call);
+	p = cat(p, array[] of {byte 16rf4});
+	return p;
+}
+
+# mov $v, register: the opcode names the register
+movi(op, v: int): array of byte
+{
+	return array[] of {byte op, byte v, byte (v>>8), byte (v>>16), byte (v>>24)};
+}
+
+cat(a, b: array of byte): array of byte
+{
+	c := array[len a + len b] of byte;
+	c[0:] = a;
+	c[len a:] = b;
+	return c;
+}
+
+dunetest()
+{
+	svm := 0;
+	b := readall("/dev/vm/backend");
+	if(len b >= 3 && b[0:3] == "svm")
+		svm = 1;
+	sys->bind("#c", "/dev", Sys->MAFTER);
+	# a name for the process to read, so the read must carry it
+	name := stripnl(readall("/dev/sysname"));
+	if(name == ""){
+		name = "vmtest-host";
+		fd := sys->open("/dev/sysname", Sys->OWRITE);
+		if(fd == nil || sys->fprint(fd, "%s", name) < 0){
+			fail(sys->sprint("dune: sysname: %r"));
+			return;
+		}
+	}
+	want := Dunegreet + name;
+
+	ctl := sys->open("/dev/vm/clone", Sys->ORDWR);
+	nb := array[16] of byte;
+	n: int;
+	if(ctl == nil || (n = sys->read(ctl, nb, len nb)) <= 0){
+		fail(sys->sprint("dune: clone: %r"));
+		return;
+	}
+	dir := "/dev/vm/" + string nb[0:n];
+	if(sys->fprint(ctl, "mem %d", 2*1024*1024) < 0){
+		fail(sys->sprint("dune: mem: %r"));
+		return;
+	}
+	mem := sys->open(dir + "/mem", Sys->OWRITE);
+	code := dunepayload(svm);
+	path := array of byte "/dev/sysname";
+	greet := array of byte Dunegreet;
+	if(mem == nil || sys->pwrite(mem, code, len code, big Load) != len code
+	|| sys->pwrite(mem, cat(path, array[] of {byte 0}), len path + 1, big 16r2000) != len path + 1
+	|| sys->pwrite(mem, greet, len greet, big 16r2020) != len greet){
+		fail(sys->sprint("dune: loading: %r"));
+		return;
+	}
+	regs := sys->open(dir + "/vcpu0/regs", Sys->OWRITE);
+	if(regs == nil || sys->fprint(regs, "rip %#ux\nrsp %#ux\n", Load, 16r8000) < 0){
+		fail(sys->sprint("dune: regs: %r"));
+		return;
+	}
+
+	# fd 1 a pipe while "traps sys" copies the descriptors
+	p := array[2] of ref Sys->FD;
+	if(sys->pipe(p) < 0){
+		fail(sys->sprint("dune: pipe: %r"));
+		return;
+	}
+	saved := sys->dup(1, -1);
+	sys->dup(p[1].fd, 1);
+	r := sys->fprint(ctl, "traps sys");
+	sys->dup(saved, 1);
+	if(r < 0){
+		fail(sys->sprint("dune: traps sys: %r"));
+		return;
+	}
+	p[1] = nil;
+	sys->print("VMTEST: dune: machine %s, traps sys\n", string nb[0:n]);
+
+	exitfd := sys->open(dir + "/vcpu0/exit", Sys->OREAD);
+	vctl := sys->open(dir + "/vcpu0/ctl", Sys->OWRITE);
+	if(exitfd == nil || vctl == nil || sys->fprint(vctl, "go") < 0){
+		fail(sys->sprint("dune: go: %r"));
+		return;
+	}
+	eb := array[512] of byte;
+	n = sys->read(exitfd, eb, len eb);
+	line := "";
+	if(n > 0)
+		line = string eb[0:n];
+	sys->print("VMTEST: dune: exit %s", line);
+	got := "";
+	ob := array[256] of byte;
+	while(len got < len want && (n = sys->read(p[0], ob, len ob)) > 0)
+		got += string ob[0:n];
+	sys->print("VMTEST: dune: it wrote \"%s\"\n", got);
+	(nil, w) := sys->tokenize(line, " \n");
+	status := "";
+	for(; w != nil; w = tl w)
+		if(hd w == "status" && tl w != nil)
+			status = hd tl w;
+	if(len line > 7 && line[0:7] == "exited " && status == "7" && got == want)
+		sys->print("VMTEST: DUNE-OK a process with hardware opened, read and wrote through this kernel's system calls, and exited 7\n");
+	else
+		fail(sys->sprint("dune: wanted \"%s\" and exited status 7", want));
+	sys->print("VMTEST: dune: status\n%s", readall(dir + "/status"));
+	sys->fprint(ctl, "kill");
 }
