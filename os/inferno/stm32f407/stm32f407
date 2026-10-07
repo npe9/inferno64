@@ -59,7 +59,30 @@ dev
 # the reason was not any missing code: THIS LINE WAS MISSING, so the
 # board had no #D to push anything onto.  appl/cmd/styxseg.b shows the
 # composition works under a host emu.
-	ssl
+# ssl IS OUT, AND IT COSTS 21064 BYTES.
+#
+# Measured: with it the image is 915608 bytes against bin2ihex's limit of
+# 913408 -- BootStart 0xe0000 less a 4096-byte guard -- and nothing can
+# be flashed at all.  Without it, 894544, with 18864 bytes of headroom.
+#
+# AND SMALLER TRIMS ARE NOT AVAILABLE, which is the part worth writing
+# down.  The shortfall was 2200 bytes, so two small removals were tried
+# first and BOTH MADE THE IMAGE BIGGER: dropping md5sum and strings from
+# the root section took it to 919192, and dropping the #c/xalloc case
+# from devcons.c took it to 920968.  The layout's quantum is larger than
+# the shortfall, so there is no 2200 bytes to find; the only lever
+# measured is this one.  Why a removal grows the image by 3.5K is not
+# explained and is worth its own look -- data2s and dis2s both emit
+# padding, and an order-dependent pad would do this.
+#
+# What it costs at run time: lib/radio's ssl= key still parses and the
+# station still tries, and ssl->connect() cannot open #D/0, so protect()
+# returns nil and the station prints ARMV7M-STYX-NOSSL.  It degrades
+# loudly rather than quietly, which is why the key stays.
+#
+# The measurement it paid for stands: over sha/rc4_256 on #D/0 the two
+# boards mounted three times of three and read 273 bytes twice, equal,
+# once of three.  See doc/radio-plan.ms.
 
 # the order matters: a library with an undefined symbol at the end
 # makes the loader complain

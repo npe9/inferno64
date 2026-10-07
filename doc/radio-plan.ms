@@ -8384,3 +8384,82 @@ One more assumption corrected on the way:
 A control that was supposed to leave the satellite silent had it back up
 and answering inside three seconds, so that band-noise measurement has
 not been taken.
+.NH 1
+AND THE IMAGE HAD STOPPED FITTING IN FLASH
+.PP
+.B "Nothing could be flashed at all, and my own harness hid it."
+.B bin2ihex 's
+limit is 913408 \- BootStart 0xe0000 less a 4096-byte guard \- and the
+image had reached
+.BR 915608 .
+Both images, station and shell.
+.PP
+.B "The flash logs said so and I had overwritten them."
+Three batches wrote the flashverify output and the twostyx run output to
+.I the same filenames
+\- flash to
+.BR q1.log ,
+run to
+.B q1.log
+\- so each run clobbered the evidence that its own flash had failed, and
+.B "a grep for FLASHVERIFY-OK found none and I read that as the flash failing"
+when the file was simply not a flash log any more.  Two separate
+mistakes in one harness, and the fix for both is distinct names.
+.NH 2
+What it costs, and that smaller trims are not available
+.PP
+.B "ssl is 21064 bytes."
+With it 915608 and nothing flashes; without it 894544, with 18864 bytes
+of headroom.  So it is out of the conf, and
+.I /lib/radio 's
+.B ssl=
+key stays, because the station then fails loudly:
+.IR ssl->connect ()
+cannot open
+.B #D/0
+and
+.I protect ()
+returns nil, which prints
+.BR ARMV7M-STYX-NOSSL .
+.PP
+.B "The shortfall was 2200 bytes and there is no 2200 bytes to find."
+Two smaller trims were tried first and
+.B "both made the image BIGGER:"
+.DS
+.CW "as committed                       915608"
+.CW "less md5sum and strings from root  919192"
+.CW "less the #c/xalloc case            920968"
+.CW "less ssl                           894544"
+.DE
+.B "A removal growing the image by three and a half kilobytes is not a text-size relationship,"
+and it means the layout's quantum is larger than the shortfall.
+.I Data2s
+and
+.I dis2s
+both emit padding and an order-dependent pad would do exactly this.
+.B "Unexplained, and worth its own look before anyone tries to trim this image again."
+.PP
+A second thing found on the way and equally unexplained:
+.B stm32f407.prog.s
+does not exist after a build.
+.B "The XIP rule never fires,"
+so every
+.CW "rm -f stm32f407.prog.s"
+taken as a way to force regeneration was a no-op, and the init reaches
+the image through the root section rather than through XIPDIS.  Which is
+also why dropping two modules from XIPDIS changed the size by nothing at
+all.
+.NH 2
+The bench, left working
+.PP
+.DS
+.CW "both boards flashed, both carry ../init/armv7mstyx.dis"
+.CW "ARMV7M-STYX-NOSSL-BYCHOICE on both"
+.CW "gnd: rxstall 5 rxpartial 3 resume 3 rxstale 0 rxunder 0"
+.CW "gnd: styx: 273 bytes over the radio, twice"
+.CW "gnd: styx: far rxstall 0 rxpartial 0 resume 0 rxstale 0"
+.CW "gnd: ARMV7M-STYX-BIGREAD-OK"
+.DE
+.B "The ssl measurement stands as a result from a build that had it"
+\- mounted three of three, read 273 bytes twice and equal once of three
+\- and taking it out is a flash-size decision and not a retraction.
