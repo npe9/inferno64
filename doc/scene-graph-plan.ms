@@ -480,19 +480,67 @@ per boot, and 38 still appeared on a kernel carrying the
 fix, which killed the prediction that they were a consequence of the
 stale-instruction bug.
 .PP
-.B "Fix to try:"
-a bounds check against the heap's own arena before the write \(em two
-compares, on a hot path, so measure the cost rather than assume it is
-free.
-.B "Positive control:"
-inject a garbage declared-pointer word and confirm the check catches it,
-because a validation that has never rejected anything has not been shown
-to validate.
-.B Caveat:
-the broken-header evidence is on someone else's board. The libinterp
-work and the control can be done under host emu with
+.B "DONE as"
+.CW 4613599c7 ,
+.B "and it CONTAINS rather than fixes."
+A bounds check against the heap's arena is not available \(em the heap
+is pool-allocated across several arenas, not one range. But
+.CW color
+is cheaper and better: its whole domain is 0..3, since
+.CW mutator ,
+.CW marker
+and
+.CW sweeper
+are
+.CW gccolor%3
+and
+.CW propagator
+is 3, and all three allocation paths in
+.CW heap.c
+set it immediately after
+.CW poolalloc ,
+before the object can escape. So one unsigned compare rejects a garbage
+word and can NEVER reject a real heap object \(em which is the direction
+that matters, because a false negative would leave a live object
+unmarked and free it underneath its owner.
+.PP
+.B "And the existing guard was not one."
+.CW checkmarkptr()
+on the raspi3b branch is board bring-up instrumentation that ends in
+.CW abort() ,
+disabled behind
 .CW distrack
-enabled; the confirmation that it reduces the header count cannot.
+because it fires on a hosted emu within a second of a shell starting.
+It is a probe with false positives, not a validation, so there was
+nothing to enable.
+.PP
+.B "Why containment is the honest word."
+.CW initmem()
+sets every declared-pointer slot to
+.CW H ,
+so a garbage word in one is always the consequence of an earlier
+corruption. Skipping it does not repair that; it stops one bad word
+scribbling an unrelated live object, and counts it where it is
+detectable instead of where it surfaces.
+.PP
+.B "Controls, both run:"
+.CW tkscenetest ,
+.CW ellipsetest
+and
+.CW "gfxstress all"
+fire it zero times, so it has no false positives on healthy work; and
+with the threshold inverted to reject everything the print fires, the
+skip path runs, and
+.CW ellipsetest
+stops completing \(em which is what marking nothing should do. The count
+is a variable so a board can be read over JTAG, with the print bounded
+to one line a boot.
+.PP
+.B Caveat,
+unchanged: the 38 to 56 broken GC block headers a boot are on the
+raspi3b session's hardware and are not reproduced here, and the Pi
+kernel with this in boots with zero firings. So what is claimed is a
+container and a detector, not a diagnosis of those headers.
 .NH 1
 Item 5: where this work should live, which is a decision and not a task
 .PP
