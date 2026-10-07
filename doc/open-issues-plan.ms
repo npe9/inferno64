@@ -11942,3 +11942,57 @@ on a catch.
 Note what made this free: the captures were already on disk from runs taken for
 other reasons this session, kept whole because the item said to keep them
 whole.  The measurement cost one script.
+.NH 3
+A7 across the other compilers: jc makes the SAME choice and is right to
+.LP
+.CW 7c
+is one of eleven compilers here and four boards are built by
+.CW jc .
+The same shape,
+.CW "b + x*y" ,
+through every 64-bit one:
+.P1
+7c  (aarch64, fixed)  MULW R3,R2 / MOVW R2,R2 / ADD R0,R2,R0
+6c  (amd64)           IMULL x,CX / MOVLQSX CX,CX / LEAQ (DX)(CX*1),AX
+jc  (riscv64)         MULW R12,R13,R8 / ADD R9,R8          <- no extension
+zc  (riscv32)         MUL R5,R7,R1 / ADD R1,R4,R1          <- 32-bit target
+.P2
+.B "jc emits no extension, and pre-fix 7c emitted none either."
+The two compilers make the same choice.
+.B "It is wrong on one architecture and right on the other,"
+because an AArch64 write to a W register ZEROES the top half while RV64's
+.CW MULW
+is defined to place the SIGN-EXTENSION of its 32-bit result in the destination.
+.PP
+.B "What is measured here, and it is the part that matters:"
+.CW jc
+DISTINGUISHES the cases.  Given
+.CW "b + (s32)v"
+with
+.CW v
+a 64-bit value it emits
+.CW "MOVW R10,R8"
+\(em a narrow-and-sign-extend \(em because the source is a full register that
+nothing has extended; and it omits that only where the producing instruction is
+itself a
+.CW W
+form.  A compiler that could not emit the extension at all would be the
+worrying case and this is not it.
+.PP
+.B "What is asserted and not measured:"
+that RV64's
+.CW W
+instructions sign-extend.  That is an architecture definition rather than a
+reading taken here, and nothing in this tree is being changed on the strength of
+it \(em
+.CW jc
+is left alone.  The cheap falsifier if anyone doubts it: the four riscv64 boards
+would carry the same byteaddr-class wild writes
+.CW 7c
+did, and they boot and run their suites.  Weak corroboration, stated as weak.
+.PP
+.CW zc
+is a 32-bit target where pointers are 32 bits and there is nothing to widen.
+So A7, like A6, is
+.CW 7c 's
+alone.
