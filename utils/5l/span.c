@@ -58,7 +58,26 @@ span(void)
 		if(p->as==AMOVW && p->to.type==D_REG && p->to.reg==REGPC && (p->scond&C_SCOND) == 14)
 			flushpool(p, 0);
 		c += m;
-		if(blitrl)
+		/*
+		 * A CASE and its BCASE entries are an ARRAY -- optab 62 and
+		 * 63, four bytes each -- so entry i must sit at table+4*i,
+		 * and flushpool() splices a branch and the literal pool in
+		 * after p.  Past the split the entries keep their offsets
+		 * and stop occupying their slots, and the dispatch reads
+		 * pool words as offsets.  See the long note in
+		 * utils/7l/span.c, which is the same defect in the same
+		 * function with the same "BUG: should refer back to values"
+		 * comment underneath it.
+		 *
+		 * NOT REPRODUCED ON THIS LOADER.  7l's was caught on a
+		 * raspi3b kernel; this ships on structural identity plus
+		 * the diag in flushpool, and it is layout-dependent, so a
+		 * build that works proves nothing either way.  The guard
+		 * costs a deferred flush and cannot itself break a
+		 * correct table.
+		 */
+		if(blitrl && !(p->as == ACASE ||
+		   (p->as == ABCASE && p->link != P && p->link->as == ABCASE)))
 			checkpool(p);
 	}
 
@@ -165,6 +184,16 @@ void
 flushpool(Prog *p, int skip)
 {
 	Prog *q;
+
+	/*
+	 * Nothing may be spliced into a CASE's BCASE run -- see span().
+	 * The caller defers past the end of the run, so this is
+	 * unreachable; say so loudly if it ever is not, because the
+	 * alternative is a table that silently dispatches into pool data.
+	 */
+	if(p->as == ACASE || (p->as == ABCASE && p->link != P
+	   && p->link->as == ABCASE))
+		diag("literal pool flush inside a CASE table\n%P", p);
 
 	if(blitrl) {
 		if(skip){

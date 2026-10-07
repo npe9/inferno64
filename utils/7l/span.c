@@ -62,7 +62,45 @@ span(void)
 		if(p->as == AB || p->as == ARET || p->as == AERET || p->as == ARETURN)	/* TO DO: other unconditional operations */
 			checkpool(p, 0);
 		c += m;
-		if(blitrl)
+		/*
+		 * A CASE AND ITS BCASE ENTRIES ARE AN ARRAY, NOT A CODE
+		 * SEQUENCE.
+		 *
+		 * Entry i must sit at table+4*i, because the dispatch
+		 * indexes it: ADR of the table, LDRSW of the entry, ADD,
+		 * BR.  flushpool() splices a branch and the literal pool
+		 * in AFTER p, which is right for ordinary code and fatal
+		 * here -- the entries past the split keep their correct
+		 * offsets and stop occupying their slots, so the dispatch
+		 * reads the pool's DWORDs as offsets.
+		 *
+		 * Measured on raspi3b in a sibling branch, not here: a
+		 * conswrite table of 29 slots held 23 contiguous entries,
+		 * then a loader-inserted B and five pool constants, with
+		 * the last six entries 0x6e00 further on.  Writing
+		 * /dev/time branched through a zero into the table's own
+		 * base and panicked with trap type 0, esr 0x2000000, EC 0.
+		 *
+		 * IT IS LAYOUT-DEPENDENT, which is why it looked like
+		 * anything but a loader bug and why it matters in a tree
+		 * that places code at fixed addresses: whether a flush
+		 * falls due inside a run depends on how much code precedes
+		 * it, so four unrelated lines elsewhere moved it in and
+		 * out.  A build that does not crash is not a build without
+		 * it.
+		 *
+		 * So the forced flush is deferred past the end of the run.
+		 * A flush after the LAST entry is harmless, hence the
+		 * lookahead rather than a blanket test on ABCASE.
+		 *
+		 * utils/tl, which is what this tree's stm32f407 links
+		 * with, has never had this: it passes casesz(p) to
+		 * checkpool for an ACASE, so the flush falls due before
+		 * the table instead of inside it.  utils/5l has the same
+		 * defect as this and its checkpool takes no size at all.
+		 */
+		if(blitrl && !(p->as == ACASE ||
+		   (p->as == ABCASE && p->link != P && p->link->as == ABCASE)))
 			checkpool(p, 1);
 	}
 
@@ -171,6 +209,16 @@ static void
 flushpool(Prog *p, int skip)
 {
 	Prog *q;
+
+	/*
+	 * Nothing may be spliced into a CASE's BCASE run -- see the note
+	 * in span().  The caller defers past the end of the run, so this
+	 * is unreachable; say so loudly if it ever is not, because the
+	 * alternative is a table that silently dispatches into pool data.
+	 */
+	if(p->as == ACASE || (p->as == ABCASE && p->link != P
+	   && p->link->as == ABCASE))
+		diag("literal pool flush inside a CASE table\n%P", p);
 
 	if(blitrl) {
 		if(skip){
