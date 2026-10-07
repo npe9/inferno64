@@ -47,6 +47,22 @@
 # fix that broke the boot once.  Deleting it would let the obvious wrong
 # fix back in silently.
 #
+# OVERLAP WITH tests/kencc-narrowcast.sh, discovered after this was written and
+# worth saying here rather than leaving two tests claiming different bugs.
+# That test's v1 is
+#
+#	a = i->data->bdata+i->zero+(s32)(sizeof(u32)*p.y*i->width);
+#
+# which it calls a NARROWING defect because the cast narrows a 64-bit
+# expression.  The instruction that was missing is the SXTW, so it is the same
+# gmove arm as p2 below, under a different name -- and 55af85de3 fixed both.
+# Measured: narrowcast exits 2 on the pre-55af85de3 compiler and 0 on this one.
+#
+# Which makes narrowcast's own closing advice live: "if it now works, the
+# 32-bit-operand workarounds can be revisited (libmemdraw/alloc.c byteaddr, and
+# whatever else cites this test)".  Not done here -- the workaround is correct
+# and defensive, and removing it needs a board.
+#
 # EXIT: 0 both halves right, 1 a shape this test relies on changed, 2 a
 # defect is present.
 #

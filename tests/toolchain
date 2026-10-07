@@ -1,0 +1,90 @@
+#!/bin/sh
+#
+# toolchain - run every regression test for a kencc defect this tree has found.
+#
+#	sh tests/toolchain
+#
+# HOST ONLY, no board, no JTAG.  Each of these is the surviving witness to a
+# real miscompilation that cost this tree a debugging session, and nothing ran
+# them together, so "is the toolchain still right" had no answer short of
+# remembering six filenames.  A compiler or loader change should be followed by
+# this.
+#
+# WHAT EACH ONE GUARDS, which is the reason to keep them rather than the reason
+# they pass today:
+#
+#   kencc-brloop      a conditional branch to an indirect branch.  7l and 6l
+#                     both emitted one; the fix is validated by relinking
+#                     something real, and this checks the encoding.
+#   kencc-selfbranch  a branch to itself, which 6l and 7l emitted inside
+#                     panic() of every real kernel.  Scans the LINKED kernels,
+#                     so it needs them built -- and it is the one test here
+#                     that can fail because of a stale image rather than a
+#                     stale compiler.
+#   kencc-narrowcast  a narrowing cast that emits no narrowing instruction.
+#                     Found twice, because the first re-check used a shape
+#                     whose source and destination land in different registers
+#                     and so cannot bite.  Its v1 turns out to be the SAME
+#                     gmove arm as kencc-widencast's p2 -- both exit 2 on the
+#                     pre-55af85de3 compiler -- so these two overlap and are
+#                     kept separate only because each documents its own hunt.
+#   kencc-widencast   the mirror: a 32-bit value widened to 64 with a plain
+#                     MOV, which samaddr then drops.  Also guards the REGISTER
+#                     test that keeps a move of the stack pointer from being
+#                     widened, which is the regression that panicked the board.
+#   7l-bigconst       a 64-bit constant in a four-byte literal pool slot, so
+#                     `ADD $4294967296' added nothing.
+#   troff-argorder    not a compiler test, but the same shape in the documents:
+#                     a .CW/.I/.B line whose arguments troff reorders silently.
+#
+# EXIT: 0 all pass.  1 a test could not run or depends on something that
+# changed.  2 a defect is present.  The distinction is each test's own and is
+# preserved here, because "the test is broken" and "the compiler is broken"
+# need different work and this tree has confused them before.
+#
+set -u
+ROOT=`cd \`dirname "$0"\`/.. && pwd`
+cd "$ROOT" || exit 1
+
+TESTS="kencc-brloop.sh kencc-selfbranch.sh kencc-narrowcast.sh \
+	kencc-widencast.sh 7l-bigconst.sh troff-argorder.sh"
+
+pass=0
+broke=0
+defect=0
+worst=0
+
+for t in $TESTS; do
+	[ -f "tests/$t" ] || { echo "toolchain: no tests/$t"; broke=`expr $broke + 1`; continue; }
+	out=`sh "tests/$t" 2>&1`
+	rc=$?
+	case $rc in
+	0)	pass=`expr $pass + 1`
+		printf '  ok      %s\n' "$t"
+		;;
+	2)	defect=`expr $defect + 1`
+		[ $worst -lt 2 ] && worst=2
+		printf '  DEFECT  %s\n' "$t"
+		echo "$out" | sed 's/^/          /'
+		;;
+	*)	broke=`expr $broke + 1`
+		[ $worst -lt 1 ] && worst=1
+		printf '  BROKE   %s (exit %s)\n' "$t" "$rc"
+		echo "$out" | sed 's/^/          /'
+		;;
+	esac
+done
+
+echo
+echo "toolchain: $pass pass, $defect defect(s), $broke could not run"
+if [ $defect != 0 ]; then
+	echo "toolchain: a DEFECT means the compiler or loader is miscompiling"
+	echo "toolchain: again.  Read the failing test's header: each one names the"
+	echo "toolchain: bug it was written for and what it cost."
+fi
+if [ $broke != 0 ]; then
+	echo "toolchain: a BROKE means the test could not reach its subject -- a"
+	echo "toolchain: missing 7c, or for kencc-selfbranch an unbuilt kernel."
+	echo "toolchain: It is NOT a pass and it is NOT a defect."
+fi
+exit $worst
