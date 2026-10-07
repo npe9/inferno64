@@ -97,10 +97,12 @@ init()
 		args = "-s" :: "7200" :: "-m" :: "256" :: "-q" :: "LINUXGUEST: ran" :: "-d" :: "20"
 			:: "-i" :: "/guest/initramfs.cpio" :: "-a" :: "console=ttyS0 linuxguest.root=vda"
 			:: "-b" :: root
-			:: "-t" :: "echo LINUXGUEST: on disk; grep vda /proc/mounts | sed 's/^/LINUXGUEST: mount /'; echo LINUXGUEST: \"r\"an"
+			:: "-t" :: "echo LINUXGUEST: on disk; grep vda /proc/mounts | sed 's/^/LINUXGUEST: mount /'; for p in /dev/hvc0; do [ -c $p ] && echo hello-after-release > $p && echo LINUXGUEST: wrote hvc0 again; done; echo LINUXGUEST: \"r\"an"
 			:: "/guest/vmlinuz" :: nil;
 		{
-			vmlinux->init(nil, "vmlinux" :: args);
+			# the function the first machine had, released (blocked,
+			# reset by FLR) when it ended, given to this one
+			vmlinux->init(nil, "vmlinux" :: concat(pcionly(assign), args));
 		} exception e {
 		"*" =>
 			sys->print("LINUXTEST: vmlinux: %s\n", e);
@@ -110,6 +112,18 @@ init()
 }
 
 Marker: con "INFERNO-VIRTIO-DISK";
+
+# the -p arguments of an argument list
+pcionly(l: list of string): list of string
+{
+	r: list of string;
+	for(; l != nil; l = tl l)
+		if(hd l == "-p" && tl l != nil){
+			r = "-p" :: hd tl l :: r;
+			l = tl l;
+		}
+	return r;
+}
 memfsup := 0;
 
 # a disk of size bytes in memory, a marker in its first sector if given;

@@ -308,7 +308,12 @@ amdattach(Iodom *d, Pcidev *p)
 	}
 	a = d->arch;
 	e = dtab + Ndte*id;
-	e[0] = 0;
+	/*
+	 * Blocked while it changes: translation valid with no tables and
+	 * neither IR nor IW refuses everything, where V clear (or TV
+	 * clear) would pass DMA through untranslated.
+	 */
+	e[0] = DteV | DteTV;
 	coherence();
 	invdte(id);
 	e[1] = a->domid;

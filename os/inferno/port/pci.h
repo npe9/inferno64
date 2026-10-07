@@ -365,6 +365,7 @@ extern void pcisetmwi(Pcidev* p);
 extern void pciclrmwi(Pcidev* p);
 
 extern int pcicap(Pcidev *p, int cap);
+extern int pciflr(Pcidev *p);
 extern int pcicfgspace(Pcidev *p);
 extern int pcienumextcaps(Pcidev *p, int (*fmatch)(Pcidev*, int, int, int, void*), void *arg);
 extern int pciextcap(Pcidev *p, int cap);

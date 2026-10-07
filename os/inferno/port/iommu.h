@@ -16,7 +16,7 @@ typedef struct Iommuops Iommuops;
 typedef struct Iofault Iofault;
 
 enum {
-	Iodomdevs	= 16,
+	Iodomdevs	= 64,
 	Iofaults	= 64,
 
 	IoR	= 1,
@@ -76,3 +76,4 @@ void	iommudomattach(Iodom*, Pcidev*);
 void	iommudomdetach(Iodom*, Pcidev*);
 void	iommudommap(Iodom*, uvlong iova, uvlong pa, uvlong len, int prot);
 void	iommudomkill(Iodom*);
+void	iommurelease(Pcidev*);

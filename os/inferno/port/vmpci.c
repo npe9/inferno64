@@ -25,9 +25,17 @@
  * addresses onto the guest's memory, so the guest programs the device
  * with guest-physical addresses and it can reach nothing else.
  *
+ * When the machine ends (vmpcistop, before its memory is freed), each
+ * function it had loses bus
+ * mastering, goes from the guest's domain straight into the IOMMU's
+ * blocking domain (iommurelease), where DMA it still makes reaches
+ * nothing, and is reset by FLR where it has one; it stays blocked
+ * until it is assigned again or claimed through #Q.
+ *
  * Not done: I/O BARs, MSI (only MSI-X), INTx, extended configuration
- * space (the guest sees 256 bytes, through either), function-level reset on
- * assignment, and taking a function back from a host driver -- assign
+ * space (the guest sees 256 bytes, through either), reset on
+ * assignment, a reset for functions without FLR, and taking a
+ * function back from a host driver -- assign
  * only functions the host has no driver for.  An interrupt raised on
  * a processor other than the vCPU's is seen at the vCPU's next exit,
  * at most a clock tick later; no IPI kicks it out sooner yet.
@@ -126,28 +134,50 @@ void
 vmpcifree(void *a)
 {
 	Vpci *pc = a;
-	Vpcidev *d;
-	int i, j;
+	int i;
 
 	if(pc == nil)
 		return;
 	for(i = 0; i < pc->nvirt; i++)
 		vvfree(pc->virt[i]);
-	for(i = 0; i < pc->ndev; i++){
-		d = &pc->dev[i];
-		for(j = 0; j < d->msixn; j++)
-			if(d->msix[j].hosted)
-				pcimsixintrdisable(d->p, j, msixintr, &d->msix[j], d->name);
-		pcicfgw16(d->p, PciPCR, pcicfgr16(d->p, PciPCR) & ~MASen);
-		if(d->dom != nil){
-			if(!waserror()){
-				iommudomdetach(d->dom, d->p);
-				iommudomkill(d->dom);
-				poperror();
-			}
-		}
-	}
 	free(pc);
+}
+
+/*
+ * An assigned function the machine is done with, while its memory is
+ * still there (vmpcistop, from killvm): no interrupts, no bus
+ * mastering, out of the guest's domain -- which maps memory about to
+ * be freed and given to others -- straight into the blocking domain,
+ * then reset.
+ */
+static void
+release(Vpcidev *d)
+{
+	int j, blocked, flr;
+
+	for(j = 0; j < d->msixn; j++)
+		if(d->msix[j].hosted){
+			pcimsixintrdisable(d->p, j, msixintr, &d->msix[j], d->name);
+			d->msix[j].hosted = 0;
+		}
+	pcicfgw16(d->p, PciPCR, pcicfgr16(d->p, PciPCR) & ~MASen);
+	blocked = 0;
+	if(d->dom != nil){
+		if(!waserror()){
+			iommurelease(d->p);
+			blocked = 1;
+			poperror();
+		}else
+			print("%s: not blocked: %s\n", d->name, up->errstr);
+		if(!waserror()){
+			iommudomkill(d->dom);
+			poperror();
+		}
+		d->dom = nil;
+	}
+	flr = pciflr(d->p);
+	print("%s: released: %s, %s\n", d->name,
+		blocked ? "blocked" : "NOT blocked", flr ? "reset by FLR" : "no FLR");
 }
 
 /*
@@ -366,6 +396,8 @@ vmpcistop(void *arg)
 		return;
 	for(i = 0; i < pc->nvirt; i++)
 		vvstop(pc->virt[i]);
+	for(i = 0; i < pc->ndev; i++)
+		release(&pc->dev[i]);
 }
 
 /* a config read of the host bridge: an Intel host bridge, and nothing else */

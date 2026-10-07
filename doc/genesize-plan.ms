@@ -516,15 +516,52 @@ backends; or, where only hardware has it, a check on the workstation.
 In rough order of consequence:
 .RS
 .IP \(bu 2
-Device release.  When a machine ends,
-.CW vmpcifree
-clears bus mastering and returns the function to the host domain,
-which passes everything through; there is no FLR and no blocking
-domain in between, so a function that keeps DMAing (or a queued DMA
-after the guest's last command) reaches host memory.  A released
-function goes to a blocking domain, is reset (FLR, or the PF's
-reset for a VF), and stays blocked until a driver claims it.  The
-misbehaving device of phase 16 is what checks it.
+Device release: paid, but for functions without FLR.  It was worse
+than written here: the release ran in
+.CW vmpcifree ,
+when the machine's last reference went, after
+.CW killvm
+had freed the guest's memory, so until then the function's domain
+still mapped memory given back to the host, and then it went to the
+host domain.  Now
+.CW vmpcistop
+(from
+.CW killvm ,
+before the memory goes) releases each function: its MSI-X vectors
+off, bus mastering off, then straight from the guest's domain into
+the IOMMU's blocking domain
+.CW iommurelease "" (
+in
+.CW deviommu.c :
+a numbered domain that maps nothing, not killed nor given memory;
+the backend repoints the function from one domain to the other, never
+through the host domain; a function leaves it when attached elsewhere
+or detached), the guest's domain killed, and an FLR
+.CW pciflr "" (
+in
+.CW pci.c :
+transactions pending waited out, the reset, 100 ms, the host's BARs
+and command register put back).  AMD-Vi's attach, repointing a
+device, cleared its DTE in between, which passes DMA through
+untranslated; it now writes V and TV with neither IR nor IW, which
+refuses everything.  Checks, on SVM and on VMX (QEMU TCG, the
+patched QEMU's VMX), the same results: check-vm's M1 boot
+assigns QEMU's edu to a machine that is killed, turns bus mastering
+back on behind the kernel's back and has edu write its buffer to a
+host page by its physical address: on VT-d "vm0.PCI.4.0.0: released:
+blocked, no FLR", "RELEASE-BLOCKED-OK ... faulted (1 new faults) and
+page B is untouched", then claimed back through #Q, "RELEASE-CLAIMED-OK";
+the same on AMD-Vi (64 new faults).  With the old release the same
+test fails ("edu in the host domain", "page B untouched 0, new faults
+0").  M2's boot: the virtio-serial function M5 assigned, when vmlinux
+ends, "vm0.PCI.5.0.0: released: blocked, reset by FLR", and it is
+assigned again to the next boot, whose console it carries
+("device release and reuse: pass"); check-styxvm's M9 releases it
+the same way, and check-vf's VFs of the 82576 and the 82599, each
+with FLR, pass.  Not yet:
+a reset for functions without FLR (the PM capability's D3hot, a
+secondary bus reset), and a function that DMAs on its own after
+release (the misbehaving device of phase 16; edu only DMAs when told).
 .IP \(bu 2
 Interrupt virtualization.  Interrupts reach guests by injection only:
 no APIC virtualization or posted interrupts (VMX), no AVIC (SVM).

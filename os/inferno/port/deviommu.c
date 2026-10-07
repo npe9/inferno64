@@ -18,7 +18,11 @@
  *	#Q/iommu/N/faults	the faults whose requester is attached here
  *
  * A device attached to a domain can reach, by DMA, only what that
- * domain maps.  Detached, it is back in the host domain.  Domains for
+ * domain maps.  Detached, it is back in the host domain.  A function
+ * a guest had is released into the blocking domain, which maps
+ * nothing (iommurelease); it is one of the numbered domains, seen like
+ * the others but not killed or given memory, and a function leaves it
+ * when attached to another domain or detached (claimed by the host).  Domains for
  * guests are made from the kernel (devvm.c, phase 6) through the same
  * Iommuops; the files are how they are seen and how they are tested.
  */
@@ -57,6 +61,7 @@ static int enabled;
 
 static QLock iommulk;
 static Iodom *doms[Ndom];
+static Iodom *blockdom;		/* maps nothing: functions released by guests */
 
 static Lock faultlk;
 static Iofault fault[Iofaults];
@@ -228,16 +233,41 @@ newdom(void)
 	return d;
 }
 
+/* drop p from d's list (the backend is not told); iommulk held */
+static void
+unlist(Iodom *d, Pcidev *p)
+{
+	int i;
+
+	for(i = 0; i < d->ndev; i++)
+		if(d->dev[i] == p){
+			d->dev[i] = d->dev[--d->ndev];
+			return;
+		}
+}
+
+/*
+ * A function in the blocking domain is taken straight from it: the
+ * backend repoints it from one domain to the other, never through the
+ * host domain.
+ */
 static void
 attach(Iodom *d, Pcidev *p)
 {
+	Iodom *o;
+
 	if(!iommuops->covers(p))
 		error("no IOMMU covers that function");
-	if(devdom(p) != nil)
+	o = devdom(p);
+	if(o == d)
+		error("already attached to that domain");
+	if(o != nil && o != blockdom)
 		error("already attached to a domain");
 	if(d->ndev >= Iodomdevs)
 		error("too many devices in the domain");
 	iommuops->attach(d, p);
+	if(o != nil)
+		unlist(o, p);
 	d->dev[d->ndev++] = p;
 }
 
@@ -547,12 +577,17 @@ iommuwrite(Chan *c, void *a, s32 n, s64 off)
 			attach(d, parsebdf(cb->f[1]));
 		else if(cb->nf == 2 && strcmp(cb->f[0], "detach") == 0)
 			detach(d, parsebdf(cb->f[1]));
-		else if(cb->nf == 3 && strcmp(cb->f[0], "mem") == 0)
+		else if(cb->nf == 3 && strcmp(cb->f[0], "mem") == 0){
+			if(d == blockdom)
+				error("the blocking domain maps nothing");
 			dommem(d, strtoull(cb->f[1], nil, 0), strtoull(cb->f[2], nil, 0));
-		else if(cb->nf == 3 && strcmp(cb->f[0], "unmap") == 0){
+		}else if(cb->nf == 3 && strcmp(cb->f[0], "unmap") == 0){
 			iommuops->unmap(d, strtoull(cb->f[1], nil, 0), strtoull(cb->f[2], nil, 0));
-		}else if(cb->nf == 1 && strcmp(cb->f[0], "kill") == 0)
+		}else if(cb->nf == 1 && strcmp(cb->f[0], "kill") == 0){
+			if(d == blockdom)
+				error("the blocking domain stays");
 			killdom(d);
+		}
 		else
 			error(Ebadctl);
 		poperror();
@@ -657,6 +692,39 @@ iommudomkill(Iodom *d)
 		nexterror();
 	}
 	killdom(d);
+	poperror();
+	qunlock(&iommulk);
+}
+
+/*
+ * A function its guest is done with (vmpcifree): into the blocking
+ * domain, straight from the guest's, so DMA it still has queued, or
+ * starts after, reaches nothing -- not the host domain, which reaches
+ * everything.  It stays there until attached elsewhere or detached.
+ */
+void
+iommurelease(Pcidev *p)
+{
+	Iodom *o;
+
+	qlock(&iommulk);
+	if(waserror()){
+		qunlock(&iommulk);
+		nexterror();
+	}
+	if(blockdom == nil)
+		blockdom = newdom();
+	o = devdom(p);
+	if(o != blockdom){
+		if(!iommuops->covers(p))
+			error("no IOMMU covers that function");
+		if(blockdom->ndev >= Iodomdevs)
+			error("the blocking domain is full");
+		iommuops->attach(blockdom, p);
+		if(o != nil)
+			unlist(o, p);
+		blockdom->dev[blockdom->ndev++] = p;
+	}
 	poperror();
 	qunlock(&iommulk);
 }

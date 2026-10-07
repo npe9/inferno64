@@ -2,7 +2,9 @@
 # The hypervisor's milestones on the QEMU bench (doc/genesize-plan.ms):
 #
 #	M1	a freestanding 32-bit guest runs under #H and exits cleanly
-#		(os/inferno/pc64/pc64vm, os/inferno/init/vmtestinit.b)
+#		(os/inferno/pc64/pc64vm, os/inferno/init/vmtestinit.b);
+#		in the same boot, and again on AMD-Vi, device release:
+#		edu, assigned to a killed machine, is blocked and claimable
 #	M2	an unmodified Linux boots to a shell that runs a command
 #		typed from Limbo (pc64linux, linuxtestinit.b, vmlinux(1),
 #		the guest of scripts/mklinuxguest.sh)
@@ -86,6 +88,27 @@ else
 	echo "check-vm: nil dereference ($B host): FAIL"
 	fail=1
 fi
+# device release (phase 17): edu, assigned to a machine that is then
+# killed, DMAs to a host page; it must be in the blocking domain and
+# fault, then be claimable from it.  On VT-d (this boot) and AMD-Vi.
+for iommu in intel amd; do
+	name=vt-d
+	log="$WORK/m1.log"
+	if [ $iommu = amd ]; then
+		name=amd-vi
+		log="$WORK/m1-amd.log"
+		VMHOST_IOMMU=amd sh "$ROOT/scripts/vmhost.sh" run 120 >"$log" 2>&1 || true
+	fi
+	if grep -q 'released: blocked' "$log" && grep -q 'VMTEST: RELEASE-BLOCKED-OK' "$log" \
+	&& grep -q 'VMTEST: RELEASE-CLAIMED-OK' "$log" && ! grep -q 'VMTEST: FAIL release' "$log"; then
+		echo "check-vm: device release ($name): pass"
+		grep 'released: \|VMTEST: release\|VMTEST: RELEASE' "$log" | sed 's/^/	/'
+	else
+		echo "check-vm: device release ($name): FAIL"
+		grep 'released\|VMTEST: \(release\|RELEASE\|FAIL\)\|panic' "$log" | sed 's/^/	/' | tail -8
+		fail=1
+	fi
+done
 }
 
 stage m2 && {
@@ -116,6 +139,18 @@ if grep -q 'hello-from-the-guest' "$ROOT/.qemu/vmhost-hvc.log" 2>/dev/null; then
 else
 	echo "check-vm: M5 ($B): FAIL -- the guest's virtio console output did not reach QEMU"
 	grep '^pci 00\|PCI-MSIX\|virtio' "$WORK/m2.log" | sort -u | sed 's/^/	/' | tail -8
+	fail=1
+fi
+# the function M5 assigned, released when its machine ended (blocked,
+# reset by FLR, its configuration put back) and assigned again to the
+# boot on the virtio disk, whose console it carries
+if grep -q 'PCI.5.0.0: released: blocked, reset by FLR' "$WORK/m2.log" \
+&& grep -q 'hello-after-release' "$ROOT/.qemu/vmhost-hvc.log" 2>/dev/null; then
+	echo "check-vm: device release and reuse ($B): pass"
+	grep -a -o 'vm[0-9]*.PCI.5.0.0: released: [^\r]*' "$WORK/m2.log" | sed 's/^/	/'
+else
+	echo "check-vm: device release and reuse ($B): FAIL"
+	grep -a -o 'vm[0-9]*.PCI.5.0.0: released: [^\r]*\|LINUXGUEST: wrote hvc0.*' "$WORK/m2.log" | sed 's/^/	/'
 	fail=1
 fi
 if grep -q '^LINUXGUEST: disk vda 2048 sectors' "$WORK/m2.log" \
