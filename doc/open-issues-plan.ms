@@ -11072,3 +11072,252 @@ which is the reader that is.
 17 restarts in 79660 sweeps is 0.02%, and the restart re-walks rather than
 re-collects, so the cost is bounded by a re-sweep's inspection work and was not
 measured.  The fix is justified by correctness, not by a number.
+.NH 2
+A6.  7l stored a 64-bit constant in a FOUR-BYTE literal pool slot
+.LP
+.CW utils/7l/span.c 's
+.CW addpool()
+chose the slot size from the OPCODE:
+.P1
+	t.as = AWORD; sz = 4;
+	if(p->as == AMOV) { t.as = ADWORD; sz = 8; }
+.P2
+and
+.CW asmout.c 's
+.CW omovlit()
+picks the load width from exactly that field
+.CW ( "if(p->cond->as == ADWORD) w = 1" ).
+.CW optab.c
+gives
+.CW LFROM
+\(em put the from operand in the literal pool \(em to
+.CW AADD ,
+.CW ACMP ,
+.CW AAND
+and
+.CW ABIC
+as well as
+.CW AMOV ,
+so for those four a 64-bit constant was stored in four bytes and read with a
+32-bit LDR.
+.B "Silently truncated to its low 32 bits:"
+.P1
+00100034: 18000171 8b110000	ADD $4294967296,R0,R0
+00100060: 100000000		WORD ,$4294967296
+00100064: 04712fd8		<- the next entry, FOUR bytes on
+.P2
+.CW 0x18...
+is a 32-bit LDR literal and the low 32 bits of 2^32 are zero, so that
+instruction
+.B "adds nothing."
+After the fix the load is
+.CW 0x58...
+and the entry is a
+.CW DWORD
+eight bytes wide.
+.PP
+.B "The intent was never in doubt."
+.CW asmout
+cases 13 and 28 both say "(64 bit literal)" in their own comments and both call
+.CW "omovlit(AMOV, ...)"
+precisely to get a 64-bit load.  Only
+.CW addpool 's
+test for it was wrong.
+.NH 3
+Why nothing caught it, and why "MOV works" was worthless evidence
+.LP
+.CW l.h
+declares
+.CW C_VCON ,
+"64-bit constant";
+.CW span.c 's
+.CW cmp()
+matches it;
+.CW asmout.c 's
+case 11 handles it; and
+.B "aclass() returns it nowhere."
+The class that means "this needs 64 bits" exists, is matched, is handled, and
+is never produced, so every constant arrives at
+.CW addpool
+as a
+.CW C_LCON
+whatever its width.
+.PP
+.B "And the pool is deduplicated by a memcmp of the Adr,"
+which made the defect order-dependent in BOTH directions: a
+.CW MOV
+of the same constant reaching
+.CW addpool
+first left an 8-byte slot the
+.CW ADD
+then used correctly, and an
+.CW ADD
+first left a 4-byte slot a later
+.CW MOV
+loaded 32 bits from.  So "a MOV of a big constant works" was true and told you
+nothing.  Sizing by the constant makes the two agree, so sharing is safe again.
+.NH 3
+It was live in the shipping kernel, at one pre-existing site
+.LP
+Scanning a full
+.CW "7l -a"
+listing of
+.CW iraspi3b
+for non-MOV instructions with a constant too wide for a signed 32-bit field
+finds four.  Three are in code added the same day (the trap hint below and its
+control).  The fourth is
+.CW poolfmt11+0x10
+in
+.CW os/inferno/port/alloc.c :
+.P1
+	if(v > 99999999999ULL)	/* clamp to 11 digits for /dev/memory */
+.P2
+whose
+.CW CMP
+loaded
+.CW 0x4876E7FF ,
+so
+.B "the clamp fired at 1215752191 instead of 99999999999"
+and
+.CW /dev/memory
+reported
+.CW 99999999999
+for any pool counter past about 1.2 billion.  A wrong number rather than a
+crash, which is why it sat there.
+.PP
+202 other pool constants are in [2^31, 2^32), where a zero-extending 32-bit
+load gives the right answer; those were correct before and are correct now.
+.CW 7l
+is the only loader here with this shape \(em
+.CW 5l
+and
+.CW tl
+are 32-bit ARM, where a slot is four bytes and there is no 64-bit constant to
+get wrong.
+.NH 3
+A positive control for one thing found another
+.LP
+This was not found by reading the linker.
+.CW trap.c
+grew a diagnostic that recognises a faulting address 2^32 above where the code
+meant \(em the signature of
+.CW 7c
+dropping a sign extension, which this board has paid for twice \(em and
+.B "a claim about a panic path nobody has made fire is a claim about code nobody has run."
+So
+.CW devcons
+grew a
+.CW signfault
+command that faults at a known address plus 2^32.  Its first run printed
+.P1
+SIGNFAULT about to read 0x4712fd8, intended 0x4712fd8
+SIGNFAULT read 0x0 WITHOUT faulting
+.P2
+.B "The 2^32 had vanished from an address the kernel computed itself."
+The control caught a different bug from the one it was built for, and the hint
+it was written to test only became testable after the linker was fixed.
+.PP
+Then both, in one boot on silicon:
+.P1
+SIGNFAULT about to read 0x10475b458, intended 0x475b458
+TRAP type 0 esr 96000005 pc 0018e0b0 lr 0018e0ac far 000000010475b458
+  far is >= 2^32: SHAPE OF A LOST SIGN EXTENSION (7c)
+    intended 000000000475b458
+  see tools/jtag/umulladd; this board cannot address above 0x41000000
+.P2
+.B "Same value on both sides,"
+which is the point of a control that prints what it is about to do: the
+recovered address is checked against the one it was built from rather than
+merely looking plausible.
+.PP
+The recovery is trustworthy here for a specific reason and not in general.
+.CW KZERO
+is 0, DRAM tops out at 1GB and the peripherals sit below
+.CW 0x41000000 ,
+so no mapping this kernel makes can produce a legitimate
+.CW far
+at or above 2^32.  It is printed as a HINT: a wild pointer from any other cause
+can land up there too, and what the line asserts is the shape and the
+arithmetic, both checkable from the line itself.
+.NH 3
+The test took two tries, and both failures were shapes that cannot bite
+.LP
+.CW tests/7l-bigconst.sh
+is the regression test, with its negative control run: exit 2 on the old
+.CW span.c
+(three FAIL lines naming the 32-bit LDRs, and 1 DWORD slot where 3 are due),
+exit 0 on the new one.  Getting there cost two wrong versions:
+.IP \(bu
+.B "0x300000000 and 0x700000000 ARE encodable AArch64 logical immediates,"
+so
+.CW AND
+and
+.CW BIC
+never reached the literal pool at all and the test asserted on instructions
+that were not there.  A trailing
+.CW 1
+breaks the replicated-bitmask pattern and forces the pool.
+.IP \(bu
+.B "The grep pattern was an end-of-line anchor."
+.CW "grep \(dq\\et$op\\et\\\\$\(dq"
+in double quotes reaches
+.CW grep
+as a bare
+.CW $ ,
+which anchors to end of line and matched nothing \(em on a linker that was
+correct.  Replaced with
+.CW awk
+and a bracket expression, which has no escaping ambiguity.
+.PP
+Two shapes that cannot bite, in a test written about shapes that cannot bite.
+The sibling
+.CW tests/kencc-narrowcast.sh
+exists for exactly that reason and I made the same mistake twice in an hour
+while adding a test modelled on it.
+.PP
+.B "And BIC is deliberately not asserted:"
+.CW 7c
+folds
+.CW "x & ~k"
+into
+.CW AND
+of the complement, so no C source reaches the
+.CW ABIC
+entry \(em
+.CW BIC
+with a literal is 7a-only.  It shares
+.CW asmout
+case 28 with
+.CW AND
+and so shares the fix; asserting on a shape the compiler cannot produce would
+make the test fail for a reason that is not the defect.
+.NH 3
+Verified, and what is not claimed
+.LP
+Build 1791332330, installed from the card:
+.CW tests/efs-fault
+21 ok 0 fail,
+.CW drawink
+all checks passed,
+.CW gfxstress
+fill 44000 ops/s and mask 115 ops/s, GC chains broken 0 with 27 cursor
+swallows all repaired.  No new build diagnostics, and
+.CW flushpool() 's
+CASE-table guard stays silent although the pool grew by 202 slots.
+.IP \(bu
+.B "The 98 remaining umulladd candidates are still unaudited."
+This is a 7l defect and that is a 7c one; they are the same FAMILY \(em a value
+too wide for where it is put \(em and neither closes the other.  What the trap
+hint buys is that the next instance of the 7c one identifies itself in its own
+panic instead of costing a session.
+.IP \(bu
+.B "Why writing to /dev/consctl stops the remote-command poller is not diagnosed."
+Two probes went to
+.CW /dev/consctl
+before the cmdtab was found under
+.CW Qsysctl ;
+.CW conswrite 's
+consctl handler ignores an unknown word silently, and both attempts left the
+poller unanswering with no diagnostic.  Recorded as an observation.  The
+earlier guess in H4 that this matched the styx wedge is withdrawn \(em it was a
+write to the wrong file.
