@@ -11321,3 +11321,119 @@ consctl handler ignores an unknown word silently, and both attempts left the
 poller unanswering with no diagnostic.  Recorded as an observation.  The
 earlier guess in H4 that this matched the styx wedge is withdrawn \(em it was a
 write to the wrong file.
+.NH 2
+C.  Writing to /dev/consctl stops the poller, and the obvious cause is not it
+.LP
+Measured three times.  A command containing
+.P1
+	echo rawoff > /dev/consctl
+.P2
+prints everything up to that point and nothing after it, the completion token
+never appears, and
+.B "no later boardrun is picked up at all"
+\(em
+.CW board.out
+keeps showing the old
+.CW RCMD
+line until the board is rebooted.
+.PP
+.B "The first two times this was read as the recorded styx wedge and written into this plan as one."
+That is withdrawn.  It is a write to the wrong file, and the symptom is
+specific and repeatable.
+.NH 3
+The clean story is false, and only JTAG could say so
+.LP
+.CW conswrite 's
+.CW rawon / rawoff
+arms take
+.CW qlock(&kbd) ,
+and
+.CW consread
+holds that same qlock across a blocking
+.CW qread
+of a console nobody on this desk can type at.  That is a complete mechanism, it
+explains the 100% reproducibility, and
+.B "it is wrong."
+Read over JTAG with the target halted, the whole
+.CW kbd
+structure past
+.CW Lock.pc
+is zero \(em
+.CW QLock.locked
+0,
+.CW owner
+0,
+.CW head
+and
+.CW tail
+0, and
+.CW kbd.ctl
+0 \(em so the open, the write and the close all completed and that lock is
+free.
+.PP
+.B "Where the poller stops is not diagnosed and this is not a fix."
+.CW tools/jtag/boardrun
+now REFUSES a command containing
+.CW consctl
+(overridable with
+.CW BOARDRUN_CONSCTL=1 ),
+because the cost is a dead channel and a four-minute reboot rather than a wrong
+number \(em which is why it is a refusal and not a warning like the
+.CW &
+note beside it.
+.PP
+Note what could and could not test the lock story.
+.CW "screen -X stuff"
+cannot, in either direction: the console's RECEIVE path is dead on this desk,
+which is the entire reason the poller exists, so delivering a keystroke to
+release the supposed lock is not available.
+.B "The JTAG read is what killed the hypothesis,"
+and the hypothesis had been reached by reading the source and was one paragraph
+from being written up as the answer.
+.NH 3
+The actionable part: the ctl commands are on /dev/sysctl
+.LP
+.CW conswrite
+dispatches its
+.CW Cmdtab
+under
+.CW Qsysctl ,
+not
+.CW Qconsctl :
+.CW sched ,
+.CW procdump ,
+.CW ilock ,
+.CW signfault ,
+.CW panic ,
+.CW reboot .
+.CW /dev/consctl
+takes
+.CW rawon
+and
+.CW rawoff
+only and silently ignores anything else, so writing a ctl word there does
+nothing useful even when it does not wedge.  Two probes went to the wrong file
+before that was noticed, and one of them is where H4's claim that GC-COUNTS is
+unverified came from.
+.NH 3
+And a latent clobber the refusal would have made reachable
+.LP
+.CW boardrun 's
+.CW idle()
+fell through to WRITING
+.CW board.cmd
+when
+.CW TOK
+was unset, so any exit before the token is assigned \(em the usage error, and
+now the refusal \(em would overwrite a CONCURRENT run's command with idle, and
+that run would then poll for a token the board was never asked to print.
+.B "That is exactly the cross-run clobber the compare-and-clear in idle() was added to prevent,"
+left open at the one end where no token exists yet.  No token means this run
+never wrote, so it has nothing to clear and must not write.  Verified: the
+refusal exits 2 and leaves
+.CW board.cmd
+byte-identical.
+.PP
+Worth noting as a shape: a guard added at one end of a function left the other
+end unguarded, and adding a second early exit was what made it reachable.
+.B "An early return added after a cleanup trap is installed inherits that trap's assumptions."
