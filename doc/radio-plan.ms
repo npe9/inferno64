@@ -8527,3 +8527,27 @@ came back empty and was compared against an empty string.  An absent
 is a failure now, and it says which two files have to be removed
 together.
 .B "A check that cannot fail is the reason a stale blob got as far as the flash limit."
+.NH 2
+A small cost noticed on the way, and left alone deliberately
+.PP
+The ground prints
+.DS
+.CW "the mount carries 382 bytes a message, so msize 406 over"
+.CW "        109-byte frames: 4 frames, and the window is 4"
+.DE
+and
+.B Styxrpc
+is
+.CW "Ax25window * (Ccpayload - Ax25hdr) - Maxsslrec"
+\- 4 times 109 less 30 \- so
+.B "the 30 bytes an ssl record header would need are reserved whether ssl is pushed or not."
+With it shipping 0, every station pays 30 bytes a message, about seven
+per cent, for a header it never writes.  And 436 would still be exactly
+four frames, so the reserve costs payload and not frames.
+.PP
+.B "Left alone, because the alternative is worse."
+ssl is per-board data now, so a compile-time constant cannot know
+whether a given board will push it, and a reserve that is sometimes
+absent means the two ends can disagree about msize \- which is a
+negotiation fault rather than a seven per cent one.
+.B "Worth having written down rather than silently paid."
