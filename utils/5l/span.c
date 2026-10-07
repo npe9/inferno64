@@ -58,7 +58,27 @@ span(void)
 		if(p->as==AMOVW && p->to.type==D_REG && p->to.reg==REGPC && (p->scond&C_SCOND) == 14)
 			flushpool(p, 0);
 		c += m;
-		if(blitrl)
+		/*
+		 * A CASE and its BCASE entries are an ARRAY, not a code
+		 * sequence, and on arm it is worse than on aarch64: case 62 in
+		 * asm.c is MOVW R<<2(PC),PC, so the dispatch LOADS the target
+		 * out of the table, and case 63 stores an ABSOLUTE pc -- a
+		 * spliced pool word is jumped to directly rather than added as
+		 * an offset.  flushpool() splices after whatever p happens to
+		 * be, which is right for ordinary code and fatal here.
+		 *
+		 * Carried from rio-pi-tk c64838f39, the arm twin of 7l's
+		 * b42059ba9, and reproduced here: with the distance check
+		 * forced to 0x200 an armv7 kernel link splices a pool into
+		 * five tables -- icmpiput6, conswrite, progwrite among them.
+		 * Normal layout splices none, which is why nothing has
+		 * crashed, and is not evidence of absence.
+		 *
+		 * So defer the forced flush to the end of the run; a flush
+		 * after the LAST entry is harmless, hence the lookahead.
+		 */
+		if(blitrl && !(p->as == ACASE ||
+		   (p->as == ABCASE && p->link != P && p->link->as == ABCASE)))
 			checkpool(p);
 	}
 
@@ -165,6 +185,16 @@ void
 flushpool(Prog *p, int skip)
 {
 	Prog *q;
+
+	/*
+	 * Nothing may be spliced into a CASE's BCASE run -- see span().
+	 * The caller defers past the end of the run, so this is
+	 * unreachable; say so loudly if it ever is not, because the
+	 * alternative is a table that dispatches into pool data, and on
+	 * arm straight to it.
+	 */
+	if(p->as == ACASE || (p->as == ABCASE && p->link != P && p->link->as == ABCASE))
+		diag("literal pool flush inside a CASE table\n%P", p);
 
 	if(blitrl) {
 		if(skip){
