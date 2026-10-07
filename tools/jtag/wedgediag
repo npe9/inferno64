@@ -83,6 +83,31 @@ else
 	ps -o pid=,time=,state=,command= -A 2>/dev/null | grep '[e]mu-cpu' | head -3 |
 		sed 's/^/  after:  /'
 	echo "  (same TIME in both = blocked; climbing = busy or spinning)"
+	#
+	# AND "BLOCKED" HERE MEANS ALMOST NOTHING, which the line above used to
+	# imply the opposite of.  ONE emu process serves EVERY session, and
+	# abandoned sessions accumulate: each board reboot leaves its old
+	# connection ESTABLISHED on this side, because the board vanishes
+	# without a FIN.  Four were sitting here in a session that had rebooted
+	# the board a dozen times, three of them dead.
+	#
+	# So a blocked server thread is the NORMAL state, and flat TOTAL cpu
+	# over a five-second sample says only "nothing is happening right now"
+	# -- which is equally true of a perfectly healthy idle board.  It
+	# cannot distinguish the live session being stuck from the board having
+	# nothing to say, and it was read as though it could, in a diagnosis
+	# that then had to be retracted.
+	#
+	# QUESTION ONE IS THE ONE THAT DECIDES, and it is independent of all of
+	# this: a NEW handshake answering means the listener is healthy however
+	# many sessions are abandoned.
+	#
+	echo "wedgediag:   NOTE one process serves every session and abandoned"
+	echo "wedgediag:   ones accumulate across board reboots, so a blocked"
+	echo "wedgediag:   server is the normal state and flat cpu is NOT"
+	echo "wedgediag:   evidence the live session is stuck.  Count the"
+	echo "wedgediag:   ESTABLISHED lines above: more than one means the"
+	echo "wedgediag:   extras are dead sessions nobody closed."
 fi
 
 echo "wedgediag: 3. does the BOARD answer over JTAG?"
