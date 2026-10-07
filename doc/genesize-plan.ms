@@ -435,8 +435,24 @@ with the 82599 as the host's interface (VMHOST_NIC1=ixgbe,
 ether0=type=i82598), QEMU's user network checking every checksum:
 "VMSERVE: ether0 txck 6673", check-styxvm passes; on the 82576, whose
 driver does not offload, the stack's own checksums, check-styxvm
-passes.  Still owed: TSO (TCP sending segments past the MSS) and more
-than one queue pair with RSS.
+passes.  RSS: QEMU's 82599 hashes (Toeplitz, over MRQC's fields, with
+RSSRK's key) and steers by RETA, writing the hash into the descriptor
+when RXCSUM.PCSD asks; check-qemu-ixgbe's rss stage sends eight UDP
+flows and Linux's per-queue interrupts count them on more than one
+("eth0-TxRx-0 +94, eth0-TxRx-1 +14").  ether82598 now has a receive
+queue a processor, up to four, on an 82599 without VFs (one with VFs,
+or with
+.CW *ixgbenorss ):
+each its own ring, kproc and interrupt cause (IVAR by queue pair), a
+random key and RETA spread round them, and "rxq" lines in ifstats.
+check-styxvm with
+.CW VMHOST_NIC1=ixgbe
+(SVM, QEMU TCG, four processors) opens eight more Styx connections
+before M9's run and reads the queues back: "rxq0 pkts 3, rxq1 pkts 95,
+rxq2 pkts 11332, rxq3 pkts 0", "rss pass -- 3 of the host's 4 receive
+queues took packets"; check-vf on the 82599's VFs (one queue) passes.
+Transmit is still one queue.  Still owed: TSO (TCP sending segments
+past the MSS).
 .IP \(bu 2
 #AC: paid.
 .CW scripts/qemu-patches/0010

@@ -189,8 +189,9 @@ enum {
 	EEdone		= 1<<1,		/* Read done */
 
 	/* interrupts */
-	Irx0		= 1<<0,		/* driver defined */
-	Itx0		= 1<<1,		/* driver defined */
+	Irx0		= 1<<0,		/* driver defined: receive queue i is Irx0<<i */
+	Itx0		= 1<<15,	/* driver defined */
+	Itxbit		= 15,
 	Lsc		= 1<<20,	/* link status change */
 
 	/* Links */
@@ -349,7 +350,29 @@ enum {
 	i82599,
 };
 
-typedef struct {
+typedef struct Ctlr Ctlr;
+typedef struct Rxq Rxq;
+
+/* a receive queue, its ring, and the kproc that empties it */
+struct Rxq {
+	Ctlr	*c;
+	Ether	*e;
+	int	i;		/* which of the driver's, and its interrupt cause */
+	int	q;		/* which of the hardware's */
+	Rendez	rrendez;
+	uint	rim;
+	Rd	*rdba;
+	Block	**rb;
+	uint	rdt;
+	uint	rdfree;
+	ulong	npkt;
+};
+
+enum {
+	Maxrxq	= 4,		/* receive queues with RSS, at most one a processor */
+};
+
+struct Ctlr {
 	Pcidev	*p;
 	Ether	*edev;
 	int	type;
@@ -365,18 +388,14 @@ typedef struct {
 	QLock	tlock;
 	Rendez	lrendez;
 	Rendez	trendez;
-	Rendez	rrendez;
 	uint	im;
 	uint	lim;
-	uint	rim;
 	uint	tim;
 	Lock	imlock;
 	char	*alloc;
 
-	Rd	*rdba;
-	Block	**rb;
-	uint	rdt;
-	uint	rdfree;
+	Rxq	rx[Maxrxq];
+	int	nrxq;
 
 	Td	*tdba;
 	uint	tdh;
@@ -398,17 +417,20 @@ typedef struct {
 	uint	nvfreset;
 	uint	nvflr;
 	uint	nmsix;
-} Ctlr;
+};
 
 /* queue q's registers: the 0x40-byte blocks, 0x10 words apart */
 #define Q(c, r)	((r) + 0x10*(c)->q)
 
+/* hardware queue q's */
+#define QR(q, r)	((r) + 0x10*(q))
+
 static int
-srrctl(Ctlr *c)
+srrctl(Ctlr *c, int q)
 {
 	if(c->type == i82599)
-		return (0x01014 + 0x40*c->q)/4;
-	return Srrctl + c->q;
+		return (0x01014 + 0x40*q)/4;
+	return Srrctl + q;
 }
 
 /* tweakable paramaters */
@@ -457,8 +479,10 @@ ifstat(void *a, char *p, char *q)
 			p = seprint(p, q, "%.10s  %uld\n", stattab[i].name, c->stats[i]);
 	t = c->speeds;
 	p = seprint(p, q, "speeds: 0:%d 1000:%d 10000:%d\n", t[0], t[1], t[2]);
-	p = seprint(p, q, "rdfree %d rdh %d rdt %d\n", c->rdfree, c->reg[Q(c, Rdt)],
-		c->reg[Q(c, Rdh)]);
+	for(i = 0; i < c->nrxq; i++)
+		p = seprint(p, q, "rxq%d hwq %d pkts %lud rdfree %d rdh %d rdt %d\n", i,
+			c->rx[i].q, c->rx[i].npkt, c->rx[i].rdfree,
+			c->reg[QR(c->rx[i].q, Rdh)], c->reg[QR(c->rx[i].q, Rdt)]);
 	p = seprint(p, q, "txck %ud\n", c->ntxck);
 	if(c->nvf > 0){
 		p = seprint(p, q, "sriov: vfs %d pf pool %d queue %d mbox %ud vfresets %ud vflr %ud msix %ud vfre %.8ux vfte %.8ux\n",
@@ -633,39 +657,109 @@ tproc(void *v)
 	}
 }
 
+/*
+ * Receive-side scaling (82599, without VFs): a random key, the
+ * redirection table spreading its 128 entries round the queues, the
+ * hash over IPv4 addresses and TCP and UDP ports.  The legacy
+ * descriptors do not carry the hash, but the hardware steers by it all
+ * the same.
+ */
+static void
+rssinit(Ctlr *c)
+{
+	u32int r;
+	int i;
+
+	for(i = 0; i < 10; i++)
+		c->reg[Rssrk + i] = nrand(1<<16) << 16 | nrand(1<<16);
+	r = 0;
+	for(i = 0; i < 128; i++){
+		r |= (i % c->nrxq) << 8*(i & 3);
+		if((i & 3) == 3){
+			c->reg[Reta + i/4] = r;
+			r = 0;
+		}
+	}
+	c->reg[Mrqc] = 1 | 1<<16 | 1<<17 | 1<<22;	/* RSS: IPv4 TCP, IPv4, IPv4 UDP */
+}
+
+static void
+rxqinit(Rxq *rq)
+{
+	Ctlr *c;
+	Block *b;
+	int i, q;
+
+	c = rq->c;
+	q = rq->q;
+	for(i = 0; i < c->nrd; i++){
+		b = rq->rb[i];
+		rq->rb[i] = 0;
+		if(b)
+			freeb(b);
+	}
+	rq->rdfree = 0;
+	c->reg[srrctl(c, q)] = c->rbsz / 1024;
+	c->reg[QR(q, Rbal)] = PCIWADDR(rq->rdba);
+	c->reg[QR(q, Rbah)] = PCIWADDR(rq->rdba) >> 32;
+	c->reg[QR(q, Rdlen)] = c->nrd*sizeof(Rd);
+	c->reg[QR(q, Rdh)] = 0;
+	c->reg[QR(q, Rdt)] = rq->rdt = 0;
+	if(c->type == i82599){
+		/* the queue on before its tail moves */
+		c->reg[QR(q, Rxdctl)] = 8<<Wthresh | 8<<Pthresh | 4<<Hthresh | Renable;
+		for(i = 0; i < 1000 && (c->reg[QR(q, Rxdctl)] & Renable) == 0; i++)
+			microdelay(10);
+	}
+}
+
+/*
+ * Each receive queue's interrupt is its own cause, Irx0<<i: on the
+ * 82599 its IVAR entry, by queue pair, receive then transmit; on the
+ * 82598 (one queue) by cause.  Transmit queue 0's is Itx0.
+ */
+static void
+ivarinit(Ctlr *c)
+{
+	Rxq *rq;
+	int i, sh;
+
+	if(c->type != i82599){
+		c->reg[Ivar+0] = 0 | Ivarvalid;
+		c->reg[Ivar+64/4] = Itxbit | Ivarvalid;
+		return;
+	}
+	if(c->nvf > 0)
+		return;			/* i82599sriov's: one MSI-X vector */
+	for(i = 0; i < 64; i++)
+		c->reg[Ivar + i] = 0;
+	for(i = 0; i < c->nrxq; i++){
+		rq = &c->rx[i];
+		sh = 16*(rq->q & 1);
+		c->reg[Ivar + rq->q/2] |= (i | Ivarvalid) << sh;
+	}
+	c->reg[Ivar + c->q/2] |= (Itxbit | Ivarvalid) << (16*(c->q & 1) + 8);
+}
+
 static void
 rxinit(Ctlr *c)
 {
 	int i;
-	Block *b;
 
 	c->reg[Rxctl] &= ~Rxen;
-	for(i = 0; i < c->nrd; i++){
-		b = c->rb[i];
-		c->rb[i] = 0;
-		if(b)
-			freeb(b);
-	}
-	c->rdfree = 0;
-
 	c->reg[Fctrl] |= Bam;
 	c->reg[Rxcsum] |= Ipcs;
-	c->reg[srrctl(c)] = c->rbsz / 1024;
 	c->reg[Mhadd] = c->rbsz << 16;
 	c->reg[Hlreg0] |= Jumboen;
-
-	c->reg[Q(c, Rbal)] = PCIWADDR(c->rdba);
-	c->reg[Q(c, Rbah)] = PCIWADDR(c->rdba) >> 32;
-	c->reg[Q(c, Rdlen)] = c->nrd*sizeof(Rd);
-	c->reg[Q(c, Rdh)] = 0;
-	c->reg[Q(c, Rdt)] = c->rdt = 0;
+	for(i = 0; i < c->nrxq; i++)
+		rxqinit(&c->rx[i]);
+	ivarinit(c);
 
 	if(c->type == i82599){
-		/* the CRC stripped, as Hlreg0 says; the queue on before its tail moves */
+		/* the CRC stripped, as Hlreg0 says */
 		c->reg[Rdrxctl] |= Crcstrip;
-		c->reg[Q(c, Rxdctl)] = 8<<Wthresh | 8<<Pthresh | 4<<Hthresh | Renable;
-		for(i = 0; i < 1000 && (c->reg[Q(c, Rxdctl)] & Renable) == 0; i++)
-			microdelay(10);
+		if(c->nrxq > 1)
+			rssinit(c);
 		c->reg[Rxctl] |= Rxen;
 		return;
 	}
@@ -675,33 +769,35 @@ rxinit(Ctlr *c)
 }
 
 static void
-replenish(Ctlr *c, uint rdh)
+replenish(Rxq *rq, uint rdh)
 {
 	int rdt, m, i;
+	Ctlr *c;
 	Block *b;
 	Rd *r;
 
+	c = rq->c;
 	m = c->nrd - 1;
 	i = 0;
-	for(rdt = c->rdt; Next(rdt, m) != rdh; rdt = Next(rdt, m)){
+	for(rdt = rq->rdt; Next(rdt, m) != rdh; rdt = Next(rdt, m)){
 		b = allocb(c->rbsz+BY2PG);
 		b->rp = (uchar*)PGROUND((uintptr)b->base);
 		b->wp = b->rp;
-		c->rb[rdt] = b;
-		r = c->rdba + rdt;
+		rq->rb[rdt] = b;
+		r = rq->rdba + rdt;
 		r->addr[0] = PCIWADDR(b->rp);
 		r->status = 0;
-		c->rdfree++;
+		rq->rdfree++;
 		i++;
 	}
 	if(i)
-		c->reg[Q(c, Rdt)] = c->rdt = rdt;
+		c->reg[QR(rq->q, Rdt)] = rq->rdt = rdt;
 }
 
 static int
 rim(void *v)
 {
-	return ((Ctlr*)v)->rim != 0;
+	return ((Rxq*)v)->rim != 0;
 }
 
 static uchar zeroea[Eaddrlen];
@@ -711,29 +807,31 @@ rproc(void *v)
 {
 	uint m, rdh;
 	Block *b;
+	Rxq *rq;
 	Ctlr *c;
 	Ether *e;
 	Rd *r;
 
-	e = v;
-	c = e->ctlr;
+	rq = v;
+	c = rq->c;
+	e = rq->e;
 	m = c->nrd - 1;
 	rdh = 0;
 	while(waserror())
 		;
 loop:
-	replenish(c, rdh);
-	im(c, Irx0);
-	sleep(&c->rrendez, rim, c);
+	replenish(rq, rdh);
+	im(c, Irx0<<rq->i);
+	sleep(&rq->rrendez, rim, rq);
 loop1:
-	c->rim = 0;
-	if(c->nrd - c->rdfree >= 16)
-		replenish(c, rdh);
-	r = c->rdba + rdh;
+	rq->rim = 0;
+	if(c->nrd - rq->rdfree >= 16)
+		replenish(rq, rdh);
+	r = rq->rdba + rdh;
 	if(!(r->status & Rdd))
 		goto loop;		/* UGH */
-	b = c->rb[rdh];
-	c->rb[rdh] = 0;
+	b = rq->rb[rdh];
+	rq->rb[rdh] = 0;
 	b->wp += r->length;
 	if(c->type == i82599){
 		/* checked, and without error */
@@ -749,8 +847,9 @@ loop1:
 		b->checksum = r->cksum;
 	}
 //	r->status = 0;
+	rq->npkt++;
 	etheriq(e, b);
-	c->rdfree--;
+	rq->rdfree--;
 	rdh = Next(rdh, m);
 	goto loop1;			/* UGH */
 }
@@ -899,24 +998,12 @@ reset(Ctlr *c)
 	c->reg[Fcrth] = 0x40000 | 1<<31;
 	c->reg[Rcrtv] = 0x6000;
 
-	/*
-	 * configure interrupt mapping: queue 0's receive to cause Irx0,
-	 * its transmit to Itx0.  The 82598's entries are by cause, the
-	 * receive queues' then the transmit queues' from 64; the 82599's
-	 * are by queue pair, receive and transmit of each in turn.
-	 */
-	if(c->type == i82599)
-		c->reg[Ivar+0] = (0 | Ivarvalid) | (1 | Ivarvalid)<<8;
-	else{
-		c->reg[Ivar+0] =     0 | 1<<7;
-		c->reg[Ivar+64/4] =  1 | 1<<7;
-	}
-//	c->reg[Ivar+97/4] = (2 | 1<<7) << (8*(97%4));
+	/* interrupt mapping: ivarinit, once the queues are known */
 
 	/* interrupt throttling goes here. */
 	for(i = Itr; i < Itr + 20; i++)
 		c->reg[i] = 128;		/* ¼µs intervals */
-	c->reg[Itr + Itx0] = 256;
+	c->reg[Itr + Itxbit] = 256;
 	return 0;
 }
 
@@ -1107,10 +1194,10 @@ i82599interrupt(Ureg*, void *v)
 		c->lim = Lsc;
 		wakeup(&c->lrendez);
 	}
-	c->rim = Irx0;
+	c->rx[0].rim = 1;
 	c->tim = Itx0;
 	iunlock(&c->imlock);
-	wakeup(&c->rrendez);
+	wakeup(&c->rx[0].rrendez);
 	wakeup(&c->trendez);
 	c->reg[Ims] = 1;		/* auto-masked on the interrupt */
 }
@@ -1190,8 +1277,9 @@ static void
 attach(Ether *e)
 {
 	Ctlr *c;
-	int t;
-	char buf[KNAMELEN], *s;
+	Rxq *rq;
+	int i, t;
+	char buf[KNAMELEN], *s, *a;
 
 	c = e->ctlr;
 	c->edev = e;			/* point back to Ether* */
@@ -1203,29 +1291,46 @@ attach(Ether *e)
 
 	c->nrd = Nrd;
 	c->ntd = Ntd;
-	t  = c->nrd * sizeof *c->rdba + 255;
-	t += c->ntd * sizeof *c->tdba + 255;
-	t += (c->ntd + c->nrd) * sizeof(Block*);
+	if(c->type == i82599 && (s = getconf("*ixgbevfs")) != nil && atoi(s) > 0)
+		i82599sriov(e, atoi(s));
+	/*
+	 * Receive queues: one a processor up to Maxrxq on an 82599 not
+	 * running VFs (RSS spreads the flows over them), else one.
+	 */
+	c->nrxq = 1;
+	if(c->type == i82599 && c->nvf == 0 && getconf("*ixgbenorss") == nil)
+		c->nrxq = conf.nmach < Maxrxq ? conf.nmach : Maxrxq;
+	t  = c->nrxq * (c->nrd * sizeof(Rd) + 255 + c->nrd * sizeof(Block*));
+	t += c->ntd * sizeof(Td) + 255 + c->ntd * sizeof(Block*);
 	c->alloc = malloc(t);
 	unlock(&c->alock);
 	if(c->alloc == nil)
 		error(Enomem);
 
-	c->rdba = (Rd*)ROUNDUP((uintptr)c->alloc, 256);
-	c->tdba = (Td*)ROUNDUP((uintptr)(c->rdba + c->nrd), 256);
-	c->rb = (Block**)(c->tdba + c->ntd);
-	c->tb = (Block**)(c->rb + c->nrd);
+	a = c->alloc;
+	for(i = 0; i < c->nrxq; i++){
+		rq = &c->rx[i];
+		rq->c = c;
+		rq->e = e;
+		rq->i = i;
+		rq->q = c->q + i;
+		rq->rdba = (Rd*)ROUNDUP((uintptr)a, 256);
+		rq->rb = (Block**)(rq->rdba + c->nrd);
+		a = (char*)(rq->rb + c->nrd);
+	}
+	c->tdba = (Td*)ROUNDUP((uintptr)a, 256);
+	c->tb = (Block**)(c->tdba + c->ntd);
 
-	if(c->type == i82599 && (s = getconf("*ixgbevfs")) != nil && atoi(s) > 0)
-		i82599sriov(e, atoi(s));
 	rxinit(c);
 	txinit(c);
 	i82599pfready(c);
 
 	snprint(buf, sizeof buf, "#l%dl", e->ctlrno);
 	kproc(buf, lproc, e, 0);
-	snprint(buf, sizeof buf, "#l%dr", e->ctlrno);
-	kproc(buf, rproc, e, 0);
+	for(i = 0; i < c->nrxq; i++){
+		snprint(buf, sizeof buf, "#l%dr%d", e->ctlrno, i);
+		kproc(buf, rproc, &c->rx[i], 0);
+	}
 	snprint(buf, sizeof buf, "#l%dt", e->ctlrno);
 	kproc(buf, tproc, e, 0);
 }
@@ -1233,7 +1338,7 @@ attach(Ether *e)
 static void
 interrupt(Ureg*, void *v)
 {
-	int icr, im;
+	int icr, im, i;
 	Ctlr *c;
 	Ether *e;
 
@@ -1248,11 +1353,12 @@ interrupt(Ureg*, void *v)
 			c->lim = icr & Lsc;
 			wakeup(&c->lrendez);
 		}
-		if(icr & Irx0){
-			im &= ~Irx0;
-			c->rim = icr & Irx0;
-			wakeup(&c->rrendez);
-		}
+		for(i = 0; i < c->nrxq; i++)
+			if(icr & (Irx0<<i)){
+				im &= ~(Irx0<<i);
+				c->rx[i].rim = 1;
+				wakeup(&c->rx[i].rrendez);
+			}
 		if(icr & Itx0){
 			im &= ~Itx0;
 			c->tim = icr & Itx0;

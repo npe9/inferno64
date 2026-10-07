@@ -59,6 +59,11 @@ for i in 1 2 3 4 5 6 7 8 9 10 11 12 {
 	}
 }
 echo STYXVM: mounted
+# more connections, each its own flow, for the host's RSS to spread
+# over its receive queues (an 82599 host's: the check after M9's)
+for i in 1 2 3 4 5 6 7 8 {
+	mount -A 'tcp!127.0.0.1!$PORT' /n/remote && ls /n/remote/dev >/dev/null
+}
 ls /n/remote/dev/vm /n/remote/dev/iommu
 cat /n/remote/dev/vm/backend
 bind -a /n/remote/dev /dev
@@ -68,11 +73,24 @@ EOF
 timeout 1200 emu -r"$ROOT" /dis/sh.dis /tmp/styxvm-cli.sh >"$WORK/cli.log" 2>&1 || true
 grep -a 'STYXVM\|vmlinux:\|LINUXGUEST\|^Linux 6\|backend\|^vcpu0\|^platform handled\|^pci 00' "$WORK/cli.log" | sed 's/^/emu: /' | head -40
 
-if grep -q 'LINUXGUEST: typed over styx' "$WORK/cli.log" && grep -q '^LINUXGUEST: ran' "$WORK/cli.log" \
-&& grep -q 'hello-over-styx' "$ROOT/.qemu/vmhost-hvc.log" 2>/dev/null; then
-	echo "check-styxvm: M9 pass -- a Linux guest made, assigned a device, run and talked to from hosted Inferno over Styx"
+if ! grep -q 'LINUXGUEST: typed over styx' "$WORK/cli.log" || ! grep -q '^LINUXGUEST: ran' "$WORK/cli.log" \
+|| ! grep -q 'hello-over-styx' "$ROOT/.qemu/vmhost-hvc.log" 2>/dev/null; then
+	echo "check-styxvm: M9 FAIL"
+	tail -20 "$WORK/cli.log" | sed 's/^/	/'
+	exit 1
+fi
+echo "check-styxvm: M9 pass -- a Linux guest made, assigned a device, run and talked to from hosted Inferno over Styx"
+
+# A host interface with receive queues (the 82599, VMHOST_NIC1=ixgbe,
+# RSS on with the bench's processors): the latest report of them must
+# show the connections' packets on more than one.
+grep -a 'VMSERVE: ether0 rxq' "$ROOT/.qemu/vmhost.log" >"$WORK/rxq" || exit 0
+nq=`awk '{print $3}' "$WORK/rxq" | sort -u | wc -l | tr -d ' '`
+tail -$nq "$WORK/rxq" | sed 's/^/host: /'
+busy=`tail -$nq "$WORK/rxq" | awk '{for(i=1;i<NF;i++) if($i=="pkts" && $(i+1)>0) n++} END{print n+0}'`
+if [ "$nq" -gt 1 ] && [ "$busy" -gt 1 ]; then
+	echo "check-styxvm: rss pass -- $busy of the host's $nq receive queues took packets"
 	exit 0
 fi
-echo "check-styxvm: M9 FAIL"
-tail -20 "$WORK/cli.log" | sed 's/^/	/'
+echo "check-styxvm: rss FAIL -- $busy of $nq receive queues took packets"
 exit 1

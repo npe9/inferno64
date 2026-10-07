@@ -15,6 +15,9 @@
 #		2MB goes over TCP from one VF to the other and from the
 #		PF to a VF, with the drivers' TSO and checksum offloads
 #
+#	rss	without VFs, eight UDP flows into the PF spread over its
+#		receive queues: the 82599's RSS hash and redirection table
+#
 # usage: scripts/check-qemu-ixgbe.sh
 # needs: .qemu/local (scripts/mkqemu.sh), .guest/linux-lts-6.6.142-r0.apk
 # and .guest/busybox (scripts/mklinuxguest.sh)
@@ -70,6 +73,19 @@ $B ip addr show $pfn | $B grep 'inet ' | $B sed 's/^ */IXGBETEST: pf /'
 $B ping -c 3 -W 2 10.0.2.2 >/tmp/ping 2>&1 || { $B cat /tmp/ping; fail "pf ping"; }
 say "pf ping `$B grep received /tmp/ping`"
 say "pf pass"
+
+# RSS: eight UDP flows from the host, one to each forwarded port, a
+# listener on each so that nothing is sent back; each receive queue's
+# interrupts before and after
+for p in 9001 9002 9003 9004 9005 9006 9007 9008; do
+	$B nc -u -l -p $p >/dev/null 2>&1 &
+done
+irqs() { $B awk '/eth0-TxRx/ { s = 0; for(i = 2; i < NF - 2; i++) s += $i; print $NF, s }' /proc/interrupts; }
+irqs >/tmp/before
+say "rss ready"
+$B sleep 30
+irqs >/tmp/after
+$B awk 'NR == FNR { b[$1] = $2; next } { print "IXGBETEST: rss", $1, "+" ($2 - b[$1]) }' /tmp/before /tmp/after
 
 echo 2 >/sys/class/net/$pfn/device/sriov_numvfs || fail "sriov_numvfs"
 $B sleep 6
@@ -151,14 +167,45 @@ rec(0, 'TRAILER!!!', 0, b'')
 open(W + '/ixgbe.cpio', 'wb').write(o.getvalue())
 EOF
 
+# eight host ports forwarded to the guest's 9001-9008, for RSS
+PORTS=`python3 -c "
+import socket
+ss = [socket.socket(socket.AF_INET, socket.SOCK_DGRAM) for i in range(8)]
+for x in ss: x.bind(('127.0.0.1', 0))
+print(' '.join(str(x.getsockname()[1]) for x in ss))"`
+FWD= i=9001
+for p in $PORTS; do FWD="$FWD,hostfwd=udp:127.0.0.1:$p-:$i"; i=`expr $i + 1`; done
 timeout 900 "$Q" -machine q35 -accel tcg -cpu max -smp 2 -m 1024 -display none \
 	-serial stdio -device pcie-root-port,id=rp0,chassis=1 \
-	-netdev user,id=n0 -device ixgbe,bus=rp0,netdev=n0,mac=52:54:00:82:59:01 \
+	-netdev user,id=n0$FWD -device ixgbe,bus=rp0,netdev=n0,mac=52:54:00:82:59:01 \
 	-kernel "$WORK/vmlinuz" -initrd "$WORK/ixgbe.cpio" \
-	-append "console=ttyS0 quiet loglevel=4" -no-reboot >"$WORK/ixgbe.log" 2>&1 || true
+	-append "console=ttyS0 quiet loglevel=4" -no-reboot >"$WORK/ixgbe.log" 2>&1 &
+QPID=$!
+n=0
+until grep -q 'IXGBETEST: rss ready' "$WORK/ixgbe.log" 2>/dev/null; do
+	sleep 2
+	n=`expr $n + 1`
+	[ $n -gt 300 ] && break
+	kill -0 $QPID 2>/dev/null || break
+done
+python3 -c "
+import socket, sys, time
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+for k in range(40):
+	for p in sys.argv[1:]:
+		s.sendto(b'rss %d' % k, ('127.0.0.1', int(p)))
+	time.sleep(0.05)" $PORTS
+wait $QPID || true
 tr -d '\r' <"$WORK/ixgbe.log" >"$WORK/log"
 [ -n "$IXGBE_LOG" ] && cp "$WORK/log" "$IXGBE_LOG"
 fail=0
+# RSS: every receive queue took some of the flows
+if [ `grep -c '^IXGBETEST: rss eth0-TxRx-[0-9]* +[1-9]' "$WORK/log"` -ge 2 ]; then
+	echo "check-qemu-ixgbe: rss: pass"
+else
+	echo "check-qemu-ixgbe: rss: FAIL"
+	fail=1
+fi
 for t in pf vf switch; do
 	if grep -q "^IXGBETEST: $t pass" "$WORK/log"; then
 		echo "check-qemu-ixgbe: $t: pass"
