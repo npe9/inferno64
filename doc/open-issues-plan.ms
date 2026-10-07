@@ -11727,3 +11727,57 @@ correctly, installed it, and then kbuild said "the build failed".
 \(em which is written down in that same file about the link-count guard, which
 demanded exactly one link and refused good builds.  Twice now in one file.  It
 asks the mkfile for the target instead of assuming.
+.NH 3
+Both defects checked on the amd64 toolchain, and neither is there
+.LP
+A6 and A7 are members of one family \(em a value too wide for where it is put
+\(em and the obvious next question is whether
+.CW 6c / 6l
+share them.  They do not, and saying so is worth a paragraph because an
+unchecked "probably fine" about the other 64-bit arch is the kind of gap this
+plan exists to close.
+.PP
+.B "The widening (A7): 6c is the model, and already correct."
+The same three shapes
+.CW ( "b + n" ,
+.CW "b + x*y" ,
+.CW "b + (s32)v" )
+all get an explicit sign extension:
+.P1
+	TEXT	p2+0(SB),0,$0
+	MOVL	y+16(FP),CX
+	IMULL	x+8(FP),CX
+	MOVLQSX	CX,CX		<- the extension 7c was dropping
+	MOVQ	BP,DX
+	LEAQ	(DX)(CX*1),AX
+.P2
+.B "The wide constant (A6): amd64 has no literal pool to get wrong."
+.CW 6c
+materialises a 64-bit constant with
+.CW "MOVQ $imm64" ,
+and
+.CW 6l
+has no
+.CW addpool
+at all.
+.P1
+	MOVQ	$4294967296,CX
+	ADDQ	CX,AX
+	MOVQ	$64424509440,AX
+	CMPQ	AX,BP
+.P2
+.CW 5l
+and
+.CW tl
+are 32-bit ARM, where a pool slot is four bytes and there is no 64-bit constant
+to misplace.  So A6 is
+.CW 7l 's
+alone, and A7 is
+.CW 7c 's
+alone.
+.PP
+Note which of 7c's own defects this does NOT clear: the narrowing one, which
+this tree records separately for
+.CW 6c
+(unsigned narrowing casts on amd64) and which is a different mechanism in the
+same direction.
