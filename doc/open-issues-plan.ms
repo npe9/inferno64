@@ -11817,36 +11817,32 @@ collector's own, 2 from the mutator plus 3 forward, 5 repaired, 0 breaks.
 So the only thing left of the consctl episode is the hang itself, which stays
 undiagnosed with a refusal in front of it.
 .NH 2
-H1a.  The acceptance test this item specifies CANNOT BE BUILT, and the file it concerns says why
+H1a addendum.  The prescribed probe was built anyway; two new facts and one duplicated one
 .LP
-H1a says what has to come first:
-.QP
-The acceptance test is not "it looks better": it is
-.CW drawink
-unchanged plus a tear probe that fills alternating colours as fast as it can and
-samples one scanline, which on a torn frame reads two colours.
-.B "Write the probe first and prove it sees the tear that exists today,"
-or it proves nothing afterwards.
-.LP
-.B "I wrote it.  It cannot work, and the reason was already written down"
-twenty lines into
-.CW screenbcm.c 's
-own phase-clock comment:
-.QP
-WHY THIS IS THE ONLY INSTRUMENT HERE THAT CAN SEE TEARING AT ALL.  Every other
-check in this file is a readback, and a readback reads memory \(em it cannot
-observe what the scanout showed.
-.LP
-That is the whole answer.  A tear is a disagreement between what the ARM WROTE
-and what the beam READ; a readback compares memory against memory and the beam
-is not in the comparison.
+.B "First, what was already recorded and I missed."
+The section "H1a correction.  The prescribed tear probe cannot work, and the
+arithmetic says why" above states the central point already, and states it
+better than I did: a readback reads the framebuffer, and
+.B "the framebuffer is never torn"
+\(em after a fill completes every pixel in it is the new colour, whatever the
+display showed while the fill ran.  A tear exists only in the image the GPU
+assembled on the wire.
+.PP
+.B "I rediscovered that and wrote it up as a finding."
+I read H1a's statement of the acceptance test, did not read on to the
+correction two sections below it, and spent a tool on it.  The lesson I had
+just written into a memory about reading a subsystem's own comments before
+building an instrument for it applies to DOCUMENTS as well, and this plan is
+the document in question.
 .NH 3
-And the ARM cannot even see the weaker thing
+The two things the exercise did add
 .LP
-The probe's actual claim would have been narrower than "it tore" \(em only "the
-buffer was not uniform while I read it", which is necessary for a tear and not
-sufficient.
-.B "Even that is unobservable from the ARM, measured and then read off the source:"
+.IP \(bu
+.B "The ARM cannot see even the weaker claim, and that is a different argument."
+The correction above says the framebuffer is never torn AFTER a fill.  A probe
+could in principle try to catch it DURING one \(em "the buffer was not uniform
+while I read it", which is necessary for a tear and not sufficient.
+.B "That is unobservable too, for a reason in the kernel rather than in the physics:"
 .CW drawread()
 and
 .CW drawwrite()
@@ -11858,146 +11854,38 @@ for the whole operation, so a
 .CW readpixels
 and a
 .CW draw
-are mutually exclusive.  By the time the sampler holds the lock the fill has
-finished.  A column read can never show two colours no matter how fast the
-filler runs.
-.PP
-Written and run anyway, because that is cheaper than arguing:
-.P1
-teartest: screen 640x480 x8r8g8b8 depth 32, 100 samples per arm
-teartest: STATIC 0 of 100 samples non-uniform
-.P2
-and then the animated arm
-.B "livelocked the board"
-\(em the kernel's own detector caught it,
+are mutually exclusive and the sampler cannot run during a fill at all.  So
+both doors are shut, and for unrelated reasons.
+.IP \(bu
+.B "The kernel's livelock detector works on a livelock nobody planted."
+The animated arm \(em a filler process and a sampler process, neither
+yielding \(em wedged the board, and the detector named it:
 .CW "LIVELOCK: pid 146 (dis) has been Running for 400 ticks" ,
-alternating with pid 98, which is the filler and the sampler each spinning
-without the scheduler choosing the other.  So the tool's cost is a reboot and
-its yield is zero by construction.
+alternating with pid 98.  Cost one JTAG reboot.  Worth recording because every
+other livelock in this plan was provoked deliberately.
 .PP
-.B "Two things it did establish, cheaply."
-The static arm reading 0 of 100 says
-.CW readpixels
-on this board is stable and the cursor hiding works, which is
+The static control arm read 0 of 100 samples non-uniform, which re-confirms
 .CW drawink 's
-ground re-confirmed from a second direction.  And the livelock says the
-kernel's livelock detector works on a real livelock that nobody planted.
+ground \(em
+.CW readpixels
+is stable and the cursor hiding works \(em from a second direction.
 .PP
 .B "The tool is NOT committed."
-A probe that cannot see what it is named for, left in the tree, is a trap for
-whoever runs it next and reads its zero as good news.  What is committed is this
-section.
+A probe that cannot see what it is named for is a trap for whoever runs it next
+and reads its zero as good news.
 .NH 3
-What H1a actually needs, and why this desk cannot supply it
+And the state of H1a is what the correction already said, not what I said
 .LP
-.CW screenbcm.c
-already states the limit precisely, about the paced flip:
-.QP
-whether phase zero sits inside [the blanking interval] is a claim about what the
-scanout showed, and every instrument in this file is a readback.
-.LP
-So the open question is a single unknown constant \(em the firmware's latency
-between the vertical blank and
-.CW mboxvsync()
-returning \(em and it does not cancel in any ARM-side measurement, because every
-such measurement is relative to that same return.  Closing H1a needs an
-observation of the DISPLAY: a camera, or a person looking at the screen while
-the phase is swept.
+I wrote that closing H1a "needs an observation of the display: a camera, or a
+person".
+.B "That is too pessimistic and the correction above has the better answer:"
+tearing is a race between two rates and both are measured \(em scanout
+34.72us/row against a full-screen fill at 4.35us/row, so a fill started at
+vsync runs 8x ahead of the beam and cannot be caught.
+.B "For that case vsync alone is the fix and double buffering is not needed."
 .PP
-.B "Which reorders this item."
-H1a was written as "build the probe, then find vsync".  The probe depends on
-vsync rather than preceding it, and the vsync signal that would make it possible
-is the thing H1a is about.
-.B "There is no ARM-side instrument that can close this,"
-and the honest state is: the mechanism is built and paced
-.CW ( Flippace ,
-379 of 380 flips in bucket 0), the cost is known (half a frame), and the final
-step is an observation nobody at this desk can make.
-.PP
-What must NOT happen \(em the same rule H3 states for
-.CW 8l
-\(em is this gap being closed by argument.  A flip paced into bucket 0 is
-PLAUSIBLY tear-free and that is not the same as being tear-free.
-.NH 3
-H2: the zero-fill is free, measured, so the three candidates are still the only three
-.LP
-H2 priced
-.CW clustok()
-in reads and stopped.  But reads are only half of what
-.CW falloc()
-does: having allocated a cluster it ZERO-FILLS the whole thing \(em
-.CW getosect ,
-.CW BMOD ,
-.CW putsect
-over every sector \(em and the caller then writes those same sectors with real
-data.
-.CW getosect
-passes
-.CW rflag
-0 so nothing is read in, but the tracks are dirty, so whether that costs a
-SECOND PASS over the medium depends on whether they survive in dossrv's track
-cache until the data arrives.  A question about cache size against cluster
-size, which is a measurement.
-.PP
-.B "Both readings were written down before the numbers existed,"
-in
-.CW tests/dossrv-bytes ,
-so the conclusion could not be fitted to them: 1.0x means the fill is absorbed
-and H2's three candidates remain the only ones; 2.0x means a saving exists that
-does not weaken
-.CW clustok
-at all, namely skipping the fill for a cluster the caller is about to overwrite
-completely.
-.PP
-2MB payload, 4096 sectors, 16KB clusters, on
-.CW sdmem (3):
-.P1
-arm              reads ops/secs    writes ops/secs
-clustok ON        133 / 4141        459 / 4131
-clustok OFF         5 /   45        459 / 4131
-.P2
-.B "The writes are IDENTICAL, and 1.008x the payload."
-Twenty track buffers are enough, so the zero-fill never reaches the medium and
-costs CPU only.
-.B "There is no saving there and the 2.0x branch is dead."
-.PP
-.B "And clustok's cost is EXACTLY 1.00x the payload:"
-4141 \- 45 = 4096 sectors in 133 \- 5 = 128 operations, one 32-sector read per
-cluster allocated.  Total traffic 8272 sectors against 4096, so the check
-exactly DOUBLES the bytes a sequential write moves.  H2 predicted that from the
-code and it is now measured instead of inferred.
-.PP
-So H2 is unchanged in substance and better grounded: the only lever is
-.CW clustok
-itself, and every way to move it weakens detection on a premise that needs the
-failing card.
-.NH 3
-Two of my own bugs in that test, both caught by its output and not by reading
-.LP
-.IP \(bu
-.B "/tmp is not writable by the poller's user,"
-and
-.CW "mkdir: permission denied"
-is the whole of the diagnosis.  The log goes to the host worktree over styx, as
-.CW tests/dossrv-badclust
-already does.
-.IP \(bu
-.B "`arm \(aa\(aa \(aalabel\(aa' passes dossrv an EMPTY POSITIONAL ARGUMENT,"
-and
-.CW dossrv
-refuses a stray argument on purpose \(em
-.CW dossrv-badclust
-records that it used to ignore one silently and mount on its default
-.CW /n/dos ,
-which looked like success.  So the no-flag arm mounted nothing, wrote nothing
-and reported 0 sectors, with
-.CW "unmount: not mounted"
-three lines up as the only hint.
-.B "A zero that was my shell quoting and not a result."
-The label now comes first and the flags are
-.CW "${tl $*}" :
-an empty list expands to no argument, an empty string IS an argument.
-.PP
-Both are the same shape as the rest of this session: a confident zero that came
-from the instrument rather than from the subject.  The thing that caught them
-both was having a second arm to disagree with.
+What a probe is still needed for is the three cases the arithmetic does not
+cover, which the correction lists: a draw longer than a frame, a draw that does
+not proceed in scanline order (Tk paints widget by widget), and a draw not
+aligned to the frame at all.  Those are about WHEN writes land relative to the
+beam, so the instrument is the phase clock that already exists, not a readback.
