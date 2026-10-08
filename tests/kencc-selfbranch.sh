@@ -39,6 +39,7 @@ cd "$ROOT"
 
 fail=0
 found=0
+na=0
 stale=0
 #
 # THE LOADER IS NOT A DEPENDENCY OF A KERNEL, so an image on disk may have been
@@ -77,6 +78,29 @@ for k in os/inferno/*/i*; do
 	*.sym|*.img|*/i*.*) continue;;
 	esac
 	[ -f "$k" ] || continue
+	#
+	# READABILITY BEFORE STALENESS, because the order was making the
+	# numbers lie.  selfbranch.py reads 64-bit ELF only, and the stale
+	# check used to run FIRST -- so an image this test can never examine
+	# was reported as "skipped as older than its loader", i.e. as
+	# coverage that a relink would restore.  Six of the twelve stale
+	# images were in that class: three are ELF32 and three are not ELF
+	# at all.
+	#
+	# THE ONE THAT MATTERS IS pc64.  os/inferno/pc64/ipc64 is Plan 9
+	# a.out, so this test CANNOT CHECK 6l's OUTPUT AT ALL -- and 6l is
+	# one of the two loaders the self-branch defect was confirmed in.
+	# That is a real hole in the coverage and no amount of relinking
+	# closes it; it needs selfbranch.py to read a.out, or a 6l ELF
+	# target.  Counted and named here rather than hidden inside a
+	# staleness number.
+	#
+	if ! python3 tools/selfbranch.py "$k" 2>/dev/null |
+	    grep -qv 'not a 64-bit ELF'; then
+		echo "  n/a: $k is not 64-bit ELF; this test cannot read it"
+		na=`expr $na + 1`
+		continue
+	fi
 	ld=`loader_for "$k"`
 	if [ -n "$ld" ] && [ -f "$ld" ] && [ "$ld" -nt "$k" ]; then
 		echo "  STALE: $k is older than its loader $ld"
@@ -95,7 +119,7 @@ for k in os/inferno/*/i*; do
 		echo "  ok: $k has no self-branch inside any function"
 	else
 		echo "  FAIL: $k has $n self-branch(es) inside a function:"
-		echo "$out" | sed -n '/inside a function/,$p' | sed '1d;s/^/    /'
+		printf '%s\n' "$out" | sed -n '/inside a function/,$p' | sed '1d;s/^/    /'
 		fail=1
 	fi
 done
@@ -147,7 +171,8 @@ if [ $fail -eq 0 ]; then
 	# lines carry it, but a reader who takes the verdict line -- which is
 	# what a verdict line is for -- got the stronger claim.
 	#
-	echo "  checked $found image(s), skipped $stale as stale"
+	echo "  checked $found image(s), skipped $stale as stale,"
+	echo "  $na not readable by this test (see the pc64 note above)"
 	echo "KENCC-SELFBRANCH-OK"
 	exit 0
 fi

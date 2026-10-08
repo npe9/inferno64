@@ -92,6 +92,19 @@ for t in $TESTS; do
 	[ -f "tests/$t" ] || { echo "toolchain: no tests/$t"; broke=`expr $broke + 1`; continue; }
 	out=`sh "tests/$t" 2>&1`
 	rc=$?
+	#
+	# printf '%s\n', NOT echo, to display a member's output.  sh's echo
+	# interprets backslash escapes, and a member's output is DATA -- it
+	# can legitimately contain \f, \fI and \fP, because troff-ctlchars
+	# reports lines out of troff sources.  With echo this loop turned the
+	# literal \fP in a correctly-reported evidence line back into a REAL
+	# FORM FEED, so the test told the truth and the aggregator destroyed
+	# it on the way to the reader.
+	#
+	# That is the same shape as the exit-code inversion above: the member
+	# is right and the channel is wrong, and neither file is wrong on its
+	# own inspection.
+	#
 	case $rc in
 	0)	pass=`expr $pass + 1`
 		printf '  ok      %s\n' "$t"
@@ -99,12 +112,12 @@ for t in $TESTS; do
 	2)	defect=`expr $defect + 1`
 		[ $worst -lt 2 ] && worst=2
 		printf '  DEFECT  %s\n' "$t"
-		echo "$out" | sed 's/^/          /'
+		printf '%s\n' "$out" | sed 's/^/          /'
 		;;
 	*)	broke=`expr $broke + 1`
 		[ $worst -lt 1 ] && worst=1
 		printf '  BROKE   %s (exit %s)\n' "$t" "$rc"
-		echo "$out" | sed 's/^/          /'
+		printf '%s\n' "$out" | sed 's/^/          /'
 		;;
 	esac
 done
