@@ -5603,8 +5603,29 @@ to a wrong image.  That turns the measurement below into a question about
 PERFORMANCE rather than correctness, and 84.9 per cent is what you get when the
 count is zero.
 .PP
-.B "Open, and it is a measurement in devdraw rather than an argument."
-In
+.B "ANSWERED, and the answer was non-zero."
+This was written as the open measurement of the item, and it is kept here
+because the design of the instrument is the reasoning, but
+.B "do not read it as a question:"
+it was taken, it fired, and THIS measurement is closed in the two sections
+headed
+.I "a THIRD workload refutes"
+and
+.I "dormancy is ZERO" .
+What is still owed is the next paragraph, not this one.
+On this board drawink reports
+.CW "ops 15 full 13 partial 2 partial-in-stale 2"
+\(em the glyph MASK is exactly the case \(em and
+.CW "wm/gfxstress mask 4"
+drives it to
+.B "305 stale-region hits in 507 operations."
+A peer measuring another client stack got zero and concluded no per-operation
+machinery was needed; this board disagreed, so the containment test below is
+built rather than deferred.  The dormancy half is measured too: zero hits over
+324807 operations of a client that neither masks nor reads back.
+.PP
+What the measurement was, as designed:
+in
 .CW drawmesg() 's
 .CW 'd' ,
 .CW 's' ,

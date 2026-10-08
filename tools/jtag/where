@@ -140,7 +140,7 @@ fi
 #
 grep -a 'WHERE-UNREAD' "$TMP" | sed 's/^WHERE-UNREAD /where: could NOT read /'
 
-grep -a 'WHERE cpu' "$TMP" | while read -r _ cpu _ _ pc; do
+grep -ao 'WHERE cpu.*' "$TMP" | while read -r _ cpu _ _ pc; do
 	if [ "$NAMES" = no ]; then
 		printf '%-5s %s  %s\n' "$cpu" "$pc" "(no name: wrong kernel)"
 		continue
