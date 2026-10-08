@@ -8755,15 +8755,43 @@ and its own
 \- TX finished \- the position is that
 .B "the sender believes it sent the whole frame, the receiver believes it is still receiving one, and the bytes are missing in between."
 .NH 2
-And the fault did not occur in those three runs
+And it DID occur in those runs; I was reading the wrong end
 .PP
-.B "rxstale 0, 0, 0."
-Earlier runs in the same configuration had one or two a run, so this
-reading is of the mechanism's ABSENCE and not of the fault.
-.B "Two possibilities and no evidence between them:"
-ordinary variance, or the extra SPI read this measurement adds to the
-interrupt path having perturbed the timing that produces it.  The second
-would be worth knowing and needs more runs than one sitting.
+This section said
+.B "rxstale 0, 0, 0"
+and that the reading was therefore of the mechanism's absence, with the
+extra SPI read in the interrupt path as a suspect for having masked it.
+.B "Both of those were wrong, and from a familiar cause."
+.PP
+.I Bigread
+prints
+.IR counters ()
+and then
+.IR farcounters (),
+so the LAST
+.B rxstale
+in a run is the FAR end's \- the answerer, whose columns are 0 by the
+role separation above \- and the grep that produced those three zeros
+took
+.BR "tail -1" .
+The caller's own lines say:
+.DS
+.CW "run 1  rxstale 0                      crcbad 2"
+.CW "run 2  rxstale 2  (6 then 90 of 104)   crcbad 2"
+.CW "run 3  rxstale 1  (14 then 13 of 82)   crcbad 2"
+.DE
+.B "Which is the ordinary rate."
+So the fault occurred while MARC_STATUS1 read 0x40, the instrument did
+not mask anything, and
+.B "the reading above is of the fault and not of its absence"
+\- a stronger result than the one that was committed.
+.PP
+.B "The pendat and marc figures were the caller's all along:"
+the far end's line is truncated before
+.B pendat
+has a value, so there was nothing there to read by mistake.  Only the
+.B rxstale
+claim was affected.
 .PP
 What is in place for the next attempt, which is the useful residue:
 .B pendat

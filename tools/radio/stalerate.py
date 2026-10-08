@@ -42,13 +42,26 @@ def main():
 		out = r.stdout
 		if "ARMV7M-STYX-BIGREAD-OK" in out:
 			ok += 1
-		# the caller's own line, last one in the run
+		# THE CALLER'S OWN LINES, WHICH MEANS EXCLUDING "styx: far".
+		#
+		# bigread prints counters() and then farcounters(), so the
+		# LAST match in a run is the far end -- the answerer, whose
+		# columns are always 0.  The first cut took the last match
+		# and read "rxstale 0 crcbad 0" on run 1; crcbad is what
+		# gave it away, because the caller has not had a zero there
+		# all day.  Third time this exact mistake has been made in
+		# this bench's harnesses, and the third time a known-value
+		# column caught it.
+		near = "\n".join(l for l in out.split("\n")
+				 if "styx: far " not in l)
 		s = c = None
-		for m in re.finditer(r"rxstale (\d+) \((\d+) then (\d+) of (\d+)\)", out):
+		for m in re.finditer(r"rxstale (\d+) \(", near):
 			s = int(m.group(1))
-			det = m.group(2, 3, 4)
-		for m in re.finditer(r"crcbad (\d+)", out):
+		for m in re.finditer(r"crcbad (\d+)", near):
 			c = int(m.group(1))
+		if s is None:
+			raise SystemExit("stalerate: no rxstale from the caller"
+				" -- is its screen session alive?")
 		stale.append(s)
 		bad.append(c)
 		print("run %2d  bigread %-3s  rxstale %-4s crcbad %s"
