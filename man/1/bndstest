@@ -1,0 +1,127 @@
+.TH BNDSTEST 1
+.SH NAME
+bndstest \- test that array bounds errors raise a catchable exception
+.SH SYNOPSIS
+.B bndstest
+.SH DESCRIPTION
+.I Bndstest
+checks that indexing an array outside its bounds, indexing a nil array
+and taking the head of an empty list each raise a Dis exception, and
+that a
+.B "{} exception {}"
+block in the same stack frame catches it and execution resumes
+afterwards.
+It also checks that in-range indexing is undisturbed; without that a
+guard that always raised would pass every other case.
+.PP
+Each case prints
+.B ok
+or
+.BR FAIL ,
+and the last line is a count.
+.PP
+.B "Run it under both"
+.B -c0
+.B "and"
+.BR -c1 .
+Interpreted, these exceptions come from
+.BR libinterp/xec.c ;
+compiled, the arm64 JIT raises them from its own emitted code in
+.BR libinterp/comp-arm64.c .
+.IP
+.EX
+emu -c0 /dis/sh.dis -c bndstest
+emu -c1 /dis/sh.dis -c bndstest
+.EE
+.PP
+The JIT used to reach its raising macro with
+.B R.PC
+left stale.
+.IR Handler ()
+derives the instruction offset from
+.BR R.PC ,
+so the offset fell outside every handler's
+.RB [ pc1 ,
+.BR pc2 )
+range: the exception was raised but escaped the block that should have
+caught it, and surfaced as a message from
+.IR sh (1)
+instead.
+Under
+.B -c1
+this test failed at its first case.
+.SH SOURCE
+.B /appl/cmd/bndstest.b
+.SH SEE ALSO
+.IR zdivtest (1),
+.IR emu (1)
+.SH BUGS
+.B "On a native kernel four cases fail, and that is a real defect, not a"
+.B "test bug."
+.B bflag
+gates whether the JIT emits an array bounds check at all.
+.B emu/port/main.c
+initialises it to 1;
+.B os/inferno/port/dis.c
+declares it
+.RB ( "int bflag;" )
+and nothing ever sets it, so on every native kernel it is zero and the
+compiled path indexes arrays unchecked \- an out-of-range store is
+accepted and writes wherever the index points.
+Measured on a Pi 3B kernel under QEMU with
+.BR "cflag=1" :
+.B "BNDSTEST 7 ok, 4 fail"
+with
+.B "no exception, store accepted"
+for the three in-range-of-nothing cases.
+.PP
+.I "Emu -B"
+suppresses the same checks and reproduces it exactly, message for
+message, which is how this was attributed without touching the kernel
+tree:
+.IP
+.EX
+emu -B -c1 /dis/sh.dis -c bndstest
+.EE
+.PP
+Under
+.B -c0
+it is 11/11 even with
+.BR -B ,
+because the interpreter's
+.B ind
+instructions check unconditionally. So this is a JIT-only hole, and a
+kernel whose code generator is a stub is unaffected.
+Setting
+.B bflag
+is a one-line change in the kernel tree and is not made here.
+.PP
+Two cases accept either
+.B "array bounds error"
+or
+.BR "dereference of nil" ,
+because the two paths disagree and
+.B doc/dis.ms
+does not say which is correct: it states only that the operand must be
+an array or a list of the correct type. The interpreter's
+.B head
+instructions do not test for
+.B H
+at all \- they dereference it and rely on the hosted signal handler
+turning the fault into an exception \- while the JIT tests explicitly
+and reports a bounds error. Whether the native kernels recover from
+that dereference as the hosted emu does is untested here.
+.PP
+It does not cover the other JIT back ends, nor
+.B IINDX
+with a type whose size is not a power of two, nor a bounds error raised
+in a frame other than the handler's: this build crashes outright when an
+exception unwinds through a frame with no handler of its own, so a
+deeper raise would test that defect instead.
+.PP
+It does not cover
+.B slice
+bounds,
+.B indc
+on a string, or
+.BR tail .

@@ -35,6 +35,7 @@ TARG=\
 	auplay.dis\
 	auhdr.dis\
 	basename.dis\
+	bndstest.dis\
 	bind.dis\
 	bit2gif.dis\
 	bytes.dis\
@@ -195,6 +196,7 @@ TARG=\
 	xargs.dis\
 	xd.dis\
 	yacc.dis\
+	zdivtest.dis\
 	zeros.dis\
 
 MODULES=\

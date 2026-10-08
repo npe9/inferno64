@@ -129,13 +129,13 @@ OP(subb) { B(d) = B(m) - B(s); }
 OP(subw) { W(d) = W(m) - W(s); }
 OP(subl) { V(d) = V(m) - V(s); }
 OP(subf) { F(d) = F(m) - F(s); }
-OP(divb) { B(d) = B(m) / B(s); }
-OP(divw) { W(d) = W(m) / W(s); }
-OP(divl) { V(d) = V(m) / V(s); }
+OP(divb) { if(B(s) == 0) error(exZdiv); B(d) = B(m) / B(s); }
+OP(divw) { if(W(s) == 0) error(exZdiv); W(d) = W(m) / W(s); }
+OP(divl) { if(V(s) == 0) error(exZdiv); V(d) = V(m) / V(s); }
 OP(divf) { F(d) = F(m) / F(s); }
-OP(modb) { B(d) = B(m) % B(s); }
-OP(modw) { W(d) = W(m) % W(s); }
-OP(modl) { V(d) = V(m) % V(s); }
+OP(modb) { if(B(s) == 0) error(exZdiv); B(d) = B(m) % B(s); }
+OP(modw) { if(W(s) == 0) error(exZdiv); W(d) = W(m) % W(s); }
+OP(modl) { if(V(s) == 0) error(exZdiv); V(d) = V(m) % V(s); }
 OP(mulb) { B(d) = B(m) * B(s); }
 OP(mulw) { W(d) = W(m) * W(s); }
 OP(mull) { V(d) = V(m) * V(s); }
@@ -298,7 +298,18 @@ OP(indx)
 	i = W(d);
 	DBG("indx a %p a->len %zd i %zd\n", a, a->len, i);
 	if(a == H || i >= a->len){
-	print("indx a %p a->len %zd i %zd (index slot %p)\n", a, a->len, i, R.d);
+		/*
+		 * Kept for the wm index tracing, but a->len must not be
+		 * read when a is H: doing so faults inside the diagnostic
+		 * and misreports what this opcode has correctly determined
+		 * is a bounds error.  On the board it also floods the
+		 * console ring, which is the only post-mortem channel.
+		 */
+		if(a == H)
+			print("indx a H i %zd (index slot %p)\n", i, R.d);
+		else
+			print("indx a %p a->len %zd i %zd (index slot %p)\n",
+				a, a->len, i, R.d);
 		if(currun() != nil)
 			wmtracedump(currun());
 		error(exBounds);
@@ -314,7 +325,6 @@ OP(indw)
 	i = W(d);
 	DBG("indw a %p a->len %zd i %zd\n", a, a->len, i);
 	if(a == H || i >= a->len){
-	print("indw a %p a->len %zd i %zd\n", a, a->len, i);
 		error(exBounds);
 	}
 	W(m) = (WORD)(a->data+i*sizeof(WORD));
@@ -328,7 +338,6 @@ OP(indf)
 	i = W(d);
 	DBG("indf a %p a->len %zd i %zd\n", a, a->len, i);
 	if(a == H || i >= a->len){
-	print("indf a %p a->len %zd i %zd\n", a, a->len, i);
 		error(exBounds);
 	}
 	W(m) = (WORD)(a->data+i*sizeof(REAL));
@@ -342,7 +351,6 @@ OP(indl)
 	i = W(d);
 	DBG("indl a %p a->len %zd i %zd\n", a, a->len, i);
 	if(a == H || i >= a->len){
-	print("indl a %p a->len %zd i %zd\n", a, a->len, i);
 		error(exBounds);
 	}
 	W(m) = (WORD)(a->data+i*sizeof(LONG));
@@ -356,7 +364,6 @@ OP(indb)
 	i = W(d);
 	DBG("indb a %p a->len %zd a->data 0x%p i %zd\n", a, a->len, a->data, i);
 	if(a == H || i >= a->len){
-	print("indb a %p a->len %zd a->data 0x%p i %zd\n", a, a->len, a->data, i);
 		error(exBounds);
 	}
 	W(m) = (WORD)(a->data+i*sizeof(BYTE));

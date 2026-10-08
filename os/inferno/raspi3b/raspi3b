@@ -235,6 +235,15 @@ root
 # may well answer "no" to.
 #
 	/dis/disbench.dis
+#
+# zdivtest(1) and bndstest(1), because this board's code generator is the
+# one that matters for them and the hosted emu cannot exercise it: emu
+# compiles with comp-arm64.c, the board with comp-aarch64.c, and the two
+# are separate files with separate bugs.  Both tests must be run with
+# cflag=1 (the default here) AND cflag=0 to mean anything.
+#
+	/dis/zdivtest.dis
+	/dis/bndstest.dis
 	/dis/sh/std.dis
 	/dis/usb/usbd.dis
 	/dis/usb/etherusb.dis

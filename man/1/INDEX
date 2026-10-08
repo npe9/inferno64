@@ -27,6 +27,7 @@ basename basename
 battlelines battlelines
 bigguns bigguns
 bind bind
+bndstest bndstest
 blackdiamond blackdiamond
 blur blur
 bombergolf bombergolf
@@ -564,6 +565,7 @@ wm/prof prof
 xcaliber xcaliber
 xd xd
 yacc yacc
+zdivtest zdivtest
 zeros zeros
 zing zing
 zipstream zipstream
