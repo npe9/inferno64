@@ -556,7 +556,8 @@ cmdwstat(Chan *c, uchar *dp, int n)
 			error(Eperm);
 		if(!emptystr(d->uid))
 			kstrdup(&cv->owner, d->uid);
-		if(d->mode != ~0UL)
+	/* ~0U, not ~0UL: Dir.mode is u32 and emu's ulong is 64 bits -- see devpipe.c */
+		if(d->mode != ~0U)
 			cv->perm = d->mode & 0777;
 		poperror();
 		free(d);

@@ -79,7 +79,14 @@ init(nil: ref Draw->Context, nil: list of string)
 	report(back.mode == ~0, sys->sprint("mode sentinel survives: got %bd, want %bd", big back.mode, big ~0));
 	report(back.dev == ~0, sys->sprint("dev sentinel survives: got %bd, want %bd", big back.dev, big ~0));
 	report(back.qid.vers == ~0, sys->sprint("qid.vers sentinel survives: got %bd, want %bd", big back.qid.vers, big ~0));
-	report(back.length == ~big 0, sys->sprint("length sentinel survives: got %bx", back.length));
+	report(back.length == ~big 0, sys->sprint("length sentinel survives: got %bd", back.length));
+	#
+	# dtype is TWO bytes, so its wire sentinel is 16rFFFF and not
+	# 16rFFFFFFFF -- a different literal, and it was fixed without being
+	# tested until this line was added.  qid.qtype is one byte, 16rFF.
+	#
+	report(back.dtype == ~0, sys->sprint("dtype sentinel survives (2 bytes): got %bd, want %bd", big back.dtype, big ~0));
+	report(back.qid.qtype == ~0, sys->sprint("qid.qtype sentinel survives (1 byte): got %bd, want %bd", big back.qid.qtype, big ~0));
 
 	#
 	# And a real time must NOT be mistaken for the sentinel, or the fix

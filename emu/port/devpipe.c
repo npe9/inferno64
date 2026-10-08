@@ -433,7 +433,16 @@ pipewstat(Chan *c, uchar *dp, int n)
 			error(Eexist);
 		kstrcpy(p->pipedir[1+d1].name, d->name, KNAMELEN);
 	}
-	if(d->mode != ~0UL)
+	/*
+	 * ~0U, not ~0UL.  Dir.mode is u32 and emu's ulong is the host's
+	 * 64-bit unsigned long, so `!= ~0UL' promotes the field and
+	 * compares it against 0xFFFFFFFFFFFFFFFF: always true, so the 9P
+	 * "do not change this field" sentinel was never recognised and
+	 * wstat applied 0xFFFFFFFF as a mode.  Measured on a pipe: 0660
+	 * became 0777.  The identical line in os/inferno/port is correct,
+	 * because kencc's long is 32 bits.
+	 */
+	if(d->mode != ~0U)
 		p->pipedir[d1 + 1].perm = d->mode & 0777;
 	poperror();
 	free(d);

@@ -1,0 +1,61 @@
+.TH WSTATTEST 1
+.SH NAME
+wstattest \- check that a wstat field of all ones changes nothing
+.SH SYNOPSIS
+.B wstattest
+.SH DESCRIPTION
+.I Wstattest
+creates a pipe, writes a
+.B wstat
+whose every field is the 9P "do not change this field" sentinel, and
+requires the mode to be unchanged.  Then it writes a real mode and
+requires that one to be applied.
+.PP
+It is the C half of what
+.IR styxdirtest (1)
+checks on the wire.  Emu's devices tested for the sentinel with
+.PP
+.EX
+	if(d->mode != ~0UL)
+		apply the mode
+.EE
+.PP
+where
+.B Dir.mode
+is a
+.B u32
+and emu's
+.B ulong
+is the host's 64-bit
+.BR "unsigned long" :
+the field is promoted and compared against 0xFFFFFFFFFFFFFFFF, so the
+test is always true and the sentinel is applied as a mode.  A pipe
+created 0660 came back 0777, which is 0xFFFFFFFF masked with 0777.  The
+identical line in
+.B os/inferno/port
+is correct, because kencc's
+.B long
+is 32 bits \(em which is why the kernel, the thing anyone tests, never
+showed this.
+.PP
+A pipe is the subject because it is the cheapest device with a
+.B wstat
+and wants no file system, no network and no privilege.  The second check
+is what keeps the fix honest: a device that ignored every
+.B wstat
+would pass the first and fail it.
+.SH SOURCE
+.B /appl/cmd/wstattest.b
+.SH SEE ALSO
+.IR styxdirtest (1),
+.IR styx (2)
+.SH BUGS
+It covers the mode, which is the field every device's
+.B wstat
+applies.  The times and the owner are not exercised.
+.PP
+.B emu
+exits 0 whether a Limbo command raises or not, so a caller must read the
+output rather than the status;
+.B scripts/check-wstat.sh
+does.

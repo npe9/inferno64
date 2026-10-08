@@ -313,7 +313,8 @@ sslwstat(Chan *c, uchar *db, int n)
 
 	if(!emptystr(dir->uid))
 		kstrdup(&s->user, dir->uid);
-	if(dir->mode != ~0UL)
+	/* ~0U, not ~0UL: Dir.mode is u32 and emu's ulong is 64 bits -- see devpipe.c */
+	if(dir->mode != ~0U)
 		s->perm = dir->mode;
 
 	free(dir);

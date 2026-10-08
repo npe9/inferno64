@@ -1021,7 +1021,16 @@ alloctag(void)
 
 	for(i = 0; i < NMASK; i++){
 		v = mntalloc.tagmask[i];
-		if(v == ~0UL)
+		/*
+		 * A word is full at 1<<TAGSHIFT bits, not at all the bits a
+		 * ulong has: TAGSHIFT is 5 and its own comment says "ulong has
+		 * to be 32 bits", which is true under kencc and not in emu,
+		 * where ulong is the host's 64-bit one.  Comparing against
+		 * ~0UL there never matched, so the skip never happened.  It is
+		 * a wasted scan rather than a wrong answer, since j only ever
+		 * reaches 1<<TAGSHIFT.
+		 */
+		if(v == ((1UL<<(1<<TAGSHIFT))-1))
 			continue;
 		for(j = 0; j < 1<<TAGSHIFT; j++)
 			if((v & (1<<j)) == 0){

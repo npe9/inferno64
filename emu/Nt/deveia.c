@@ -370,7 +370,8 @@ eiawstat(Chan *c, uchar *dp, int n)
 
 	n = convM2D(dp, n, &d, nil);
 	i = Nqid*NETID(c->qid.path)+NETTYPE(c->qid.path)-Ndataqid;
-	if(d.mode != ~0UL)
+	/* ~0U, not ~0UL: Dir.mode is u32 and emu's ulong is 64 bits -- see devpipe.c */
+	if(d.mode != ~0U)
 		eiadir[i+1].perm = d.mode&0666;
 	return n;
 }

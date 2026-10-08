@@ -575,6 +575,7 @@ wm/man man
 wm/mprof mprof
 wm/prof prof
 xcaliber xcaliber
+wstattest wstattest
 xd xd
 yacc yacc
 zerofs zerofs

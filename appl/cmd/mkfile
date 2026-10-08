@@ -162,6 +162,7 @@ TARG=\
 	rpcserve.dis\
 	styxbench.dis\
 	styxdirtest.dis\
+	wstattest.dis\
 	zerofs.dis\
 	tcpserve.dis\
 	sum.dis\

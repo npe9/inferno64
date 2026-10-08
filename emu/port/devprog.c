@@ -355,7 +355,8 @@ progwstat(Chan *c, uchar *db, int n)
 		release();
 		error(Eshortstat);
 	}
-	if(d.mode != ~0UL)
+	/* ~0U, not ~0UL: Dir.mode is u32 and emu's ulong is 64 bits -- see devpipe.c */
+	if(d.mode != ~0U)
 		o->pgrp->progmode = d.mode&0777;
 	release();
 	return n;
