@@ -24,19 +24,35 @@ export PATH ROOT
 	exit 1
 }
 
-out=`emu-g -c0 /dis/ipinttest.dis 2>&1` || true
+# -c0 and then the JIT.  They are different programs: a JIT-raised
+# exception used to escape the handler meant to catch it, so this check
+# -- whose whole subject is that these calls raise CATCHABLY -- could
+# have passed interpreted while the default configuration broke the
+# process.  Bounded, because a broken process under emu's initial Dis
+# hangs rather than exits.
+out=`timeout ${EMUWAIT:-120} emu-g -c0 /dis/ipinttest.dis 2>&1` || true
+jit=`timeout ${EMUWAIT:-120} emu-g /dis/ipinttest.dis 2>&1` || true
 echo "$out"
-case "$out" in
-*"ipinttest: ok"*)	;;
-*)	echo "check-ipint: FAIL" >&2; exit 1;;
-esac
+for arm in "interpreted:$out" "jitted:$jit"; do
+	case "$arm" in
+	*"ipinttest: ok"*)	;;
+	*)	echo "check-ipint: FAIL -- ${arm%%:*}:" >&2
+		echo "${arm#*:}" | tail -4 | sed 's/^/    | /' >&2
+		exit 1;;
+	esac
+done
 
 # The test's own controls are inside it: each fatal case has a working
 # call beside it.  What this adds is a count, so a build that quietly
 # stopped running most of them still fails here.
 n=`echo "$out" | grep -c ' ok ('`
+njit=`echo "$jit" | grep -c ' ok ('`
+[ "$n" -eq "$njit" ] || {
+	echo "check-ipint: FAIL -- $n cases interpreted but $njit jitted" >&2
+	exit 1
+}
 [ "$n" -eq 17 ] || {
 	echo "check-ipint: FAIL -- $n cases reported ok, expected 17" >&2
 	exit 1
 }
-echo "check-ipint: ok -- $n cases"
+echo "check-ipint: ok -- $n cases, interpreted and jitted"
