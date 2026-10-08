@@ -477,7 +477,22 @@ gdel(Prog *p)
 	return 1;
 }
 
-int	bflag;
+/*
+ * Emit array bounds checks.  emu/port/main.c sets this to 1 and -B
+ * turns it off; here it was declared and never assigned, so on a board
+ * it was 0 -- and a code generator with bflag 0 emits no bounds check
+ * at all, which makes an out-of-range Limbo store write wherever the
+ * index points.  Measured hosted, which is where the flag can be
+ * forced: `emu -B -c1' gives bndstest(1) 7 ok 4 fail, "no exception,
+ * store accepted", against 11 ok 0 fail with it on.
+ *
+ * Unreachable on this branch's boards today, because cflag is 0 in
+ * every config here and the generator never runs -- but the day one
+ * turns the JIT on, a missing bounds check is not the bug anyone would
+ * go looking for.  Reported from the raspi3b side, where a kernel with
+ * cflag 1 reproduced it on silicon.
+ */
+int	bflag = 1;
 int	cflag;
 uvlong	gcbusy;
 uvlong	gcidle;
