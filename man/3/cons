@@ -226,7 +226,33 @@ being destroyed,
 writing
 .B broken
 ensures that they are left in this state to allow debugging (the default).
-Only the privileged user is allowed to write to this file.
+Writing
+.B exdebug
+toggles tracing of exception handling.
+.PP
+Those five are the whole set the hosted
+.IR emu (1)
+accepts; a native kernel's
+.B sysctl
+accepts more, and
+.IR cons (3)
+in that tree is the page for them. An unrecognised string gives
+.BR "unknown control request" .
+.PP
+.B sysctl
+is mode 0644, so writing it needs to be the file's owner. Note that
+unlike
+.B user
+and
+.BR sysname ,
+which are the same mode and additionally verify the writer with
+.IR iseve (),
+the
+.B sysctl
+write path performs no such check of its own: the restriction is the
+ordinary permission check against the file's owner and nothing more.
+That is a documented inconsistency rather than a demonstrated hole \-
+no unprivileged write was shown to succeed here.
 .PP
 The
 .B sysname
