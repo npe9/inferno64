@@ -12993,6 +12993,23 @@ as agreement, which is the only reason the result is worth recording.
 .B "Thirty an arm is where this starts to carry a verdict,"
 and that is the same number this plan arrived at for the efs batch, from the
 same arithmetic.
+.PP
+.B "CORRECTION to the line above, and it is backwards in the direction that matters."
+.CW 0.050
+at
+.CW n=30
+is P(clean arm | the rate is unchanged) \(em
+.B "one arm, not a two-arm test."
+0-of-30 against 0-of-30 still distinguishes nothing.  What thirty buys is the
+power to say that ONE arm's rate is no longer 2-in-21.  To ask whether
+.CW gcoff
+.I changes
+the rate, the fault has to actually appear in the arm that still has a
+collector, which at 9.5 per cent is about 3 of 30 \(em so
+.B "the CONTROL is the arm that has to be big enough to show something,"
+not the treatment.  That is the opposite of how both of us sized every batch in
+this investigation: all of them were built around giving the treatment enough
+runs.
 .LP
 .B "What the run did produce was a different panic:"
 .DS
@@ -13064,6 +13081,11 @@ A
 .CW kernel8.img
 appeared in this tree at 21:18 that no build of mine accounts for, and it stays
 open rather than closed on a plausible story.
+.PP
+.B "SUPERSEDED \(em CLOSED in the bflag section below, by the peer's build logs."
+And closed in a way that makes this whole paragraph the wrong question:
+.CW ROOT
+was never the route.  Read that section instead of this one.
 .NH 2
 bflag: the JIT emitted NO array bounds check on any board, and what that costs
 .LP
@@ -13199,7 +13221,50 @@ instead of printing its summary, and a later identical run did not.
 .CW bflag=0
 is the arm that deliberately stores out of bounds, so a nondeterministic wedge
 there is the defect doing what the defect does.  One instance, recovered with
-.CW hardreset .
+.CW hardreset ,
+and it is the reason the knob is documented as a measurement facility and not a
+tuning knob.
+.LP
+.B "What the knob is and is not, said plainly because it turns memory safety off."
+.CW "bflag 0"
+disables bounds checks for every module compiled afterwards, by any process, and
+.CW bflag=0
+is demonstrably the arm that can leave the board wedged in
+.CW exit .
+Three things bound it.
+.B "A reboot restores the compiled-in"
+.CW "bflag = 1" ,
+so the state is not persistent.  It exists to make the A/B above possible in one
+boot instead of two card installs.  And
+.B "it adds no capability that was not already there:"
+.CW /dev/sysctl
+is mode 0644 and
+.CW reboot ,
+.CW halt ,
+.CW panic
+and
+.CW broken
+sit behind the same write, so anyone who can set
+.CW bflag
+could already halt the machine.  The right reading is that
+.CW /dev/sysctl
+is a privileged control file, which it was before this.
+.LP
+.B "The peer re-ran their hosted arm with the control attached, and it moved."
+Their first figure was 5.7 per cent from three samples with no control and one
+stray low.  With four samples and an
+.CW int
+arm:
+.P1
+                      on                off
+array          92 93 93 93      86 88 87 87     +6.6%  ranges do NOT overlap
+int (CONTROL) 665 664 664 664  664 672 672 664  -0.6%  ranges DO overlap
+.P2
+.B "6.6 per cent hosted against 6.5 on silicon,"
+which is closer agreement than their uncontrolled figure gave.  The control did
+not merely add confidence \(em it forced the resample that corrected the number.
+Until the non-indexing arm has been run, the indexing figure is a number that
+came out of a right-shaped experiment.
 .LP
 .B "And a build trap the peer hit, which this tree should know:"
 in this mkfile
