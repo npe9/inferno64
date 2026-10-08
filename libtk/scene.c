@@ -688,7 +688,35 @@ static struct {
 	int	drew[TKwidgets];	/* times each type's draw ran */
 	int	joined[TKwidgets];	/* ...of those, times it joined a tree */
 	int	citems;		/* canvas items whose draw method ran */
+	int	scalednodes;	/* nodes drawn through a scale != 1 */
+	int	approx;		/* ...of those, ones a scale cannot be exact for */
 } walk;
+
+/*
+ * The scale the WALK renders at, set by `render scaled'.  One by one
+ * is every running system; this exists so the scaled path has a
+ * consumer to be driven and measured through, rather than being code
+ * no caller can reach.
+ */
+static int scalenum = 1, scaleden = 1;
+
+void
+tkscenesetscale(int num, int den)
+{
+	if(num <= 0 || den <= 0)
+		return;
+	scalenum = num;
+	scaleden = den;
+}
+
+void
+tkscenegetscale(int *num, int *den)
+{
+	if(num != nil)
+		*num = scalenum;
+	if(den != nil)
+		*den = scaleden;
+}
 
 /*
  * Does this node type mark pixels, and does its r mean its box?
@@ -852,7 +880,7 @@ tkwalkflush(void)
 				combinerect(&walk.bounds, b);
 		}
 	}
-	tkscenerender(s, w->ctxt, w->dst);
+	tkscenerenderscaled(s, w->ctxt, w->dst, scalenum, scaleden);
 	tkscenefree(s);
 	walk.runs++;
 }
@@ -1057,6 +1085,22 @@ tkwalkitems(void)
 	return walk.citems;
 }
 
+/*
+ * How many nodes a scaled render drew, and how many of those a scale
+ * cannot be exact for -- glyph runs, whose face has its size in its
+ * name, and textures, which draw() replicates rather than resamples.
+ * A caller reads both so it can tell an exact enlargement from an
+ * approximate one rather than assuming either.
+ */
+void
+tkwalkscaled(int *nodes, int *approx)
+{
+	if(nodes != nil)
+		*nodes = walk.scalednodes;
+	if(approx != nil)
+		*approx = walk.approx;
+}
+
 void
 tkwalknote(int type, int joined)
 {
@@ -1088,6 +1132,8 @@ tkwalkreset(void)
 		walk.joined[i] = 0;
 	}
 	walk.citems = 0;
+	walk.scalednodes = 0;
+	walk.approx = 0;
 	walk.runs = 0;
 	walk.widgets = 0;
 	walk.nodes = 0;
@@ -1372,13 +1418,154 @@ renderborder(TkCtxt *c, Image *dst, TkNode *n)
 }
 
 /*
- * Walk the tree and draw it.  In list order, which is paint order: a
- * node tree is not a set.
+ * Scaling a tree.  This is the capability a description has that a
+ * raster does not: the same nodes rendered larger, rather than pixels
+ * resampled.
+ *
+ * Every node's geometry is integers, so the scale is num/den with
+ * rounding and no floating point -- a kernel renderer should not want
+ * an FPU.  Positions scale about dst->r.min, so the target's top left
+ * stays put and the tree grows into it.
+ *
+ * sp IS OVERLOADED THREE WAYS and that is the whole difficulty: a blit
+ * source point for TkNlayer, the two RADII for TkNellipse, and PACKED
+ * END STYLES for TkNspline -- a canvas line's arrow is 25329922.
+ * Scaling that blindly turns an arrow into nonsense, so this is per
+ * type and not a loop over the struct.
+ *
+ * Two kinds cannot be exact and are COUNTED rather than hidden:
+ * TkNglyphs names a font FILE whose size is in its name, so text keeps
+ * its natural size until a size-selection step exists, and
+ * TkNtexture's image is drawn by draw(), which clips and replicates but
+ * does not resample.  So a scaled render reports how many nodes it
+ * could not be exact for, and a caller can tell an exact enlargement
+ * from an approximate one instead of guessing.
  */
+static int
+scaleval(int v, int num, int den)
+{
+	if(v >= 0)
+		return (v*num + den/2)/den;
+	return -(((-v)*num + den/2)/den);
+}
+
+static Point
+scalept(Point p, Point o, int num, int den)
+{
+	p.x = o.x + scaleval(p.x - o.x, num, den);
+	p.y = o.y + scaleval(p.y - o.y, num, den);
+	return p;
+}
+
+static Rectangle
+scalerect(Rectangle r, Point o, int num, int den)
+{
+	r.min = scalept(r.min, o, num, den);
+	r.max = scalept(r.max, o, num, den);
+	return r;
+}
+
+enum { Nscratch = 64 };		/* points a scaled polygon may have */
+
+
+static int renderscene(TkScene*, TkCtxt*, Image*, int, int);
+
+/*
+ * Fill *d with n scaled.  Points go into caller-owned scratch; a
+ * polygon with more points than that is drawn UNSCALED and counted
+ * approximate, which is wrong in the right direction -- a shape at the
+ * wrong size is visible, a missing one is not.
+ */
+static int
+scalenode(TkNode *d, TkNode *n, Point o, int num, int den, Point *scratch)
+{
+	int i, approx;
+
+	*d = *n;
+	approx = 0;
+	switch(n->type){
+	case TkNellipse:
+	case TkNellipsefill:
+		/* r.min is the CENTRE, sp the two radii, width the stroke */
+		d->r.min = scalept(n->r.min, o, num, den);
+		d->r.max = d->r.min;
+		d->sp.x = scaleval(n->sp.x, num, den);
+		d->sp.y = scaleval(n->sp.y, num, den);
+		d->width = scaleval(n->width, num, den);
+		break;
+	case TkNspline:
+		/* sp is two packed end styles and is NOT geometry */
+		d->width = scaleval(n->width, num, den);
+		d->r = scalerect(n->r, o, num, den);
+		goto points;
+	case TkNpolyfill:
+		d->r = scalerect(n->r, o, num, den);
+	points:
+		if(n->pts == nil || n->npts <= 0)
+			break;
+		if(n->npts > Nscratch){
+			approx = 1;
+			break;
+		}
+		for(i = 0; i < n->npts; i++)
+			scratch[i] = scalept(n->pts[i], o, num, den);
+		d->pts = scratch;
+		break;
+	case TkNlayer:
+		/* r the scratch extent, dstr where it lands, sp the source */
+		d->r = scalerect(n->r, o, num, den);
+		d->dstr = scalerect(n->dstr, o, num, den);
+		d->sp = scalept(n->sp, o, num, den);
+		break;
+	case TkNglyphs:
+		/* the position scales; the face cannot -- its size is its name */
+		d->r = scalerect(n->r, o, num, den);
+		approx = 1;
+		break;
+	case TkNtexture:
+		/* draw() clips and replicates, it does not resample */
+		d->r = scalerect(n->r, o, num, den);
+		approx = 1;
+		break;
+	default:
+		d->r = scalerect(n->r, o, num, den);
+		d->radius = scaleval(n->radius, num, den);
+		d->width = scaleval(n->width, num, den);
+		break;
+	}
+	return approx;
+}
+
+/*
+ * The unscaled renderer is this with num == den, and takes the
+ * identical path in that case -- the scaled copy is not even made --
+ * so an unscaled render is unchanged BY CONSTRUCTION rather than by
+ * arithmetic that happens to round back to the same place.
+ */
+int
+tkscenerenderscaled(TkScene *s, TkCtxt *c, Image *dst, int num, int den)
+{
+	if(num <= 0 || den <= 0)
+		return 0;
+	return renderscene(s, c, dst, num, den);
+}
+
 int
 tkscenerender(TkScene *s, TkCtxt *c, Image *dst)
 {
-	TkNode *n, *open;
+	return renderscene(s, c, dst, 1, 1);
+}
+
+/*
+ * Walk the tree and draw it.  In list order, which is paint order: a
+ * node tree is not a set.
+ */
+static int
+renderscene(TkScene *s, TkCtxt *c, Image *dst, int num, int den)
+{
+	TkNode *n, *nx, *open;
+	TkNode sd, sopen;
+	Point scratch[Nscratch], o;
 	Image *col, *target, *saved, *t, *img, *clipped;
 	Rectangle oclipr, clipr;
 	Font *fnt;
@@ -1387,12 +1574,24 @@ tkscenerender(TkScene *s, TkCtxt *c, Image *dst)
 	if(s == nil || c == nil || dst == nil)
 		return 0;
 	drawn = 0;
+	o = dst->r.min;
 	target = dst;
 	saved = nil;
 	open = nil;
 	clipped = nil;
 	oclipr = dst->clipr;
-	for(n = s->head; n != nil; n = n->next){
+	for(nx = s->head; nx != nil; nx = nx->next){
+		/*
+		 * n is what gets drawn and nx is what the loop walks, so
+		 * the twelve cases below need no knowledge of the scale.
+		 * At num == den nothing is copied at all.
+		 */
+		n = nx;
+		if(num != den){
+			walk.approx += scalenode(&sd, nx, o, num, den, scratch);
+			walk.scalednodes++;
+			n = &sd;
+		}
 		switch(n->type){
 		case TkNlayer:
 			if(saved != nil)
@@ -1402,7 +1601,18 @@ tkscenerender(TkScene *s, TkCtxt *c, Image *dst)
 				continue;	/* no scratch: draw in place */
 			saved = target;
 			target = t;
-			open = n;
+			/*
+			 * open outlives this iteration -- TkNlayerend uses it
+			 * -- and sd is overwritten by the next node, so a
+			 * scaled layer needs its own slot. Pointing open at
+			 * sd gave a dangling node whose dstr and sp would be
+			 * whatever happened to be drawn in between.
+			 */
+			if(n == &sd){
+				sopen = sd;
+				open = &sopen;
+			}else
+				open = n;
 			drawn++;
 			continue;
 		case TkNlayerend:

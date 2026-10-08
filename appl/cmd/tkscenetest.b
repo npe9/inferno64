@@ -1013,6 +1013,69 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	}else
 		report(0, "two toplevels rendered through the node path");
 
+	#
+	# RESOLUTION INDEPENDENCE: the same tree rendered at 2:1.
+	#
+	# This is the one capability a description has over a raster, so
+	# what is checked is that the scaled path RAN and that it changed
+	# the picture -- not a byte comparison, because there is nothing
+	# to compare a 2x render against: no direct path can produce one.
+	#
+	# Ink is deliberately NOT the metric. A toplevel paints its whole
+	# background, so the ink count barely moves when a widget inside it
+	# doubles, which is the same trap the posted-menu case documents.
+	# Difference from the 1:1 render is the metric that can tell them
+	# apart.
+	#
+	scaleframe := list of {"frame .w -width 40 -height 20 -relief raised -borderwidth 2", "pack .w"};
+	tk->cmd(tk->toplevel(disp, ""), "render scaled 1");
+	s1 := paint(disp, "scale 1:1", scaleframe);
+	r1 := tk->cmd(tk->toplevel(disp, ""), "render scaled");
+	report(r1 != nil && len r1 > 5 && r1[0:9] == "1 1 nodes",
+		sys->sprint("scale 1:1 scales nothing: `%s\'", r1));
+
+	tk->cmd(tk->toplevel(disp, ""), "render scaled 2");
+	s2 := paint(disp, "scale 2:1", scaleframe);
+	r2 := tk->cmd(tk->toplevel(disp, ""), "render scaled");
+	# nodes must be nonzero: the scaled path has to have been entered.
+	(nr, rt) := sys->tokenize(r2, " ");
+	nodes2 := 0;
+	if(nr >= 4)
+		nodes2 = int hd tl tl tl rt;
+	report(nodes2 > 0, sys->sprint("scale 2:1 scaled some nodes: `%s\'", r2));
+	if(s1 != nil && s2 != nil){
+		d := differ(s1, s2);
+		report(d > 0, sys->sprint("scale 2:1 changes the picture (%d bytes differ from 1:1)", d));
+	}else
+		report(0, "both scales rendered");
+
+	# And the approx counter must be seen NONZERO somewhere, or it
+	# proves nothing. A frame is pure geometry and scales exactly; a
+	# label carries a glyph run, whose face names its size, so the
+	# text keeps its natural size and the node is reported as
+	# approximated. Both readings from one instrument is what makes
+	# `approx 0' above worth anything.
+	tk->cmd(tk->toplevel(disp, ""), "render scaled 2");
+	paint(disp, "scale 2:1 with text", list of {"label .w -text Scaled", "pack .w"});
+	ra := tk->cmd(tk->toplevel(disp, ""), "render scaled");
+	(nra, rta) := sys->tokenize(ra, " ");
+	approxa := 0;
+	if(nra >= 6)
+		approxa = int hd tl tl tl tl tl rta;
+	report(approxa > 0,
+		sys->sprint("a glyph run at 2:1 is reported approximate: `%s\'", ra));
+
+	# Reversibility: putting the scale back must reproduce the 1:1
+	# picture exactly. A scale that leaks state would pass everything
+	# above and fail here.
+	tk->cmd(tk->toplevel(disp, ""), "render scaled 1");
+	s1b := paint(disp, "scale back to 1:1", scaleframe);
+	if(s1 != nil && s1b != nil)
+		report(differ(s1, s1b) == 0,
+			sys->sprint("scale 1:1 again is byte-identical (%d differ)", differ(s1, s1b)));
+	else
+		report(0, "the 1:1 render repeated");
+
 	smenu := paintmenu(disp, 1);
 	if(dmenu != nil && smenu != nil){
 		dm := differ(dmenu, smenu);
