@@ -10045,3 +10045,29 @@ per cent, and the least precise magnitude at 2.0x to 2.6x.  Those are
 three views of one fact, which is some comfort that the analysis is
 measuring the data rather than the analyst: the arm whose size is least
 certain is the arm whose separation is smallest.
+.NH 2
+The leave-one-out check has a positive control, and it is not from this branch
+.PP
+All three arms above survive every single-sample drop, which is the answer
+one wants and also a check that has never been seen to fail.  That is the
+shape this document has spent all day warning about, so the control
+belongs beside it.
+.PP
+The sibling session ran the same check on its own 14-and-14:
+.IP
+.nf
+as measured                            OVERLAP
+disjoint after one drop from each arm  27 of 196 pairings (14%)
+median across every drop               on 3390..3390, off 3130..3150
+.fi
+.PP
+So on their data the extremum verdict is unstable under 86 per cent of
+single-sample drops, while the median does not move more than 0.6 per cent
+and the lock-on median does not move at all.  Disjointness there was close
+to a coin flip on which fourteen samples happened to land.
+.PP
+That is what the check looks like when it fires, which is what makes
+"survives every drop" on these three arms worth stating.  Without it the
+line would be an instrument with no demonstrated failure mode \(em and the
+reason it does not fire here is the one already given: a factor of two
+does not care how it was measured.
