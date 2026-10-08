@@ -43,6 +43,14 @@
 #                     earlier versions of that survey each reported a clean
 #                     sweep over pages that had gaps.
 #
+#   troff-ctlchars    a C0 control character in a troff source, which is the
+#                     generated-document failure: \f(CW written from a non-raw
+#                     string becomes a FORM FEED and the font escape is lost,
+#                     so the page renders "(CWlibdraw/P".  30 occurrences in 3
+#                     files here.  groff gave ONE warning for 24 of them, and
+#                     the warning count went UP when they were fixed, so this
+#                     counts bytes in the source rather than diagnostics.
+#
 #   troff-argorder    not a compiler test, but the same shape in the documents:
 #                     a .CW/.I/.B line whose arguments troff reorders silently.
 #
@@ -56,7 +64,8 @@ ROOT=`cd \`dirname "$0"\`/.. && pwd`
 cd "$ROOT" || exit 1
 
 TESTS="kencc-brloop.sh kencc-selfbranch.sh kencc-narrowcast.sh \
-	kencc-widencast.sh 7l-bigconst.sh troff-argorder.sh man-cmdtab.sh"
+	kencc-widencast.sh 7l-bigconst.sh troff-argorder.sh man-cmdtab.sh \
+	troff-ctlchars.sh"
 
 pass=0
 broke=0

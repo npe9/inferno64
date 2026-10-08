@@ -245,12 +245,12 @@ kernel \- through the kernel's own personality, not through the library
 OS.
 .IP \(bu 2
 libdraw, libmemdraw and libmemlayer \- the compositing libraries \- are
-present, as C source ((CWlibdraw/P, (CWlibmemdraw/P) and prebuilt
-in (CW9front/amd64/libP.  So the pixel-pushing a draw service needs is
+present, as C source (\f(CWlibdraw/\fP, \f(CWlibmemdraw/\fP) and prebuilt
+in \f(CW9front/amd64/lib\fP.  So the pixel-pushing a draw service needs is
 in hand.
 .IP \(bu 2
 rio itself, and the 9front graphics commands, are NOT present as source
-in this tree, and there is no 9front (CWsys/srcP.  This is an Inferno
+in this tree, and there is no 9front \f(CWsys/src\fP.  This is an Inferno
 tree with a 9front kernel; the window manager and its userland would have
 to be brought in from 9front.  This is the hard boundary on the word
 \(lqrun rio\(rq: the architecture can be built to the edge of it here,
@@ -296,23 +296,23 @@ step toward it keeps the draw stack in the library OS where it belongs.
 .NH 1
 The 9front disk as the milestone
 .PP
-The disk image the tests already mount \- (CW.qemu/9front-root.qcow2P,
+The disk image the tests already mount \- \f(CW.qemu/9front-root.qcow2\fP,
 a full 9front installation with an hjfs root \- is the milestone, because
 it already holds rio.  Booted from it, the Osprey kernel reaches a 9front
-rc prompt as glenda, and (CW/bin/rioP is there.  So rio is not an
+rc prompt as glenda, and \f(CW/bin/rio\fP is there.  So rio is not an
 import after all: the userland, rio included, is on the disk.  What is
 missing is only the way to run it.
 .PP
 Two concrete blockers were found by trying:
 .IP \(bu 2
-rio wants (CW/dev/drawP, and it is not there \- the kernel that boots
+rio wants \f(CW/dev/draw\fP, and it is not there \- the kernel that boots
 the disk carries no draw device, no frame-buffer driver, no mouse.  They
 can be added to the config, but:
 .IP \(bu 2
-the draw device does not compile.  (CWos/osprey/port/devdraw.cP and the
-(CWdraw.hP it includes are from different draw-protocol versions:
-devdraw.c indexes (CWWarpP as a 3x3 array ((CWw[i][j]P), the header
-defines it as a struct ((CWlong m[3][3]P).  That one is a line to fix,
+the draw device does not compile.  \f(CWos/osprey/port/devdraw.c\fP and the
+\f(CWdraw.h\fP it includes are from different draw-protocol versions:
+devdraw.c indexes \f(CWWarp\fP as a 3x3 array (\f(CWw[i][j]\fP), the header
+defines it as a struct (\f(CWlong m[3][3]\fP).  That one is a line to fix,
 but it is a symptom \- the draw code and the headers must be reconciled
 to one protocol version, the same version the disk's rio speaks, before
 any draw device links at all.

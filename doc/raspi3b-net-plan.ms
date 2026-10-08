@@ -960,11 +960,11 @@ which is the invocation that prints it, that is wrong, and both halves
 of it are wrong in the same direction.
 .PP
 There are two states, not one:
-.IP "ISLOWP"
+.IP "\fISLOW\fP"
 the patient probe comes back in 0.02s to 45.91s, the listen queue is
 .CW 0/0/128 ,
 and the server recovers by itself.  A queue with a long tail.
-.IP "ISTOPPEDP"
+.IP "\fISTOPPED\fP"
 no answer in sixty seconds, CPU frozen to the hundredth of a second, the
 stall persisting through minutes of probing, and the listen queue at
 .CW 3/0/128 .

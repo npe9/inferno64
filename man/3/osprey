@@ -638,7 +638,7 @@ for that, and a machine that reorders stores needs the same on this side.
 .PP
 Nothing in the span is a pointer, which is what lets the same slice be
 mapped at more than one address \- the talk asks for exactly that.
-.B "ring Isegment sizeP twice"
+.B "ring \fIsegment size\fP twice"
 attaches one a second time, checks that the two are the same memory by
 writing through one and reading through the other, and then works the
 ring through the second alone: the map is read there, the ring heads are
