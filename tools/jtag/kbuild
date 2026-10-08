@@ -133,6 +133,15 @@ fi
 ( cd "$D" && mk "i$CONF" && { [ -z "$IMG" ] || mk "$IMG"; } ) > "$LOG" 2>&1
 rc=$?
 
+#
+# ANCHORED ON PURPOSE, and checked rather than assumed.  This reads mk's
+# own log, not the board console, and mk runs its commands sequentially
+# with no -j here, so there is nothing to interleave -- anchored and
+# unanchored counts agree on a real log (2 and 2).  If that ever stopped
+# being true the anchor would UNDER-count, and an under-count makes the
+# refusal below fire on a good build: loud and safe.  An anchor cannot
+# produce the dangerous direction, an over-count hiding a missing link.
+#
 links=`grep -c "^7l -o i$CONF" "$LOG"`
 echo "kbuild: mk exit $rc, 7l links $links, log $LOG"
 [ -f "$LOG.prev" ] && echo "kbuild:   previous run kept at $LOG.prev (diff them for new warnings)"

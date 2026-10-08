@@ -13624,3 +13624,67 @@ says "4 DWORD pool entries (0 plain WORD)".
 it is the variable-size scan that needs a count, and
 .CW selfbranch
 was the only one of the five with that shape.
+.NH 3
+The worst anchored match was in the tool that writes the card, and my sweep missed it
+.LP
+A peer found that their own anchored-grep sweep had unanchored the
+.I verdict
+greps in a file and left its
+.I display
+lines anchored \(em
+.B "an audit with a blind spot the shape of the thing it was auditing for."
+Checking mine the same way: the display paths were clean, but widening the
+question from
+.I "what decides a verdict"
+to
+.I "any anchored match on an interleaved source"
+found the worst instance of the entire class, which my original sweep had not
+looked at.
+.LP
+.CW tools/jtag/kinstall.sh
+derives its evidence from the board console and then:
+.P1
+awk '/^RCMD / && index($0,t)'   where this run's output starts
+grep -q "^$tok"                 did the command run?
+grep -q "^$marker\e$"           did the step SUCCEED?
+.P2
+All three anchored, and the third required the marker to be the WHOLE line.
+.B "In this tool that costs more than a measurement:"
+a lost marker reports a completed copy-and-verify as a failure, in the program
+that writes the card.
+.LP
+.B "Controls on the old logic, with synthetic interleaved console text:"
+.P1
+marker lands mid-line       "ran-but-no-marker" -- a SUCCESSFUL step
+                                                   reported as failed
+RCMD line lands mid-line    "did-not-run"       -- output never
+                                                   extracted at all
+.P2
+Fixed as
+.CW boardrun
+was: the token is sent SPLIT, so the echoed command cannot contain the joined
+form and no match needs an anchor, with
+.CW awk
+given the split form because that is what the echoed line holds.
+.B "Two negative controls check it is not fail-open"
+\(em a step printing no marker still gives "ran-but-no-marker", a command never
+run still gives "did-not-run" \(em and a full install on the board ran staging,
+cmp, backup, write, cmp, reboot and the poller check.
+.LP
+.B "And one anchored match LEFT ALONE, with the reason recorded."
+.CW kbuild 's
+link count reads mk's own log rather than the console,
+.CW mk
+runs sequentially with no
+.CW -j ,
+and anchored and unanchored agree on a real log.  If that changed the anchor
+would UNDER-count, which makes the refusal fire on a good build \(em loud and
+safe.
+.B "An anchor cannot produce the dangerous direction here,"
+an over-count hiding a missing link.  Same judgement as the six echo-of-data
+sites in
+.CW kencc-narrowcast
+and
+.CW kencc-widencast ,
+whose data was measured to contain no backslashes: a passing tool changed for a
+theoretical gain is a worse trade than a note saying it was checked.
