@@ -30,6 +30,14 @@ export PATH ROOT
 # have passed interpreted while the default configuration broke the
 # process.  Bounded, because a broken process under emu's initial Dis
 # hangs rather than exits.
+#
+# WHY IT PASSES BOTH WAYS, which matters for anyone reading the fix
+# later: what the stale R.PC broke was a raise from EMITTED code, and
+# every raise here comes out of error() in a C builtin, so these nine
+# were never exposed.  They are safe for a reason, not by luck.  The
+# suites that needed this second arm are the ones whose subject raises
+# from a compiled instruction -- bounds, divide, nil dereference --
+# which is what bndstest(1) and zdivtest(1) are for.
 out=`timeout ${EMUWAIT:-120} emu-g -c0 /dis/ipinttest.dis 2>&1` || true
 jit=`timeout ${EMUWAIT:-120} emu-g /dis/ipinttest.dis 2>&1` || true
 echo "$out"
