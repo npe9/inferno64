@@ -228,6 +228,50 @@ writing
 ensures that they are left in this state to allow debugging (the default).
 Only the privileged user is allowed to write to this file.
 .PP
+.B "Writing"
+.B bflag
+.B "followed by 0 or 1 sets whether the code generators emit array bounds"
+.B "checks,"
+and it is a measurement facility rather than a tuning knob.
+The flag is read when a module is
+.I compiled,
+and a Limbo command is compiled at each invocation, so
+.B "bflag 0; cmd; bflag 1; cmd"
+gives two arms on one boot \- which is why it exists, since measuring the
+cost otherwise needs two kernels and two installs.
+.B "With it cleared, an out-of-range array store is accepted and writes"
+.B "wherever the index points;"
+see
+.IR bndstest (1),
+three of whose cases do exactly that, and one of whose runs wedged a
+board.
+A reboot restores the compiled-in value of 1, so nothing here persists.
+It grants no capability that was not already present, because
+.BR reboot ,
+.BR halt ,
+.B panic
+and
+.B broken
+sit behind this same write.
+.PP
+.B "THE LIST ABOVE IS NOT COMPLETE, and was presented as though it were."
+This kernel's
+.B sysctl
+also accepts
+.BR panic ,
+.BR console ,
+.BR rdb ,
+.BR procdump ,
+.BR ilock ,
+.B sched
+and
+.BR signfault ,
+none of which this page described; the four it did describe read as the
+whole set.
+An incomplete list that looks complete misleads in the same way a stale
+status claim does, so the names are given here even where the behaviour
+is not yet written up.
+.PP
 The
 .B sysname
 file holds the textual name of the machine.
