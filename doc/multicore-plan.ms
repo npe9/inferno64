@@ -9654,6 +9654,18 @@ member's size \(em so a walk at
 entry would catch the first corruption rather than the first use, and
 would separate "a bad size was written" from "a correct block is on the
 wrong chain".  One sample cannot.
+.PP
+.B "And when it is run, budget the control arm first."
+The fault appears at about 2 instances in 21, so the arm that still has a
+collector is the one that has to be large enough to show it \(em roughly
+3 of 30 expected there.  If that arm comes back 0 of 30 the run has
+learned that the rate moved, not that
+.CW *gcoff
+matters, and the treatment arm's own count says nothing either way.  Both
+this branch and the raspi3b-port session sized every batch in this
+investigation around the treatment arm, independently, which is what
+makes it worth writing at the experiment rather than in a note: it is the
+natural error and not a lapse either of us made.
 .NH 2
 The build stamp, and why a tree with no stamped tools is not the safer one
 .PP
