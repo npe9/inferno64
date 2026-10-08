@@ -12882,3 +12882,65 @@ with
 .CW parallelvm=1 .
 The mechanisms differ in kind, not only in rate \(em here only a corrupt size
 can move the cursor, there a concurrent free can.
+.NH 2
+H4: the cross-arena cursor is EXCLUDED on hardware, and the fault is not ours
+.LP
+.CW multicore-73
+ran the discriminator this plan predicted.  Fixup on, bound in,
+.CW parallelvm=1 ,
+four Xeons:
+.P1
+six instances, bound only    0 out-of-arena in 4.6M sweeps, 0 broken
+six instances, bound + size  0 out-of-arena in 6.4M sweeps, 0 broken
+total                        0 out-of-arena in 11M sweeps
+.P2
+and the general protection violation that recurred had
+.CW gcoutofarena
+at zero.
+.B "By the test this plan set, that excludes the cross-arena cursor:"
+the concurrent write does not occur there, and the fixup is not implicated in
+their fault.  They took both the fixup and the bound, shipping together, with
+the commit saying why one without the other would be wrong.
+.PP
+.B "And the fault is now corroborated in the way a relayed copy is not."
+A third session, different platform
+.CW ( pc64 ),
+different boot path, reports the same signature and the same asymmetry against
+its control:
+.P1
+parallelvm=1   3 of 8 boots bad      "panic: lost pid",
+parallelvm=0   0 of 8 boots bad      "vmachine: error with no current prog"
+.P2
+against their own 2 of 21 fixup-on instances versus 0 of 9 controls, stack
+through
+.CW poolfree+0x16b / poolalloc+0x13d / smalloc+0xbd .
+.B "Three mechanisms now have detectors that can see them and all three read zero:"
+the cross-arena cursor, a chain broken at the resume, and a block size larger
+than the pool.  So the fault is characterised and unexplained, and the next
+person does not re-exclude those three.
+.PP
+.CW parallelvm
+is back to 0 as the default on that branch, for a reason stated plainly there:
+eighteen long single boots on one boot path are not a boot-failure rate, and a
+default has to survive the path the next person builds on.
+.B "Their acceptance test is now boots-per-arm per boot path rather than run length,"
+which is the same shape as this plan's thirty-run criterion and worth as much
+for the same reason: it was written down before the batch.
+.NH 3
+The question I put back to them
+.LP
+Their stack is
+.CW poolfree ,
+.CW poolalloc ,
+.CW smalloc
+\(em all allocator, no collector \(em while all three excluded mechanisms are
+collector-adjacent.
+.B "Is the fault reachable with the collector OFF?"
+.CW gchalt
+suppresses collection, and this tree separated
+.CW gcdepth
+from it precisely because the two used to be one knob.  A soak with
+.CW gchalt
+set that still faults moves it out of the collector entirely; one that does not
+fault says the collector is in the loop even though none of the three detectors
+fires.  Either answer is smaller than another hypothesis.
