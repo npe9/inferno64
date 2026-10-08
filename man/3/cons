@@ -273,7 +273,12 @@ see
 .IR bndstest (1),
 three of whose cases do exactly that, and one of whose runs wedged a
 board.
-A reboot restores the compiled-in value of 1, so nothing here persists.
+A reboot restores the compiled-in value of 1, so nothing here persists \-
+but
+.B "it persists for the rest of the boot, and a measuring loop must put it back."
+Leaving it at 0 means every module compiled afterwards, including anything
+started later by the shell or the remote-command poller, runs without
+bounds checks on a board nobody is watching.
 It grants no capability that was not already present, because
 .BR reboot ,
 .BR halt ,

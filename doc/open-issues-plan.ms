@@ -13748,3 +13748,56 @@ arm (3377 to 3490) with
 flat (3143 to 3150), which is consistent with thermal or scheduling variance on
 a board that has been installing kernels all session, and is
 .B "not explained."
+.NH 3
+I left the board with bounds checks OFF, which is the hazard I had just documented
+.LP
+The
+.CW bflag
+replication above ends its alternating loop on
+.CW "echo bflag 0" ,
+and I did not put it back.  The board then ran with array bounds checks disabled
+for every module compiled afterwards, and the next thing to use it \(em the
+remote-command poller \(em stopped answering, with
+.CW cpu0
+in
+.CW minigetc
+and cores 1 to 3 idle.
+.CW hardreset
+restored the compiled-in
+.CW "bflag = 1"
+and the poller, and
+.CW bndstest
+came back 11 of 11.
+.LP
+.B "What this does NOT establish."
+Nothing is known to have stored out of range in that window:
+the A/B runs
+.CW "disbench array" ,
+which indexes within bounds, not
+.CW bndstest .
+So "the poller stopped while
+.CW bflag
+was 0" is the whole claim, and
+.CW minigetc
+has other causes.
+.B "It is the second instance after a"
+.CW bflag=0
+.B "arm,"
+the first being a
+.CW bndstest
+run that wedged in
+.CW exit+0x50
+\(em but that one
+.I did
+store out of range deliberately, so the two are not the same observation and
+counting them together would be the sightings error again.
+.LP
+.B "What it does establish is operational, and it is my error, not the board's."
+.CW "a reboot restores the compiled-in 1"
+was in the documentation and I treated it as sufficient.  It is not: the flag
+persists
+.I "for the rest of the boot,"
+so a measurement that flips it must put it back, and the thing that pays if it
+does not is whatever starts next on a board nobody is watching.
+.CW man/3/cons
+now says so where the command is documented.
