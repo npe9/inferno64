@@ -899,7 +899,7 @@ duplicate RETURN       77   0.57       1  none    HIGH   NO, see below
 shift fold (shiftprop)164   1.21     ~30  flow    med    DONE, ported
 branch to next instr  153   1.13      ~8  none    low    LISTING only
 adjacent spill/reload  69   0.51      ~8  none    low    marginal
-width-aware copyprop    ?      ?     ~40  flow    HIGH   only with a test
+width-aware copyprop <=38886 <=58.6  ~40  flow    HIGH   LARGEST, see below
 MUL+ADD -> MADD        18   0.13     ~20  flow    med    NO -- too rare
 extension pair         14   0.10       1  none    med    DONE (see below)
 switch -> arithmetic    -      -    ~300  SSA     high   NO
@@ -994,6 +994,71 @@ The board's within-arm coefficient of variation is 2.2 to 2.6 per cent.
 .B "Nothing in the table above is individually measurable on hardware."
 They are code-size and instruction-count wins, and saying so is more useful
 than a speed claim that cannot be supported.
+.NH 2
+Width-aware copyprop is now the largest row, and its ceiling is measured
+.LP
+The table carried
+.CW ?
+in both numeric columns for this row.  It no longer has to.
+.LP
+.B "The shipping kernel contains 38886 32-bit register moves:"
+27533
+.CW SXTW ,
+which is what
+.CW "MOVW reg,reg"
+assembles to, and 11353
+.CW "MOV Wd,Wn" ,
+which is
+.CW "MOVWU reg,reg" .
+Both masks score
+.B zero
+on a random-bytes control of the same size, so unlike the two loose counters
+above these are exact.  That is 5.9 per cent of the image and 58.6 per 1000,
+.B "two orders of magnitude larger than anything else in the table."
+.LP
+.B "But that is a CEILING and not a payoff, and the difference is the whole row."
+.CW copyprop
+and
+.CW subprop
+exclude
+.CW AMOVW
+and
+.CW AMOVWU
+because register to register they are
+.CW SXTW
+and
+.CW UXTW
+\(em a conversion, not a copy \(em and most of those 38886 are
+.I required :
+they are the sign extension that makes an
+.CW int
+usable in pointer arithmetic.  The exclusion is not declining propagable
+copies, it is correctly keeping conversions.
+.B "How many are REDUNDANT cannot be counted without the width analysis itself,"
+which is the forty lines.
+.LP
+.B "Which is nevertheless enough to re-rank the row."
+If one in twenty of those moves is redundant that is 1944 instructions, ten
+times the shiftprop win; if one in a thousand it is 39 and the row dies.
+.B "So the measurement that decides this row is \(lqwhat fraction of a"
+.B "same-register MOVW is already 32-bit clean\(rq,"
+and the honest statement of the verdict is not \(lqonly with a test\(rq but
+\(lqthe test IS the work, and it is the largest remaining item in this
+document\(rq.
+.LP
+.B "A third counting error was made getting here, and the lesson did not take"
+.B "the first two times."
+An instrumented
+.CW 7c
+that printed at the exclusion reported 42157 sites \(em 31 per cent of the
+kernel's instructions, which is not a believable number for a register copy.
+The counter sat inside
+.CW loop1 ,
+which re-runs until nothing changes, so it counted sites times passes for the
+third time in this document.
+.B "A counter inside a fixed-point loop counts iterations."
+The usable figure came from the shipping image instead, where there are no
+passes to count.
 .NH 2
 Why shiftprop was off, and what porting it cost
 .LP
@@ -1117,15 +1182,45 @@ because a toy test case did not fold without them, which is the wrong reason to
 delete a check; they are restored with a comment saying what deleting them
 miscompiles.
 .LP
-.B "168 instructions leave the kernel, measured three independent ways."
-UBFM immediates, which is how
-.CW "LSL $n"
-encodes, fall from 4077 to 3909.  Shifted-register
-.CW ADD s
-with a nonzero amount rise from 294 to 463.  And
+.B "168 instructions leave the kernel, measured three independent ways"
+\(em but only one of the three is free of a mask, and that distinction was
+nearly missed.
+.P1
+                            control    on     delta   random
+UBFM immediate (LSL $n)      4077     3909    -168     658
+shifted ADD, amount != 0      294      463    +169    1334
+iraspi3b bytes            3353929  3353257    -672       -
+.P2
+.LP
+The
+.I random
+column is the same counter run over 2655592 bytes from
+.CW /dev/urandom ,
+and it is the reason this table has four columns instead of three.
+.B "Two of the three masks match data,"
+and match it heavily: the shifted-ADD mask fixes only nine bits, so it finds
+1334 matches in noise, which is more than the 463 it finds in the kernel.
+.B "So the ABSOLUTE counts 4077, 3909, 294 and 463 are not instruction counts"
+and must not be quoted as such.
+.LP
+.B "The DELTAS survive, and the reason is worth stating because it is a"
+.B "property of the measurement and not a hope."
+The two images differ in 1299724 bytes \(em removing 168 instructions shifts
+every later address \(em but the shift is 672 bytes, a multiple of four, so
+every embedded data word keeps its value and its alignment and therefore its
+contribution to both arms is identical and cancels.
+.LP
+.B "And the third measurement needs no mask at all:"
 .CW iraspi3b
-shrinks from 3353929 to 3353257 bytes, which is 672, which is exactly 168
-instructions.  The three agree to within one.
+shrinks by 672 bytes, which is exactly 168 instructions, and the
+.CW SXTW ,
+.CW "MOV Wd,Wn"
+and
+.CW RET
+masks used elsewhere in this document score
+.B zero
+on the same random control, so the method is sound where it is tight and only
+these two counters were loose.
 .LP
 .B "The 345 in the first version of the table was wrong, and so was 333."
 Both came from a counting build that printed at the substitution and then
