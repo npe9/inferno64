@@ -9302,3 +9302,144 @@ Counting arrivals that find the lock held costs one load, cannot be
 confused with its own overhead, and has the control the timer lacked:
 at one processor it reports exactly zero out of 189,431 and 121,331,
 which is what must happen and is how the instrument is known to work.
+.NH 1
+The sweep cursor, from another session, and what it cost to take
+.PP
+The raspi3b-port session reported that
+.CW libinterp/gc.c 's
+incremental sweep keeps its cursor
+.CW ptr
+across
+.CW rungc()
+calls, that a free which coalesces can swallow the block it points at,
+and that the two fixups in
+.CW poolfree()
+which move the cursor onto the surviving block were commented out in
+.CW os/inferno/port/alloc.c .
+Verified here rather than taken on trust: the lines are commented at
+.CW alloc.c
+714 and 724 with the extern at 690,
+.CW ptr
+is a live global at
+.CW libinterp/gc.c:55 ,
+and
+.CW emu/port/alloc.c
+has had the fixups live at 455, 466 and 476 all along \(em which is why
+the symptom was board-only.
+.NH 2
+Reproduced, at about ten times their counts
+.PP
+Six Compute Engine instances each way, four Xeons, the channel workload,
+.CW parallelvm=1 ,
+one variable:
+.IP
+.nf
+                 broken chains / sweeps          magic 0
+fixup off     149..589 in 486K..1.99M            93-97%
+fixup on      0 in 9.1M across six               --
+.fi
+.PP
+A steady 0.3 per thousand sweeps going to zero.  The magic-0 share is
+what says the mechanism is the coalesce and not something else: a merge
+zeroes the swallowed header, and nothing else leaves that.
+.NH 2
+But the fixup is a data race here, and that is not a judgement call
+.PP
+.CW rungc()
+walks and writes
+.CW ptr
+holding no lock \(em
+.CW ptr->magic ,
+.CW "ptr = B2NB(ptr)" ,
+.CW "if(ptr >= limit) ptr = base" .
+Before the fixup that pointer had exactly one writer.  The fixup makes
+.CW poolfree()
+a second one, under the pool's ilock, which the collector never takes.
+.PP
+On a kernel with one Dis context that is sequential, which is why the
+reporting session could call it deterministic:
+.CW npctx
+is hard-coded to 1 on their board.  Here it is not, and by design \(em a
+context outside
+.CW xec()
+can free while the collector sweeps, because
+.CW othersrunning()
+waits only on contexts with
+.CW inxec
+set.
+.PP
+.B "And the hazard is invisible to the checks that existed."
+.CW poolfree()
+writes
+.CW "ptr = b"
+or
+.CW "ptr = c" ,
+and both are valid block headers, so
+.CW okbhdr()
+passes.  They are in whatever arena the freed block lives in, and the
+sweep walks one arena at a time \(em so a free in another arena hands
+the collector a cursor that the magic cannot fault and
+.CW limit
+cannot contain.  That framing is the reporting session's, sharper than
+the one I sent them, and it is what makes the bound the precondition
+for the fixup rather than damage limitation.
+.NH 2
+So the bound, and then the measurement the bound makes possible
+.PP
+.CW rungc() 's
+entry check gained a lower bound: a cursor outside
+.CW "[base, limit)"
+costs a restart instead of an unbounded forward walk.  With the fixup
+and the bound together, six instances:
+.IP
+.nf
+cursor out of arena      0 in 4.6M sweeps
+broken chains            0
+.fi
+.PP
+So the concurrent cross-arena write did not occur on this hardware at
+four processors.  That is the discriminator the reporting session asked
+for, and it says the race is real by construction and rare in practice
+\(em which is exactly the case for keeping the bound and keeping the
+fixup.
+.NH 2
+What is left open, and it is not the fixup
+.PP
+A
+.CW "general protection violation"
+in a
+.CW dis
+process appeared on two of fifteen fixup-on instances and none of nine
+fixup-off, with the stack through
+.CW poolfree+0x16b ,
+.CW poolalloc+0x13d
+and
+.CW smalloc+0xbd .
+The second one had
+.CW gcoutofarena
+at zero, which by the discriminator above means the cursor is not
+implicated.
+.PP
+Two of fifteen against zero of nine does not separate, and the arms are
+not comparable on panics anyway, for a reason the reporting session
+pointed out and I had missed: with the fixup off, every one of those 176
+to 589 broken chains does
+.CW "base = nil; return" ,
+which discards the cursor.  The off arm has an accidental recovery for
+any cursor damage that lands on a bad magic, and the on arm removes it.
+The arms differ in opportunity and in whether a pre-existing hazard gets
+papered over.
+.PP
+.B "The guard that would catch it, added on its own merits."
+The badhdr probe in
+.CW poolfree()
+rejects a size that is zero, negative or misaligned, which is most
+corruption.  It cannot reject a size that is positive, quanta-aligned
+and simply too large \(em and that is the dangerous one, because the
+coalesce computes
+.CW B2NB(b)
+from it and then reads
+.CW c->magic ,
+dereferencing an address outside the arena.  One comparison against
+.CW p->arenasize ,
+in a path that already does three, with its own counter.

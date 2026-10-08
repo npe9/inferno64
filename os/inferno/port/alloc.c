@@ -76,6 +76,7 @@ struct Pool
 };
 
 int poolstat;		/* *poolstat=1 */
+ulong npoolbigsize;	/* frees refused for a size larger than the pool */
 
 /* keep the quanta above the size of 5 pointers and 2 longs else the next block
 	will be getting overwritten by the header -- starts a corruption hunt
@@ -725,6 +726,29 @@ poolfree(Pool *p, void *v)
 	if((b->magic != MAGIC_A && b->magic != MAGIC_I) ||
 	   b->size <= 0 || (b->size & p->quanta))
 		poolfault(v, "poolfree:badhdr", getcallerpc(&p));
+	/*
+	 * And a size that is plausible but too large for this pool.
+	 *
+	 * The three tests above reject a size that is zero, negative or
+	 * misaligned, which is most corruption.  What they cannot reject
+	 * is a size that is positive and quanta-aligned and simply wrong,
+	 * and that is the dangerous one: the coalesce below computes
+	 * B2NB(b) from it and then reads c->magic, so an oversized size
+	 * dereferences an address well outside the arena.  On amd64 that
+	 * is a general protection violation at a kernel pc, which is what
+	 * two Compute Engine instances of fifteen produced with a stack
+	 * through poolfree, poolalloc and smalloc.
+	 *
+	 * p->arenasize is every arena this pool has ever taken, so a
+	 * single block cannot legitimately exceed it.  One comparison,
+	 * no walk, in a path that already does three.  Whether it is the
+	 * cause of those panics is a separate question from whether the
+	 * dereference should be guarded, and it should be.
+	 */
+	if(p->arenasize != 0 && (uintptr)b->size > p->arenasize){
+		npoolbigsize++;
+		poolfault(v, "poolfree:size>arena", getcallerpc(&p));
+	}
 
 	poolilock(p);
 	p->nfree++;
