@@ -507,6 +507,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		# the three coverage gaps BUGS still listed
 		"listbox twelve items", "scrolled listbox view",
 		"coloured button", "grid geometry",
+		# the two types `render types' showed were never in the
+		# population at all, so this test had no opinion on them
+		"panel", "choicebutton",
 	};
 	cases := array[] of {
 		list of {"label .w -text Label", "pack .w"},
@@ -691,6 +694,23 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		list of {"label .w -text grid", "frame .f", "label .f.a -text a",
 			"label .f.b -text b", "grid .f.a -row 0 -column 0",
 			"grid .f.b -row 1 -column 1", "pack .f", "pack .w"},
+		#
+		# A PANEL is the one widget whose content is the
+		# application's own live image, handed in by putimage, so it
+		# cannot be a texture node: TkNtexture names a FILE, which is
+		# what keeps a tree free of display-side resources, and a
+		# panel's image has no path. tkdrawpanel() therefore calls
+		# tkwalkflush() and paints directly, and this case exists to
+		# pin that -- the two paths must still agree, and a panel
+		# must appear in `render types' rather than being absent
+		# from the population as it was.
+		list of {"panel .w -width 80 -height 30", "pack .w"},
+		# A choicebutton was likewise never exercised. Its options are
+		# -variable, -values and -command and NOT -text: it shows the
+		# current value of the variable, so -values with the variable
+		# set is what makes it draw anything.
+		list of {"choicebutton .w -variable v -values {one two three}",
+			"variable v one", "pack .w"},
 	};
 	if(len names != len cases){
 		sys->print("tkscenetest: %d names for %d cases\n", len names, len cases);
