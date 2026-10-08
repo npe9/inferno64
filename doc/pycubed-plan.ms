@@ -2955,3 +2955,79 @@ including the trajectory that missed both 1600 and 2000, at 2.565, 2.998
 and 2.473 deg/s \- different rates, which is the point \- with pointing
 issuing 290, 211 and 295 steering commands and the eclipse hold firing
 11, 15 and 12 times.
+.NH 2
+The collector's sweep cursor, and a counter the kernel never had
+.PP
+A peer session reported that
+.B os/inferno/port/alloc.c
+has
+.IR poolfree ()'s
+sweep-cursor fixup commented out while
+.B emu/port/alloc.c
+has it live, which makes the fault board-only.  Confirmed here: both
+.CW "if(c == ptr) ptr = b;"
+and its backward twin were commented out, with the
+.B extern
+beside them, and
+.B libinterp/gc.c
+defines
+.CW "Bhdr *ptr"
+as a global.
+.PP
+.B "The hazard is plain in gc.c itself."
+Its sweep holds
+.B ptr
+into the heap and calls
+.IR poolfree ()
+from inside the loop; if the freed block coalesces with the one
+.B ptr
+points at, the cursor stops being a block header, and the next pass
+reads
+.DS
+.CW "	/* Chain broken ? */"
+.CW "	if(!okbhdr(ptr)) {"
+.CW "		base = nil;"
+.CW "		gcbroken++;"
+.CW "		return;"
+.CW "	}"
+.DE
+\- it counts it and abandons the entire sweep.
+.NH 2
+And the counter was emu-only, which is why nobody could have known
+.PP
+.B gcbroken
+is printed by
+.B emu/port/devmem.c
+and by nothing in the kernel, so
+.B "on a board a collector that gave up every pass looked exactly like one that worked."
+.B #c/gcstats
+prints the seven counters now \- plain ulongs, read without a lock,
+because nothing here walks a list, which is the mistake
+.B #c/xalloc 's
+first cut made next door.
+.I Beepsat 's
+.I vbatttask
+reads it every thirtieth pass of a ten-second loop, folded into a task
+that already exists because a process slot is 4096 bytes of kernel
+stack on this part and an instrument that costs one changes what it
+measures.
+.NH 2
+What it measured, which is that this tree does not reproduce it
+.PP
+.DS
+.CW "fixup off  gc runs 292327 sweeps 64963 broken 0"
+.CW "fixup on   gc runs 295324 sweeps 65629 broken 0"
+.DE
+.B "Zero before and zero after,"
+so this workload's allocation pattern never lands a coalesce on the
+cursor, and the before and after runs are otherwise identical \- same
+converged count, no panic, twelve reports each.
+.PP
+.B "So the change goes in on evidence that is not mine:"
+emu has always had it, the hazard is unambiguous in the code, the peer
+measured 17 and 12 broken a boot on raspi3b going to 0 with it, and the
+cost is two pointer comparisons per free.
+.B "What cannot be said is that it fixed anything here,"
+and the commit says so.  The instrument is the lasting part: a number
+that was unavailable on a board is now a file, and it answered this
+question in one run.

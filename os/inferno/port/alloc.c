@@ -773,7 +773,29 @@ void
 poolfree(Pool *p, void *v)
 {
 	Bhdr *b, *c;
-	/* extern Bhdr *ptr; defined in libinterp/gc.c */
+	/*
+	 * THE COLLECTOR'S SWEEP CURSOR, WHICH A COALESCING FREE CAN
+	 * SWALLOW.
+	 *
+	 * libinterp/gc.c sweeps with a global Bhdr *ptr and calls
+	 * poolfree() from inside that loop.  If the block being freed
+	 * coalesces with the one ptr points at, ptr stops being a block
+	 * header -- and the next rungc() fails okbhdr(ptr), counts
+	 * gcbroken and abandons the whole sweep back to base == nil.
+	 *
+	 * emu/port/alloc.c has always had these two lines; this file had
+	 * them commented out, which is why the fault is board-only.
+	 *
+	 * NOT REPRODUCED IN THIS TREE.  #c/gcstats, added for exactly
+	 * this question, read "gc runs 292327 sweeps 64963 broken 0"
+	 * over a beepsat run with the fixup still off, so this
+	 * workload's allocation pattern never lands a coalesce on the
+	 * cursor.  A peer session measured 17 and 12 broken a boot on
+	 * raspi3b going to 0 with the fixup, which is the evidence this
+	 * rests on, along with emu having it and the hazard being plain
+	 * in the code.  Two pointer comparisons per free.
+	 */
+	extern Bhdr *ptr;	/* defined in libinterp/gc.c */
 
 	D2BPC(b, v, getcallerpc(&p), "alloc:D2B:poolfree");
 
@@ -799,8 +821,8 @@ poolfree(Pool *p, void *v)
 
 	c = B2NB(b);
 	if(c->magic == MAGIC_F) {	/* Join forward */
-		/*if(c == ptr)
-			ptr = b; */
+		if(c == ptr)
+			ptr = b;
 		pooldel(p, c);
 		c->magic = 0;
 		b->size += c->size;
@@ -809,8 +831,8 @@ poolfree(Pool *p, void *v)
 
 	c = B2PT(b)->hdr;
 	if(c->magic == MAGIC_F) {	/* Join backward */
-		/*if(b == ptr)
-			ptr = c; */
+		if(b == ptr)
+			ptr = c;
 		pooldel(p, c);
 		b->magic = 0;
 		c->size += b->size;
