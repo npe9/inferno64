@@ -138,7 +138,20 @@ if [ "$nbad" -ne 2 ] || [ "$ngood" -ne 0 ] || [ "$badlines" != "1 3 " ]; then
 	echo "  below would mean nothing." >&2
 	exit 1
 fi
-echo "troff-ctlchars: self-test ok (2 hits on lines 1 and 3; UTF-8 not flagged)"
+#
+# AND THE DIAGNOSTIC ITSELF MUST BE CLEAN, because the failing path is
+# written in the same language as the defect and is the least-exercised
+# part of the script.  Scan this file with the same predicate.
+#
+self=`scan "$0" | hitsonly | grep -c .`
+if [ "$self" -ne 0 ]; then
+	printf '%s\n' "troff-ctlchars: THIS SCRIPT contains $self line(s) with a" >&2
+	printf '%s\n' "  control character.  Its own diagnostic would emit the byte" >&2
+	printf '%s\n' "  it warns about; not reporting anything until that is fixed." >&2
+	exit 1
+fi
+
+echo "troff-ctlchars: self-test ok (2 hits on lines 1 and 3; UTF-8 not flagged; this script clean)"
 
 #
 # find, NOT `ls doc/*.ms man/*/*'.  man/lib/lookman, man/lib/man and
@@ -150,25 +163,51 @@ echo "troff-ctlchars: self-test ok (2 hits on lines 1 and 3; UTF-8 not flagged)"
 #
 files=`find doc man -type f \( -name '*.ms' -o -path 'man/*' \) 2>/dev/null | sort`
 [ -n "$files" ] || { echo "troff-ctlchars: no troff sources found" >&2; exit 1; }
+#
+# printf '%s\n', NOT echo, EVERYWHERE THE DATA FLOWS -- not just in the
+# messages.  sh's echo interprets backslash escapes, and the lines this
+# scan reports come out of troff sources full of \f, \fI and \fP.  So
+# `echo "$raw"' turned the literal text \fP in a reported line into a
+# REAL FORM FEED: the scan's own evidence was corrupted on the way to the
+# reader, showing a byte that was not in the file beside the byte that
+# was.  The verdict stayed correct, because the line COUNT is unchanged;
+# only the evidence lied, which is the harder kind to notice.
+#
 raw=`scan $files`
-hits=`echo "$raw" | hitsonly`
-nfiles=`echo "$files" | wc -w | tr -d ' '`
-nscanned=`echo "$raw" | scanned`
+hits=`printf '%s\n' "$raw" | hitsonly`
+nfiles=`printf '%s\n' "$files" | wc -w | tr -d ' '`
+nscanned=`printf '%s\n' "$raw" | scanned`
 if [ "$nscanned" != "$nfiles" ]; then
 	echo "troff-ctlchars: passed $nfiles file(s) but only opened $nscanned." >&2
 	echo "  A file that was not read was not checked; not reporting a pass." >&2
 	exit 1
 fi
-n=`echo "$hits" | grep -c .`
+n=`printf '%s\n' "$hits" | grep -c .`
 if [ "$n" -eq 0 ]; then
 	echo "troff-ctlchars: ok -- $nscanned sources scanned, no control characters"
 	exit 0
 fi
 echo "troff-ctlchars: $n line(s) with a C0 control character:"
-echo "$hits" | head -20
+printf '%s\n' "$hits" | head -20
 echo
-echo "troff-ctlchars: <0C> before (CW, I, P, B or R is a LOST FONT ESCAPE --"
-echo "  the source wanted \\f and a non-raw string ate it.  Replace each"
-echo "  0x0C with the two characters backslash-f; check the RENDER, because"
-echo "  the warning count moves the wrong way when this is fixed."
+#
+# printf '%s\n', NOT echo.  sh's echo interprets backslash escapes, so
+# `echo "... wanted \\f ..."' EMITTED AN ACTUAL FORM FEED -- this
+# diagnostic lost its own font escape, invisibly, in the one message a
+# reader sees when the defect fires.  A peer found it in theirs and told
+# me; mine was identical.
+#
+# Two things in that worth more than the bug.  The defect was reachable
+# FROM THE DIAGNOSTIC FOR IT: a tool's error path is written in the same
+# language as the thing it diagnoses and is the part least likely to be
+# exercised -- this message had never run until a byte was planted.  And
+# "looks right" cannot distinguish a form feed from nothing, so the only
+# way to see it was to make the output visible, which is the same move as
+# counting source bytes instead of trusting the renderer.
+#
+printf '%s\n' "troff-ctlchars: <0C> before (CW, I, P, B or R is a LOST FONT ESCAPE --"
+printf '%s\n' "  the source wanted a backslash followed by f, and a non-raw"
+printf '%s\n' "  string ate it.  Replace each 0x0C with those two characters;"
+printf '%s\n' "  check the RENDER, because the warning count moves the wrong"
+printf '%s\n' "  way when this is fixed."
 exit 2

@@ -177,8 +177,11 @@ for pair in \
 	"os/inferno/port/devflash.c:man/3/flash" \
 	"os/inferno/port/devds.c:man/3/ds"
 do
-	src=`echo "$pair" | cut -d: -f1`
-	page=`echo "$pair" | cut -d: -f2`
+	# printf, not echo: these pairs are plain paths today, but echo
+	# interpreting a backslash in data is the bug that corrupted the
+	# sibling test's evidence, and a path is data.
+	src=`printf '%s\n' "$pair" | cut -d: -f1`
+	page=`printf '%s\n' "$pair" | cut -d: -f2`
 	nwant=`expr $nwant + 1`
 	if [ ! -f "$src" ]; then
 		echo "man-cmdtab: $src is in the list and does not exist." >&2
