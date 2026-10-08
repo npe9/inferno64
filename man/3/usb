@@ -141,3 +141,40 @@ The read-only file
 contains a single line giving the current USB frame number.
 .SH SOURCE
 .B /os/mpc/devusb.c
+.PP
+.B "THE CTL COMMANDS LISTED ABOVE ARE NOT ALL OF THEM."
+This kernel's
+.B usb
+accepts
+.BR address ,
+.BR clrhalt ,
+.BR debug ,
+.BR detach ,
+.BR hub ,
+.BR hz ,
+.BR info ,
+.BR name ,
+.BR new ,
+.BR newdev ,
+.BR ntds ,
+.BR pollival ,
+.BR reset ,
+.BR sampledelay ,
+.BR samplesz ,
+.B timeout
+and
+.B uframes
+
+as well, none of which this page described \- so the ones it did
+describe read as the whole set.
+An incomplete list that looks complete misleads the same way a stale
+status claim does: both assert something the reader cannot check from
+the page.
+The names are given here even where the behaviour is not written up,
+because a reader who can see the list is partial is in a different
+position from one who cannot.
+.PP
+.B "Seventeen of this device's eighteen ctl commands were undocumented,"
+which is the widest gap of any device in the tree and was found by
+.B tests/man-cmdtab.sh
+rather than by reading.

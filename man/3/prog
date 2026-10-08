@@ -308,3 +308,18 @@ file is currently unimplemented.
 .B /emu/port/devprog.c
 .br
 .B /os/inferno/port/devprog.c
+.PP
+.B "THE CTL COMMANDS LISTED ABOVE ARE NOT ALL OF THEM."
+This kernel's
+.B prog
+accepts
+.B private
+
+as well, none of which this page described \- so the ones it did
+describe read as the whole set.
+An incomplete list that looks complete misleads the same way a stale
+status claim does: both assert something the reader cannot check from
+the page.
+The names are given here even where the behaviour is not written up,
+because a reader who can see the list is partial is in a different
+position from one who cannot.

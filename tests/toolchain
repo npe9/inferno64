@@ -34,6 +34,15 @@
 #                     widened, which is the regression that panicked the board.
 #   7l-bigconst       a 64-bit constant in a four-byte literal pool slot, so
 #                     `ADD $4294967296' added nothing.
+#   man-cmdtab        also not a compiler test: every ctl command a device
+#                     accepts should be NAMED on its man page, because a page
+#                     that names some of them reads as naming all of them.
+#                     man/3/usb named one of eighteen.  It self-tests against
+#                     a page whose answer is known and exits 2 rather than
+#                     reporting a pass if it cannot reproduce it -- four
+#                     earlier versions of that survey each reported a clean
+#                     sweep over pages that had gaps.
+#
 #   troff-argorder    not a compiler test, but the same shape in the documents:
 #                     a .CW/.I/.B line whose arguments troff reorders silently.
 #
@@ -47,7 +56,7 @@ ROOT=`cd \`dirname "$0"\`/.. && pwd`
 cd "$ROOT" || exit 1
 
 TESTS="kencc-brloop.sh kencc-selfbranch.sh kencc-narrowcast.sh \
-	kencc-widencast.sh 7l-bigconst.sh troff-argorder.sh"
+	kencc-widencast.sh 7l-bigconst.sh troff-argorder.sh man-cmdtab.sh"
 
 pass=0
 broke=0

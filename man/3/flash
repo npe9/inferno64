@@ -155,3 +155,18 @@ or if the flash memory fails to be programmed correctly.
 The flash cannot be written if the kernel is executing directly from flash,
 because the physical flash cannot be read during programming,
 and the driver does not copy the programming code to DRAM.
+.PP
+.B "THE CTL COMMANDS LISTED ABOVE ARE NOT ALL OF THEM."
+This kernel's
+.B flash
+accepts
+.B remove
+
+as well, none of which this page described \- so the ones it did
+describe read as the whole set.
+An incomplete list that looks complete misleads the same way a stale
+status claim does: both assert something the reader cannot check from
+the page.
+The names are given here even where the behaviour is not written up,
+because a reader who can see the list is partial is in a different
+position from one who cannot.
