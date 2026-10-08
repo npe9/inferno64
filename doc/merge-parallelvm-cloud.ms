@@ -970,3 +970,75 @@ is still unexercised at four processors: their second workload was
 module loading.  It is the cheaper of the two to run and the one with a
 baseline on both architectures, so it is worth carrying into item 6
 rather than being left as a thing that was built and never used.
+.NH 2
+The trial, re-measured after a day of both sides moving
+.PP
+Two days on, with their side 156 commits past the base and this one 29,
+the question is whether the merge is still cheap.  Measured rather than
+assumed, twice: once when this branch was 23 ahead and again at 29,
+after seven fixes went in here.
+.PP
+.B "Nine files are touched on both sides and exactly one conflicts."
+.TS
+center box tab(;);
+c | c
+l | l .
+file;outcome
+_
+utils/7l/span.c;CONFLICT, 2 hunks, comments only
+libinterp/xec.c;auto-merged
+libinterp/comp-arm64.c;auto-merged
+os/inferno/port/dis.c;auto-merged
+emu/port/devmnt.c;auto-merged
+appl/cmd/mkfile;auto-merged
+man/1/INDEX;auto-merged
+mkconfig;auto-merged, and wrongly
+os/inferno/virtarm64/virtarm64cloud;auto-merged
+.TE
+.PP
+The one conflict is the same fix twice: both branches carried
+.CW b42059ba9
+independently, so the code is identical and only the comments differ.
+.CW libinterp/xec.c
+and
+.CW comp-arm64.c
+are the files their Dis VM work lives in and the files this branch's
+zero-divide and JIT-handler fixes touch, and they still merged without a
+word, because the changes are in different functions.  So "files touched
+on both sides" overstates the cost by nine to one.
+.PP
+.B "And every fix survives the merge, checked rather than hoped."
+.CW exZdiv
+in the interpreter's divide and modulo, the JIT's own guard and its
+.CW R.PC
+repair,
+.CW "bflag = 1" ,
+.CW ~0U
+in the device wstats,
+.CW nochange ()
+in
+.CW styx.b ,
+and the CASE guard in both
+.CW 7l
+and
+.CW 5l .
+One of those checks was itself wrong and worth recording: grepping
+.CW xec.c
+for "zero divide" found nothing, because the fix raises
+.CW exZdiv
+and the string lives in
+.CW raise.c .
+The count was the blind instrument, not the merge.
+.PP
+.B "mkconfig still comes across wrong, and that has not changed."
+A clean merge takes their
+.CW ROOT ,
+so the first
+.CW "mk install"
+after adoption would install into the other worktree.
+.CW check-all 's
+guard catches it; the resolution belongs in the merge commit.
+.PP
+.B "Everything builds."
+Tree, host tools, four kernels, the 32-bit Dis tree and all fourteen
+boards, in three minutes.
