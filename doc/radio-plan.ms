@@ -8985,3 +8985,57 @@ The station's own peak with ssl was about 43000 live with 12512 bytes of
 core free, and auth wants 32K above its baseline, so the two together
 are the next question and the answer is not obviously yes.
 .B "What is shown is that the protocol is not the obstacle."
+.NH 2
+Auth inside the station: one measurement, no control, and a wedged board
+.PP
+.B "The station with $Keyring registered does not get past ssl."
+Built on the derived conf, flashed to both boards and verified by their
+own banners, with
+.B ssl=1 :
+.DS
+.CW "styx: ssl sha/rc4_256 on #D/0, and the secret is a constant ..."
+.CW "ARMV7M-STYX-SSL"
+.DE
+and then nothing.
+.B "No EXPORTING, no pool table, and no error of any kind."
+The next thing
+.I serve ()
+does is
+.IR pools (),
+which reads
+.B #c/memory
+into a 1024-byte buffer and tokenizes it, and the station with ssl on
+has previously had 12512 bytes of core free.
+.PP
+.B "Registering the module costs core as well as flash:"
+155648 bytes free at boot against 159744 without it, so 4096 \- a page
+\- before anything runs.  On top of 197K of text.
+.NH 2
+And then it would not answer the reset
+.PP
+Six resets, no bootloader, console silent.
+.B "That is not the adapter this time,"
+or not only: the
+.B ^R
+handler lives in the uart receive interrupt and
+.B os/inferno/port/devuart.c
+says what that cannot cover \- "a kernel spinning at splhi, or one that
+has taken a fault with interrupts off, is still beyond it".  A station
+that stops printing and stops answering has done something worse than
+run out of pool in a Dis process.
+.PP
+.B "Which is the signature the withdrawn \(lqssl wedge\(rq had,"
+and that one turned out to be an exporter retrying for memory on a board
+that stayed reachable throughout.  This is not that.  Whether it is
+keyring's registration, ssl, or the two together is exactly what the
+control would have said \-
+.B "and the control could not be taken, because the satellite was already unreachable when it was due."
+.PP
+.B "So: one measurement, no control."
+What is established is that the station with keyring registered and ssl
+on stops after pushing ssl and afterwards cannot be reached.  What is
+NOT established is which of the two does it, or that it is memory at
+all.
+.B "The board wants a power cycle before the next attempt,"
+and the attempt worth making is the ssl-off arm on the same kernel,
+which isolates it in one run.

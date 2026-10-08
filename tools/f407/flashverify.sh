@@ -75,6 +75,15 @@ export PATH="$ROOT/MacOSX/arm64/bin:$PATH"
 
 INIT=$2
 
+# AND AN OPTIONAL CONF, because the authenticating kernel is a different
+# one.  $Keyring has to be in the conf's mod section for keyring(2) to
+# load, declaring it costs 197K of flash, and armv7minit cannot absorb
+# that -- so os/inferno/stm32f407/mkfile derives stm32f407auth from
+# stm32f407 and this has to be able to build and flash it.  Everything
+# downstream is named from $CONF so the hex, the ELF, the date stamp and
+# the prog.s the init check greps all come from the same kernel.
+CONF=${3:-stm32f407}
+
 # ASK FOR THE HEX, NOT THE KERNEL, AND KEEP THE WHOLE BUILD LOG.
 #
 # This used to build istm32f407 and then flash istm32f407.hex, which are
@@ -93,10 +102,10 @@ if [ -n "$INIT" ]; then
 	rm -f os/inferno/stm32f407/stm32f407.prog.* \
 	      os/inferno/stm32f407/stm32f407.xipmod.* \
 	      os/inferno/stm32f407/stm32f407.root.*
-	(cd os/inferno/stm32f407 && mk INIT=$INIT istm32f407.hex) \
+	(cd os/inferno/stm32f407 && mk CONF=$CONF INIT=$INIT i$CONF.hex) \
 		> $BUILDLOG 2>&1
 else
-	(cd os/inferno/stm32f407 && mk istm32f407.hex) > $BUILDLOG 2>&1
+	(cd os/inferno/stm32f407 && mk CONF=$CONF i$CONF.hex) > $BUILDLOG 2>&1
 fi
 brc=$?
 if [ "$brc" != 0 ]; then
@@ -107,8 +116,8 @@ if [ "$brc" != 0 ]; then
 	exit 1
 fi
 rm -f $BUILDLOG
-HEXF=$ROOT/os/inferno/stm32f407/istm32f407.hex
-ELFF=$ROOT/os/inferno/stm32f407/istm32f407
+HEXF=$ROOT/os/inferno/stm32f407/i$CONF.hex
+ELFF=$ROOT/os/inferno/stm32f407/i$CONF
 
 # THE STAMP COMES FROM BESIDE THE IMAGE, not out of the build output.
 #
@@ -152,7 +161,7 @@ else
 	WANTPROC=
 fi
 CARRIES=$(grep -o "from \.\./init/[a-z0-9]*\.dis" \
-	os/inferno/stm32f407/stm32f407.prog.s | sort -u | head -1)
+	os/inferno/stm32f407/$CONF.prog.s | sort -u | head -1)
 echo "flashverify: the image carries $CARRIES"
 # AND AN ABSENT prog.s IS A FAILURE, NOT A PASS.
 #
@@ -207,7 +216,7 @@ if pgrep -f "mikroe-uhb" > /dev/null 2>&1; then
 	sleep 1
 fi
 
-HEX=$ROOT/os/inferno/stm32f407/istm32f407.hex
+HEX=$ROOT/os/inferno/stm32f407/i$CONF.hex
 "$ROOT/tools/f407/flash.sh" ~/src/mikroe-uhb \
 	~/src/mikroe-uhb/venv/bin/python "$HEX" > /tmp/fv-$$.log 2>&1 &
 FL=$!
@@ -303,19 +312,26 @@ case "$INIT" in
 *ax25*)	WANTCAL=1 ;;
 *)	WANTCAL= ;;
 esac
-python3 - "$PORT" "$STAMP" "$WANTPROC" "$WANTCAL" <<'PY'
+python3 - "$PORT" "$STAMP" "$WANTPROC" "$WANTCAL" "$CONF" <<'PY'
 import re, sys, time
 sys.path.insert(0, "tools/radio")
 from twoboard import open_board
 b = open_board(sys.argv[1], "board")
 want = sys.argv[2] if len(sys.argv) > 2 else ""
+# The banner carries the CONF's own name -- "conf stm32f407auth (...)"
+# for the derived one -- so the pattern has to come from the argument
+# and not be spelled out.  Matching the base name against an auth
+# kernel's banner read kerndate None while nproc parsed fine, which is
+# a verification that fails for the wrong reason.
+conf = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else "stm32f407"
+pat = r"conf " + re.escape(conf) + r" \((\d+)\)"
 for _ in range(10):
     time.sleep(3)
     t = b.text()
-    m = re.findall(r"conf stm32f407 \((\d+)\)", t)
+    m = re.findall(pat, t)
     if m and (not want or m[-1] == want):
         break
-m = re.findall(r"conf stm32f407 \((\d+)\)", b.text())
+m = re.findall(pat, b.text())
 got = m[-1] if m else None
 p = re.findall(r"procinit conf.nproc (\d+)", b.text())
 print("flashverify: the board says kerndate %s, nproc %s"
