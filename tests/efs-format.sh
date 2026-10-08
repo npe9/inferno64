@@ -135,18 +135,28 @@ runemu $T/efs-out2.txt /tmp/efs-run2.sh
 #
 
 say "2. one superblock corrupt: falls back to the spare"
-awk '/^MARK one/,/^MARK both/' $T/efs-out2.txt > $T/efs-one.txt
+#
+# UNANCHORED, like efs-write.sh's equivalent already was.  These ranges
+# cut emu's output into sections, and emu interleaves pool and kernel
+# prints into that same stream -- so a MARK that does not start a line
+# leaves the range UNOPENED, the section file EMPTY, and every check
+# below failing.  That reports a correct filesystem as broken.  Each MARK
+# is echoed exactly once by the script above and the script is not itself
+# echoed (sh.dis without -x), so there is nothing else for an unanchored
+# pattern to match.
+#
+awk '/MARK one/,/MARK both/' $T/efs-out2.txt > $T/efs-one.txt
 check "checksum names it"	'superblock checksum'		$T/efs-one.txt
 check "spare still found"	'superblock 1 (block 255)'	$T/efs-one.txt
 check "mounts the spare"	'mount would take superblock 1'	$T/efs-one.txt
 check "and still reads"		'mode 40775'			$T/efs-one.txt
 
 say "3. both superblocks corrupt: refuses"
-awk '/^MARK both/,/^MARK tree/' $T/efs-out2.txt > $T/efs-both.txt
+awk '/MARK both/,/MARK tree/' $T/efs-out2.txt > $T/efs-both.txt
 check "refuses to mount"	'mount would FAIL'		$T/efs-both.txt
 
 say "4. tree root corrupt: names the block"
-awk '/^MARK tree/,0' $T/efs-out2.txt > $T/efs-tree.txt
+awk '/MARK tree/,0' $T/efs-out2.txt > $T/efs-tree.txt
 check "superblocks still good"	'mount would take superblock 0'	$T/efs-tree.txt
 check "block named"		'node checksum'			$T/efs-tree.txt
 
