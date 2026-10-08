@@ -4127,6 +4127,7 @@ stalldump(void)
 void
 soakline(void)
 {
+	extern u32 kerndate;
 	extern ulong gcnruns;
 	extern int gchalt;
 	char pbuf[400];
@@ -4147,6 +4148,23 @@ soakline(void)
 			*e = 0;
 	}else
 		p = pbuf;
+	/*
+	 * The build stamp, on a line that repeats.
+	 *
+	 * kerndate is printed once, in the boot banner, as "Inferno release
+	 * built at N".  Compute Engine's serial API hands back the last
+	 * mebibyte, so on any run long enough to be worth measuring the
+	 * banner has scrolled out and the log no longer says which kernel
+	 * produced it.  That is not hypothetical: resolving a malloctag
+	 * against the tree's current kernel rather than the one that ran
+	 * gave this branch a confident "execatidle+0x65" for an address the
+	 * right binary calls "newprog+0x72".
+	 *
+	 * On the soak line it repeats every 120 seconds and so survives in
+	 * any tail, which turns "keep the exact binary" from a discipline
+	 * into something a log can be checked against.
+	 */
+	print("soak: kernel built at %ud\n", kerndate);
 	print("soak: %lud ticks, gcnruns %lud, gchalt %d, npctx %d, pools %s\n",
 		(ulong)MACHP(0)->ticks, gcnruns, gchalt, npctx, p);
 	/*

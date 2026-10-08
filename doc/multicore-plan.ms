@@ -9654,3 +9654,82 @@ member's size \(em so a walk at
 entry would catch the first corruption rather than the first use, and
 would separate "a bad size was written" from "a correct block is on the
 wrong chain".  One sample cannot.
+.NH 2
+The build stamp, and why a tree with no stamped tools is not the safer one
+.PP
+The raspi3b-port session had four kernels linked in its worktree by
+another session working there by current directory, and every
+stamp-checked tool in its
+.CW tools/jtag
+refused until it rebuilt \(em which is how it noticed at all.  Their
+inversion of my own observation is the better reading of it: a tree whose
+tools gate on a build stamp makes a peer's build expensive and
+.I visible ,
+and a tree without them makes it cheap and invisible.  This tree has no
+.CW tools/jtag
+and nothing that gates on a stamp, so the same event here would have left
+no trace.  That is quieter, not safer.
+.PP
+.B "Checked, since the question is answerable:"
+every kernel in this worktree is stamped 21:40 to 21:41 on 7 October,
+which is this session's own last board sweep, and nothing under
+.CW os/inferno
+or
+.CW libinterp
+is newer.  Nothing unaccounted for \(em and the only reason to look was
+their reframing.
+.NH 2
+So the stamp goes on a line that repeats
+.PP
+.CW kerndate
+was printed once, in the boot banner.  Compute Engine's serial API
+returns the last mebibyte, so on any run long enough to be worth
+measuring the banner has scrolled out and the log no longer says which
+kernel produced it.  A stamp check that could only read the banner would
+not run on the path that needs it, which is the same defect as an
+instrument that cannot fail.
+.PP
+It is on the soak line now, every 120 seconds, and
+.CW scripts/check-kernel-stamp.sh
+compares a log against a binary: exit 0 match, 1 mismatch, 2 cannot tell.
+Two is not a pass, because a stamp absent from the log is exactly the
+case where a silent ok does the damage.  All three paths tested.
+.PP
+This is not a hypothetical.  Resolving a malloctag against the tree's
+current kernel rather than the one that had run gave this branch a
+confident
+.CW execatidle+0x65
+for an address the right binary calls
+.CW newprog+0x72 :
+two plausible function names, no warning, and a wrong conclusion that
+stood until the binaries were compared.
+.NH 2
+And the knobs this session added grant nothing new
+.PP
+Their reflex is worth copying: a knob added for measurement that weakens
+an invariant should have its permission bits read before it is either
+defended or dismissed, because the honest sentence may be stronger than
+the defensive one.  Theirs was
+.CW /dev/sysctl
+at mode 0644 already carrying reboot, halt and panic.
+.PP
+Checked here.  All six of this session's flags \(em
+.CW *gcoff ,
+.CW *poolstat ,
+.CW *progquar ,
+.CW *pmaplarge ,
+.CW *disdump ,
+.CW *soak
+\(em are read only through
+.CW getconf() ,
+which reads the boot configuration, and nothing in any device writes
+them.  This tree's
+.CW /dev/sysctl
+is mode 0644 and accepts reboot, halt, panic, console, broken, nobroken
+and rdb, none of them.  So they require control of the boot line, which
+is strictly more than
+.CW /dev/sysctl
+already grants, and the honest sentence is that they change nothing about
+who can do what.  Worth writing down for
+.CW *gcoff=1
+in particular, which turns off reclamation entirely.
