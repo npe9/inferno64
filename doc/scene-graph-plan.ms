@@ -251,10 +251,49 @@ libtk. This reads the goal as being about the API rather than about any
 one consumer, and is the only candidate that makes the existing work
 infrastructure rather than an internal detail.
 .IP \(bu
-.B "Resolution independence."
-Render a tree at a scale, which pixels cannot do. Framebuffer
-compatible, and the one capability a description genuinely has over a
-raster on this hardware.
+.B "Resolution independence. DONE."
+Render a tree at a scale, which pixels cannot do \(em the one capability
+a description genuinely has over a raster on this hardware, and
+framebuffer compatible.
+.CW tkscenerenderscaled()
+takes the scale as
+.CW num/den ,
+integer with rounding and no floating point, because a renderer that
+has to work in a kernel should not want an FPU. Driven by
+.CW "render scaled" ,
+and the figures are the same on the host and on the board:
+.IP
+.EX
+scale 1:1              1 1 nodes 0 approx 0
+a raised frame at 2:1  2 1 nodes 4 approx 0
+a label at 2:1         2 1 nodes 4 approx 1
+.EE
+.LP
+Geometry scales
+.I exactly .
+The two kinds that cannot are counted rather than hidden:
+.CW TkNglyphs
+names a font file whose size is in its name, and
+.CW TkNtexture
+goes through
+.CW draw() ,
+which replicates rather than resamples. So
+.CW "approx 0"
+is worth something because
+.CW "approx 1"
+is demonstrated beside it. Pi 3B kernel: 100 ok 0 fail 2 skipped, the
+two skips being a font file and a bitmap absent from the kernel root.
+.PP
+What a size\-selection step would need, if text at a scale is wanted:
+the node holds a face
+.I name
+and the families here ship discrete sizes
+.CW ( ascii.10.font ,
+.CW ascii.12.font ,
+.CW ascii.16.font ),
+so a scaled render would pick the nearest available size rather than
+scale a bitmap. That is a substitution, not an interpolation, and it is
+the next thing in this item rather than a thing in its way.
 .IP \(bu
 .B "Finish the breadth. DONE for separator; the other two are by design."
 .CW separator
