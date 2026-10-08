@@ -13497,3 +13497,65 @@ a peer's groff        0 for the same 30 bytes, 0 for 19 more elsewhere
 That was a reading of one install.  A check depending on a renderer mentioning
 this is a check that works on one machine, which is the argument for counting
 bytes in the source.
+.NH 3
+Five of eight tests reported a real defect as BROKE
+.LP
+.CW tests/toolchain
+maps exit 2 to DEFECT and every other nonzero to BROKE.
+.B "Five of its eight tests returned 1 for a finding,"
+so a real defect printed
+.CW "BROKE ... could not reach its subject"
+and the summary line \(em the only line anyone reads \(em said
+.CW "0 defect(s)" .
+.P1
+man-cmdtab        gap in man/3/flash        BROKE -> DEFECT
+troff-ctlchars    form feed in a plan       BROKE -> DEFECT
+troff-argorder    a reordered .CW           BROKE -> DEFECT
+kencc-brloop      KENCC-BRLOOP-FAIL         1 -> 2
+kencc-selfbranch  KENCC-SELFBRANCH-FAIL     1 -> 2
+.P2
+.B "The two written today had BOTH nonzero meanings wrong at once,"
+because they used the intuitive assignment \(em 1 for "found something", 2 for
+"could not look" \(em which is exactly inverted.  A finding read as a harness
+failure and a harness failure read as a defect in the tree, while both files
+carried a prominent
+.CW "TWO IS NOT A PASS"
+comment.  Three statuses, mapped backwards.
+.LP
+.B "Why it stayed invisible is the transferable part."
+Run standalone, every one of the five reports correctly, because there any
+nonzero is an unambiguous failure.
+.B "The inversion exists only in the mapping and is not visible from the test."
+A peer put the mechanism better than this plan had: an assertion is only as
+good as the channel it reads its value from, and that channel has to exist on
+every path the check can take.  The channel being read here was a terminal; the
+channel that matters was the suite.
+.LP
+.B "Verified by planting, in both directions."
+Each defect planted and run through the suite until it appeared in the DEFECT
+column, then each harness broken and confirmed to land in BROKE.  Reading the
+scripts is how this survived two hours of working on them.
+.LP
+The 1s that remain are the genuine inabilities to look and belong in BROKE:
+.CW 7a
+would not assemble,
+.CW 7l
+would not link, nothing fresh was left to check, no troff sources found, a
+source in the list that does not exist.
+.B "That is what the third status is for"
+\(em without it, inability is indistinguishable from a finding AND from a pass,
+depending on which way the shell falls.
+.LP
+.B "Two more silent passes from the same hour."
+A missing source in the hardcoded list was
+.CW "[ -f \"$src\" ] || continue"
+\(em skipped without a word, the row simply absent from the output, exit 0.
+Five rows where six belong is not something a reader counts; the test now
+prints
+.CW "6 device(s) checked" .
+And
+.CW "ls doc/*.ms man/*/*"
+recursed into three directories under
+.CW man/lib ,
+so the file list carried directory headers and bare filenames.
+.B "The input to a scan is as untested as the scan."
