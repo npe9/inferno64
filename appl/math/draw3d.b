@@ -1014,16 +1014,20 @@ runstart(t: array of int, n: int): int
 # the source is one row of the destination, so it goes a row at a time
 # through draw() rather than a pixel at a time through a byte array,
 # which also keeps the source's own mask instead of rebuilding one.
-blitsep(dst: ref Image, sp: Point, bw, bh: int, img, mask: ref Image,
+# orig is where ucol[0], vrow[0] land in dst, and vw/vh are how many
+# entries those tables have -- the VISIBLE span of the sprite box, not
+# the whole box. transformsprite() clips it, because the box is as big
+# as the caller asked for and only the part over dst can be seen.
+blitsep(dst: ref Image, orig: Point, vw, vh: int, img, mask: ref Image,
 	ucol, vrow: array of int)
 {
-	ox := sp.x - bw/2;
-	oy := sp.y - bh/2;
-	for(y := 0; y < bh; y++){
+	ox := orig.x;
+	oy := orig.y;
+	for(y := 0; y < vh; y++){
 		v := vrow[y];
 		if(v < 0)
 			continue;
-		for(x := 0; x < bw; ){
+		for(x := 0; x < vw; ){
 			u := ucol[x];
 			if(u < 0){
 				x++;
@@ -1031,7 +1035,7 @@ blitsep(dst: ref Image, sp: Point, bw, bh: int, img, mask: ref Image,
 			}
 			# Longest run of consecutive source columns: one draw.
 			x2 := x + 1;
-			while(x2 < bw && ucol[x2] == ucol[x2-1] + 1)
+			while(x2 < vw && ucol[x2] == ucol[x2-1] + 1)
 				x2++;
 			n := x2 - x;
 			dst.draw(Rect((ox+x, oy+y), (ox+x2, oy+y+1)), img, mask,
@@ -1066,6 +1070,31 @@ transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 	bh := int ((asn * hx + acs * hy) * 2.0) + 2;
 	if(bw < 2 || bh < 2)
 		return;
+	#
+	# BOUND THE BOX BY THE DESTINATION. Nothing outside dst can ever be
+	# seen, so iterating the whole box is work that cannot affect the
+	# picture -- and the box is as large as the caller asks. sprite2d's
+	# width arrives as a raw int: draw3dsafetest(1) sweeps it to
+	# 16r7FFFFFFF, where this allocated an array of bw ints and looped
+	# bw*bh, so the test timed out after 240 seconds on width 100000 and
+	# would have asked for a ten-gigabyte image a case later.
+	#
+	# bw, bh, cx, cy, hx and hy stay FULL-BOX below, which is the whole
+	# care needed here: the sampling is computed from the box the caller
+	# asked for and only the ITERATION is clipped, so an off-screen
+	# sprite is cropped rather than squashed into view. Getting that
+	# backwards is how the sprite3 family once cropped where it should
+	# have resampled.
+	#
+	br := Rect((sp.x - bw/2, sp.y - bh/2),
+		(sp.x - bw/2 + bw, sp.y - bh/2 + bh));
+	(vis, anyvis) := br.clip(dst.r);
+	if(!anyvis || vis.dx() < 1 || vis.dy() < 1)
+		return;
+	xo := vis.min.x - br.min.x;
+	yo := vis.min.y - br.min.y;
+	vw := vis.dx();
+	vh := vis.dy();
 	# With no rotation the inverse transform is separable: the source
 	# column depends only on x and the source row only on y.  Hoisting
 	# it into two tables costs bw+bh reals instead of bw*bh of them,
@@ -1081,9 +1110,9 @@ transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 	if(degz == 0.0 && zs == nil){
 		cx0 := real bw / 2.0;
 		cy0 := real bh / 2.0;
-		ucol := array[bw] of int;
-		for(x := 0; x < bw; x++){
-			lx := real x + 0.5 - cx0;
+		ucol := array[vw] of int;
+		for(x := 0; x < vw; x++){
+			lx := real (x + xo) + 0.5 - cx0;
 			if(flipx)
 				lx = -lx;
 			u := -1;
@@ -1094,9 +1123,9 @@ transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 			}
 			ucol[x] = u;
 		}
-		vrow := array[bh] of int;
-		for(y := 0; y < bh; y++){
-			ly := real y + 0.5 - cy0;
+		vrow := array[vh] of int;
+		for(y := 0; y < vh; y++){
+			ly := real (y + yo) + 0.5 - cy0;
 			v := -1;
 			if(ly >= -hy && ly < hy){
 				v = ifloor((ly + hy) * real ih / real sh);
@@ -1108,18 +1137,27 @@ transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 		x0 := runstart(ucol, iw);
 		y0 := runstart(vrow, ih);
 		if(x0 >= 0 && y0 >= 0){
-			dst.draw(Rect((sp.x - bw/2 + x0, sp.y - bh/2 + y0),
-				(sp.x - bw/2 + x0 + iw, sp.y - bh/2 + y0 + ih)),
+			dst.draw(Rect((vis.min.x + x0, vis.min.y + y0),
+				(vis.min.x + x0 + iw, vis.min.y + y0 + ih)),
 				img, mask, img.r.min);
 			return;
 		}
-		blitsep(dst, sp, bw, bh, img, mask, ucol, vrow);
+		# The origin is the VISIBLE box's, not the whole box's: a
+		# cropped sprite's table starts part-way through the art, so
+		# runstart above declines it and this draws the columns one
+		# run at a time, which is correct and merely slower. A sprite
+		# that fits entirely has xo and yo zero and takes the fast
+		# path exactly as before.
+		blitsep(dst, vis.min, vw, vh, img, mask, ucol, vrow);
 		return;
 	}
 	disp := dst.display;
 	if(disp == nil)
 		return;
-	tmp := disp.newimage(Rect((0, 0), (bw, bh)), img.chans, 0, 0);
+	# vw x vh, not bw x bh: the box can be billions of pixels wide and
+	# only the visible part is ever composited. At 16r7FFFFFFF the old
+	# request was for a two-billion-pixel-wide image.
+	tmp := disp.newimage(Rect((0, 0), (vw, vh)), img.chans, 0, 0);
 	if(tmp == nil)
 		return;
 	# The coverage mask is not optional.  It used to be built only when
@@ -1133,7 +1171,7 @@ transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 	# ordinary case and a black box is not an acceptable answer to it.
 	# Every pixel this loop actually writes sets its bit; the rest stay
 	# clear and never reach the destination.
-	tmpm := disp.newimage(Rect((0, 0), (bw, bh)), Draw->GREY1, 0, 0);
+	tmpm := disp.newimage(Rect((0, 0), (vw, vh)), Draw->GREY1, 0, 0);
 	if(tmpm == nil)
 		return;
 	# Source pixels
@@ -1143,25 +1181,45 @@ transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 		return;
 	mbpl := 0;
 	mb0 := 0;
+	mh := 0;
 	msrc: array of byte = nil;
 	if(mask != nil){
 		mbpl = bytesperline(mask.r, mask.depth);
 		mb0 = firstbit(mask.r, mask.depth);
-		msrc = array[mbpl * ih] of byte;
-		if(mask.readpixels(mask.r, msrc) < 0)
+		#
+		# The MASK's own height, not the image's. This was
+		# array[mbpl * ih] -- sized by the image -- while the index
+		# below runs over the image's pixels, so a mask smaller than
+		# its image indexed off the end and raised an array bounds
+		# error out of the caller. draw3dsafetest(1) hits it with a
+		# 1x1 mask on a 16x16 image.
+		#
+		# Limbo makes that SAFE (the C path in devdraw.c forms the
+		# address by arithmetic and reads whatever it lands on, which
+		# is the whole reason that test exists), but safe is not the
+		# same as right: a sprite whose mask is the wrong size kills
+		# the program drawing it.
+		#
+		mh = mask.r.dy();
+		msrc = array[mbpl * mh] of byte;
+		if(mh < 1 || mask.readpixels(mask.r, msrc) < 0)
 			return;
 	}
-	dbpl := (bw * img.depth + 7) / 8;
-	dstb := array[dbpl * bh] of { * => byte 0 };
-	dmpl := (bw + 7) / 8;
-	dmsk := array[dmpl * bh] of { * => byte 0 };
+	dbpl := (vw * img.depth + 7) / 8;
+	dstb := array[dbpl * vh] of { * => byte 0 };
+	dmpl := (vw + 7) / 8;
+	dmsk := array[dmpl * vh] of { * => byte 0 };
+	# cx and cy are the FULL box's centre, and the loop adds xo and yo
+	# back when it computes a source coordinate. That is what makes the
+	# clip a crop: the pixel at visible column x is the same source
+	# pixel it was before the box was bounded.
 	cx := real bw / 2.0;
 	cy := real bh / 2.0;
-	for(y := 0; y < bh; y++){
-		for(x := 0; x < bw; x++){
+	for(y := 0; y < vh; y++){
+		for(x := 0; x < vw; x++){
 			# inverse rotate into sprite local coords (-sw/2..sw/2)
-			dx := real x + 0.5 - cx;
-			dy := real y + 0.5 - cy;
+			dx := real (x + xo) + 0.5 - cx;
+			dy := real (y + yo) + 0.5 - cy;
 			lx := dx * cs + dy * sn;
 			ly := -dx * sn + dy * cs;
 			if(flipx)
@@ -1185,14 +1243,26 @@ transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 			if(msrc != nil){
 				if(mask.depth == 1){
 					ub := mb0 + u;
-					bit := msrc[v * mbpl + (ub >> 3)];
-					opaque = (int bit & (16r80 >> (ub & 7))) != 0;
-				}else
+					# Outside the mask is transparent, which is
+					# what draw(2) does with a mask that does
+					# not cover the source.
+					if(v >= mh || (ub >> 3) >= mbpl)
+						opaque = 0;
+					else {
+						bit := msrc[v * mbpl + (ub >> 3)];
+						opaque = (int bit & (16r80 >> (ub & 7))) != 0;
+					}
+				}else if(v >= mh || mb0 / 8 + u >= mbpl)
+					opaque = 0;
+				else
 					opaque = msrc[v * mbpl + mb0 / 8 + u] != byte 0;
 			}
 			if(!opaque)
 				continue;
-			if(zs != nil && !zwin(zs, zv, sp.x - bw/2 + x, sp.y - bh/2 + y))
+			# vis.min, not the full box's corner: x and y now index
+			# the VISIBLE span, so the destination pixel the depth
+			# test is asked about is vis.min + (x, y).
+			if(zs != nil && !zwin(zs, zv, vis.min.x + x, vis.min.y + y))
 				continue;
 			if(img.depth == 8)
 				dstb[y * dbpl + x] = src[v * sbpl + u];
@@ -1210,8 +1280,10 @@ transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 	}
 	tmp.writepixels(tmp.r, dstb);
 	tmpm.writepixels(tmpm.r, dmsk);
-	dr := Rect((sp.x - bw/2, sp.y - bh/2), (sp.x - bw/2 + bw, sp.y - bh/2 + bh));
-	dst.draw(dr, tmp, tmpm, Point(0, 0));
+	# vis is where tmp belongs: it was built at the visible size and its
+	# (0,0) is the visible corner, so this is the same blit it always
+	# was with the invisible remainder removed.
+	dst.draw(vis, tmp, tmpm, Point(0, 0));
 }
 
 sprite2d(dst: ref Image, center: Point, img, mask: ref Image,

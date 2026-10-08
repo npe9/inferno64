@@ -66,10 +66,11 @@ phase := "startup";
 finished := 0;
 mypid := 0;
 
-# Seconds the whole run is allowed.  Generous by a wide margin: the
-# device provider gets through the whole battery in about five seconds.
-# The software one does not finish at all, for a reason worth reading
-# about at watchdog() below.
+# Seconds the whole run is allowed.  Generous by a wide margin: both
+# providers now get through the whole battery in about five seconds --
+# the device one in five, the software one in three.  It used to be that
+# the software provider did not finish AT ALL; see watchdog() below for
+# what was wrong and why the deadline still names the family it was in.
 Deadline: con 240;
 
 init(ctxt: ref Draw->Context, argv: list of string)
@@ -340,17 +341,27 @@ prims()
 # harness that ran it can only say the run stopped.  So the run has a
 # deadline, and passing it prints which family was in progress.
 #
-# This is not hypothetical.  Against the software provider,
-# math/draw3d.dis, a sprite2d does not return in any time worth waiting
-# for once the width reaches 100000 - well below the extremes here.  The
-# Limbo resampler walks the sprite's OWN box and only then asks whether
-# each pixel lands in the destination; the C path in devdraw.c clips the
-# box to the destination first, and so does a bounded amount of work
-# however large the width.  Hence five seconds against one provider and
-# no answer at all against the other.  That asymmetry is a real
-# difference between the two, not anything wrong with this test, and it
-# is why the deadline names the family it was in rather than just
-# reporting that time ran out.
+# This is not hypothetical, and the deadline earned its keep: it is what
+# found two unbounded cases in the software provider, by naming the
+# family each one was in.
+#
+# FIXED, both.  Against math/draw3d.dis a sprite2d used not to return in
+# any time worth waiting for once the width reached 100000 - well below
+# the extremes here - because the Limbo resampler walked the sprite's
+# OWN box and only then asked whether each pixel landed in the
+# destination, where the C path in devdraw.c clips the box to the
+# destination first and so does a bounded amount of work however large
+# the width.  transformsprite() now clips first too.  And a mask smaller
+# than its image indexed off the end of the mask buffer, which Limbo
+# turns into an array bounds error out of the caller rather than the
+# wild read the C path would do - safe, but it still killed the program
+# drawing the sprite; outside the mask now reads as transparent, which
+# is what draw(2) does.
+#
+# So the asymmetry this paragraph used to describe is closed: three
+# seconds for the software provider against five for the device one,
+# 18 ok 0 fail both ways.  The deadline stays, because it is the thing
+# that would notice the next one.
 watchdog()
 {
 	for(i := 0; i < Deadline; i++){
