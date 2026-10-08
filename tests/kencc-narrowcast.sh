@@ -201,10 +201,22 @@ if [ "$fail" -ne 0 ]; then
 fi
 if [ "$known" = 2 ]; then
 	echo "kencc-narrowcast: ALL THREE NARROW -- 7c appears to have been fixed."
-	echo "kencc-narrowcast: the v1 shape was the live defect; if it now works,"
-	echo "kencc-narrowcast: the 32-bit-operand workarounds can be revisited"
-	echo "kencc-narrowcast: (libmemdraw/alloc.c byteaddr, and whatever else"
-	echo "kencc-narrowcast: cites this test)."
+	#
+	# THE ADVICE THIS USED TO GIVE IS NOW ANSWERED, so it says the answer
+	# rather than sending the next reader to repeat the work.  It said the
+	# 32-bit-operand workarounds "can be revisited"; they were, by compiling
+	# both forms for every kencc target and reading the instructions.
+	#
+	echo "kencc-narrowcast: the byteaddr workarounds were CHECKED, by"
+	echo "kencc-narrowcast: compiling both forms for every kencc target:"
+	echo "kencc-narrowcast:   7c aarch64  MOVW Rx,Rx   sign-extends"
+	echo "kencc-narrowcast:   6c amd64    MOVLQSX      always was correct"
+	echo "kencc-narrowcast:   jc riscv64  MULW alone   correct by ISA"
+	echo "kencc-narrowcast:   the eight 32-bit targets have nothing to widen"
+	echo "kencc-narrowcast: so NO current compiler needs them.  They are kept"
+	echo "kencc-narrowcast: anyway; libmemdraw/alloc.c says why, and records"
+	echo "kencc-narrowcast: the long-is-32-bits trap that made the first"
+	echo "kencc-narrowcast: comparison report a 6c defect that is not there."
 	exit 0
 fi
 echo "kencc-narrowcast: KNOWN DEFECT still present in v1; v2 and v3 narrow."

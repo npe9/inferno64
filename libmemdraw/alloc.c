@@ -179,6 +179,37 @@ uchar*
  * Keeping every operand 32 bits makes the truncation the arithmetic rather than
  * a cast, so there is nothing left to drop and 7c emits MULW with a
  * sign-extending widen.
+ *
+ * THE DEFECT IS NOW FIXED AND THIS SHAPE IS NO LONGER NECESSARY, which is
+ * recorded here because the paragraphs above read as though it were.  7c's
+ * gmove was dropping the widening move and no longer does; the natural form
+ * compiles correctly on every 64-bit target this tree builds for.  Verified by
+ * compiling both forms and reading the instructions, not by argument:
+ *
+ *	7c   aarch64   MOVW Rx,Rx before the ADD   sign-extends (MOVWU is the
+ *	                                           zero-extending one, and 7c
+ *	                                           uses it only for unsigned)
+ *	6c   amd64     MOVLQSX                     sign-extends; was always
+ *	                                           correct here
+ *	jc   riscv64   MULW alone                  correct BY ISA: RISC-V's
+ *	                                           W-form ops sign-extend their
+ *	                                           32-bit result into the full
+ *	                                           register, where AArch64's
+ *	                                           W-register writes ZERO-extend
+ *	5c 8c kc qc    32-bit targets              no widening exists to get
+ *	vc 0c tc zc                                wrong
+ *
+ * The shape is KEPT anyway, deliberately: it costs two redundant moves and
+ * eight bytes of frame in a function called per span rather than per pixel,
+ * and tests/kencc-widencast.sh is what would catch a 7c regression -- but a
+ * regression caught by a test still has to not corrupt memory in the meantime.
+ * Belt and braces, with the braces now documented as braces.
+ *
+ * ONE TRAP WORTH THE LINE, because it cost a false alarm while checking this:
+ * the first version of that comparison used `long' for the 64-bit type, and
+ * kencc's long is THIRTY-TWO BITS.  Every "widening" in it was an int-to-int
+ * move, 6c's bare MOVL was correct, and it looked exactly like 6c dropping the
+ * sign extension on four paths out of five.  Use vlong.
  */
 byteaddr(Memimage *i, Point p)
 {
