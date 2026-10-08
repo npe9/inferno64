@@ -56,24 +56,66 @@ this test failed at its first case.
 .IR zdivtest (1),
 .IR emu (1)
 .SH BUGS
-.B "On a native kernel four cases fail, and that is a real defect, not a"
-.B "test bug."
+.B "THREE CASES STORE DELIBERATELY OUT OF BOUNDS."
+Under
+.I "emu -B"
+or with
+.B bflag
+cleared (see
+.IR sysctl )
+nothing stops them, so they write wherever the index points.  One such
+run on a Pi 3B wedged the board with
+.B cpu0
+in
+.BR exit() ,
+and the next identical run did not.  Running this test is the thing most
+likely to happen right after the bounds checks are switched off, so the
+hazard is the pair rather than either piece.
+.SH HISTORY
+.B "On a native kernel four cases USED TO fail, and it was a real defect,"
+.B "not a test bug."
 .B bflag
 gates whether the JIT emits an array bounds check at all.
 .B emu/port/main.c
-initialises it to 1;
+has initialised it to 1 since forever;
 .B os/inferno/port/dis.c
-declares it
+declared it
 .RB ( "int bflag;" )
-and nothing ever sets it, so on every native kernel it is zero and the
-compiled path indexes arrays unchecked \- an out-of-range store is
-accepted and writes wherever the index points.
-Measured on a Pi 3B kernel under QEMU with
-.BR "cflag=1" :
-.B "BNDSTEST 7 ok, 4 fail"
-with
-.B "no exception, store accepted"
-for the three in-range-of-nothing cases.
+and nothing ever set it, so on every native kernel it was zero and the
+compiled path indexed arrays unchecked \- an out-of-range store was
+accepted and wrote wherever the index pointed.
+.PP
+.B "FIXED IN THIS TREE,"
+and verified here on real silicon rather than under QEMU \- same board,
+same card,
+.B jit=1
+read from
+.BR /dev/jit :
+.IP
+.EX
+build 1791422500 (bflag 0)   BNDSTEST 7 ok, 4 fail
+build 1791424620 (bflag 1)   BNDSTEST 11 ok, 0 fail
+.EE
+.PP
+.B "The failing arm's failures are themselves the proof the JIT was on,"
+so that arm needs no separate flag check: the interpreter's
+.B ind
+instructions check unconditionally, so an interpreted run passes all
+eleven whatever
+.B bflag
+says, and four failures are reachable only through compiled code.
+.PP
+.B "What the checks cost, on the board:"
+.B array
+is 6.5 per cent slower with them, ranges 3350-3480ms against
+3080-3320ms, non-overlapping.
+.B "The control is what makes that mean anything"
+\- the
+.B int
+test indexes no array and shows 1.3 per cent with ranges that DO
+overlap, which is what rules out drift and module reuse.  6.5 per cent
+on the most index-heavy test in the suite is an upper bound, not a
+typical cost.
 .PP
 .I "Emu -B"
 suppresses the same checks and reproduces it exactly, message for
@@ -94,7 +136,16 @@ instructions check unconditionally. So this is a JIT-only hole, and a
 kernel whose code generator is a stub is unaffected.
 Setting
 .B bflag
-is a one-line change in the kernel tree and is not made here.
+was a one-line change in the kernel tree, and
+.B "it has been made here"
+\- this page said "is not made here" for some hours after it stopped
+being true.  A page asserting that nobody has fixed something is worse
+than one that never mentioned it, and a status claim about another tree
+ages the moment anyone acts on it.
+.PP
+Where it still applies: a kernel whose code generator is a stub is
+unaffected, so a branch with no real generator is not exposed and has
+nothing to fix.
 .PP
 Two cases accept either
 .B "array bounds error"
