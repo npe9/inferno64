@@ -180,6 +180,17 @@ message is received.
 Cancel the effect of any previous
 .BR stop .
 .TP 10n
+.B start
+Resume a stopped process
+.RB ( dbgstart() ).
+.TP 10n
+.B maim
+Kill the process, recorded as
+.B maim
+rather than
+.B kill
+so the cause is distinguishable afterwards.
+.TP 10n
 .BI "bpt set " "path pc"
 Set a breakpoint at
 .I pc

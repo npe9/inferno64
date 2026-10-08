@@ -67,9 +67,20 @@ named() {	# named <cmd> <page>
 	grep -qE "^\.(B|BR|BI|IB|I)[[:space:]]+\"?${1}\$" "$2"
 }
 
+#
+# THE ENUM PREFIX IS NOT ALWAYS `CM'.  devds.c's table is
+#
+#	static Cmdtab configs[] = {
+#		Fmirror,"mirror",	0,
+#
+# so a pattern requiring CM[A-Za-z]+ extracted ZERO of its four commands
+# and this test printed "ok -- 0 commands, all named".  A false pass on a
+# device with four commands, and the tell was in the output: a device with
+# no commands at all is not a thing worth having a Cmdtab for.
+#
 cmdsof() {	# cmdsof <device .c>
-	awk '/Cmdtab[a-z ]*\[\][[:space:]]*=/{i=1} i && /^\};/{i=0} i' "$1" |
-		grep -oE 'CM[A-Za-z]+,[[:space:]]*"[a-z0-9_]+"' |
+	awk '/Cmdtab[A-Za-z_ ]*\[\][[:space:]]*=/{i=1} i && /^\};/{i=0} i' "$1" |
+		grep -oE '[A-Za-z_][A-Za-z0-9_]*,[[:space:]]*"[a-z0-9_]+"' |
 		grep -oE '"[a-z0-9_]+"' | tr -d '"' | sort -u
 }
 
@@ -145,6 +156,19 @@ do
 		continue
 	fi
 	n=`cmdsof "$src" | grep -c .`
+	#
+	# ZERO IS NOT CLEAN, IT IS SUSPICIOUS.  Every file in this list has a
+	# Cmdtab, so extracting no commands from one means the extractor
+	# failed, not that the device accepts nothing -- and "0 commands, all
+	# named" is the most reassuring thing this test can print.  This is
+	# the shape a peer named: in a defect scan where no match means clean,
+	# a broken scanner is indistinguishable from a clean tree.
+	#
+	if [ "$n" -eq 0 ]; then
+		echo "man-cmdtab: EXTRACTED NOTHING from $src, which has a" >&2
+		echo "  Cmdtab -- the extractor failed.  Not reporting a pass." >&2
+		exit 2
+	fi
 	g=`gaps "$src" "$page"`
 	ng=`echo $g | wc -w | tr -d ' '`
 	if [ "$ng" -eq 0 ]; then
