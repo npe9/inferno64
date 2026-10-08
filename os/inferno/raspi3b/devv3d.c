@@ -80,8 +80,48 @@
  * number. (Found by the raspi3b-port session running this on silicon.)
  *
  * SILICON, 2026-10-08: the nonsense tag is REFUSED, SET_ENABLE_QPU is
- * accepted and the block is clocked at 250 MHz. So the firmware half of
- * the seam is real and the open question is EXECUTE_QPU.
+ * accepted and the block is clocked at 250 MHz.
+ *
+ * AND EXECUTE_QPU DOES SOMETHING REAL. Nine bytes of garbage:
+ *
+ *	QEMU     exec accepted resp 0x1       16 us
+ *	silicon  exec refused  resp 0x1  1050951 us
+ *
+ * 65000x, reproducible to four decimal places, and the response word is
+ * 0x1 in BOTH -- so the response alone cannot tell silicon from
+ * emulation and only the elapsed time can. That is the whole argument
+ * for reporting microseconds.
+ *
+ * BUT THE FOURTH WORD IS NOT THE TIMEOUT, and this file used to say it
+ * was. Sweeping it 500x moved nothing:
+ *
+ *	requested ms   10      200     1000    5000
+ *	elapsed us   1050914 1050913 1050956 1050951
+ *
+ * 43us of spread, 0.004% of the elapsed time. So ~1.0509s is a FIXED
+ * cost in the firmware's EXECUTE_QPU path and the layout I had reasoned
+ * my way to is wrong in at least that field.
+ *
+ * WHICH BREAKS THE METHOD I DESIGNED THIS FOR, in the way worth
+ * recording: the plan was to vary a candidate end-of-program encoding
+ * and watch for a call that returns promptly instead of BURNING THE
+ * TIMEOUT. There is no timeout to burn. Reading the constant 1.0509s as
+ * "it timed out, as expected" would have confirmed a control that was
+ * never connected to anything -- a blind instrument, and one I would
+ * have trusted because I built it to be trustworthy.
+ *
+ * What survives is better than what was lost: 1.05s against
+ * microseconds is a wide, stable signal, so varying an encoding and
+ * watching the elapsed time still works. It just cannot be CALIBRATED
+ * by the timeout argument. Hence `exec' now takes all four words and
+ * ctlidx: the next thing to find out is which word moves the elapsed
+ * time, and if none does, the layout is wrong at a coarser level than
+ * one field.
+ *
+ *	echo exec 1 1 CTL 1 1000 >/dev/v3dctl   # ctlidx 1, as believed
+ *	echo exec 0 CTL 1 1 1000 >/dev/v3dctl   # ...or 0
+ *
+ * (Silicon numbers measured by the raspi3b-port session on the board.)
  *
  * So on silicon, with garbage code:
  *	elapsed ~= the timeout	the QPUs really ran it and never ended
@@ -122,7 +162,11 @@ static struct {
 	u32	ctrl[4];	/* one job: uniforms, code */
 	u32	unif[4];
 	int	ncode;		/* bytes of code loaded */
-	int	enabled;
+	int	enabled;	/* last enable we believe SUCCEEDED */
+	int	enabletried;	/* whether an enable has been attempted */
+	int	enableok;	/* ...and whether the last attempt worked */
+	u32	lastargs[4];	/* the four words the last exec actually sent */
+	int	lastctlidx;	/* which of them carried the control address */
 	int	lastresp;	/* response word from the last exec */
 	int	lastok;		/* whether mboxprop reported success */
 	uvlong	lastus;		/* how long it took */
@@ -177,8 +221,12 @@ v3denable(int on)
 	buf[4] = 0;
 	buf[5] = on != 0;
 	buf[6] = 0;
-	if(mboxprop(buf) < 0)
+	v3d.enabletried = 1;
+	if(mboxprop(buf) < 0){
+		v3d.enableok = 0;
 		return -1;
+	}
+	v3d.enableok = 1;
 	v3d.enabled = on != 0;
 	return 0;
 }
@@ -194,21 +242,32 @@ v3denable(int on)
  * the point of coherency before the call, because the GPU reads it
  * uncached.
  */
+/*
+ * THE ARGUMENT LAYOUT IS WHAT IS BEING ESTABLISHED, so the four words
+ * are the caller's and ctlidx says which of them gets the control
+ * list's bus address -- that address has to be real or nothing can
+ * run, but WHICH word carries it is a guess like the rest.
+ *
+ * This replaced an `exec nqpus noflush timeout' that baked in a
+ * layout I had only reasoned my way to, and reasoning was not enough:
+ * see the header for the 500x timeout sweep that moved nothing.
+ */
 static int
-v3dexec(int nqpus, int noflush, int timeout)
+v3dexecraw(int ctlidx, u32 w0, u32 w1, u32 w2, u32 w3)
 {
 	static u32 raw[32+4];
 	u32 *buf;
 	uvlong t0;
-	int i;
+	int i, nj;
 
 	if(v3d.ncode <= 0)
 		error("no code loaded");
-	if(nqpus < 1 || nqpus > 12)
-		error("nqpus out of range");
+	if(ctlidx < 0 || ctlidx > 3)
+		error("ctlidx must be 0..3");
+	nj = 1;
 
-	/* one job, repeated: every QPU runs the same program */
-	for(i = 0; i < nqpus && i < nelem(v3d.ctrl)/2; i++){
+	/* one job: uniforms then code, both bus addresses */
+	for(i = 0; i < nj && i < nelem(v3d.ctrl)/2; i++){
 		v3d.ctrl[2*i]   = (u32)((uintptr)v3d.unif | Busalias);
 		v3d.ctrl[2*i+1] = (u32)((uintptr)v3d.code | Busalias);
 	}
@@ -222,11 +281,15 @@ v3dexec(int nqpus, int noflush, int timeout)
 	buf[2] = Tagqpuex;
 	buf[3] = 16;
 	buf[4] = 0;
-	buf[5] = nqpus;
-	buf[6] = (u32)((uintptr)v3d.ctrl | Busalias);
-	buf[7] = noflush != 0;
-	buf[8] = timeout;
+	buf[5] = w0;
+	buf[6] = w1;
+	buf[7] = w2;
+	buf[8] = w3;
+	buf[5+ctlidx] = (u32)((uintptr)v3d.ctrl | Busalias);
 	buf[9] = 0;
+	for(i = 0; i < 4; i++)
+		v3d.lastargs[i] = buf[5+i];
+	v3d.lastctlidx = ctlidx;
 	t0 = systmrusec();
 	v3d.lastok = mboxprop(buf) >= 0;
 	v3d.lastus = systmrusec() - t0;
@@ -273,11 +336,26 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 	case Qdir:
 		return devdirread(c, a, n, v3ddir, nelem(v3ddir), devgen);
 	case Qctl:
+		/*
+		 * `enabled' is the last enable we believe SUCCEEDED, so
+		 * after a refusal it still reads 1 -- which looked like a
+		 * contradiction when a refused enable was followed by
+		 * `enabled 1' on the next line. The attempt is now reported
+		 * separately, because a stale truth beside a fresh error is
+		 * worse than either alone.
+		 */
 		snprint(buf, sizeof buf,
-			"clock %s %ud\nenabled %d\ncode %d\n"
+			"clock %s %ud\nenabled %d\nenable %s\n"
+			"code %d bytes (appended; `reset' clears)\n"
+			"args %#ux %#ux %#ux %#ux ctlidx %d\n"
 			"exec %s resp %#ux %llud us\n",
 			v3d.clockok? "hz" : "unknown", v3d.clock,
-			v3d.enabled, v3d.ncode,
+			v3d.enabled,
+			!v3d.enabletried? "untried" :
+				v3d.enableok? "accepted" : "REFUSED",
+			v3d.ncode,
+			v3d.lastargs[0], v3d.lastargs[1],
+			v3d.lastargs[2], v3d.lastargs[3], v3d.lastctlidx,
 			v3d.lastok? "accepted" : "refused",
 			v3d.lastresp, v3d.lastus);
 		return readstr((ulong)offset, a, n, buf);
@@ -290,7 +368,6 @@ static int
 v3dwrite(Chan *c, void *a, int n, vlong offset)
 {
 	Cmdbuf *cb;
-	int nq, nf, to;
 
 	USED(offset);
 	switch((ulong)c->qid.path){
@@ -316,11 +393,14 @@ v3dwrite(Chan *c, void *a, int n, vlong offset)
 			if(v3denable(0) < 0)
 				error("the firmware refused SET_ENABLE_QPU");
 		}else if(strcmp(cb->f[0], "exec") == 0){
-			/* exec nqpus noflush timeoutms */
-			nq = cb->nf > 1? atoi(cb->f[1]) : 1;
-			nf = cb->nf > 2? atoi(cb->f[2]) : 1;
-			to = cb->nf > 3? atoi(cb->f[3]) : 1000;
-			v3dexec(nq, nf, to);
+			/* exec ctlidx w0 w1 w2 w3 -- all four words raw */
+			if(cb->nf < 6)
+				error("usage: exec ctlidx w0 w1 w2 w3");
+			v3dexecraw(strtol(cb->f[1], nil, 0),
+				strtoul(cb->f[2], nil, 0),
+				strtoul(cb->f[3], nil, 0),
+				strtoul(cb->f[4], nil, 0),
+				strtoul(cb->f[5], nil, 0));
 		}else
 			error(Ebadctl);
 		poperror();

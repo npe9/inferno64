@@ -45,7 +45,7 @@ Qputry: module
 usage()
 {
 	sys->fprint(sys->fildes(2),
-		"usage: qputry [-n nqpus] [-t timeoutms] [-f] word...\n");
+		"usage: qputry [-n w0] [-t w2] [-x w3] [-c ctlidx] [-f] word...\n");
 	raise "fail:usage";
 }
 
@@ -78,6 +78,8 @@ init(nil: ref Draw->Context, argv: list of string)
 	nqpus := 1;
 	timeout := 1000;
 	noflush := 1;
+	ctlidx := 1;	# which word carries the control address; a guess
+	extra := 0;
 
 	argv = tl argv;
 	while(argv != nil && len hd argv > 1 && (hd argv)[0] == '-'){
@@ -93,6 +95,14 @@ init(nil: ref Draw->Context, argv: list of string)
 			(timeout, nil) = word(hd argv);
 		"-f" =>
 			noflush = 0;
+		"-c" =>
+			argv = tl argv;
+			if(argv == nil) usage();
+			(ctlidx, nil) = word(hd argv);
+		"-x" =>
+			argv = tl argv;
+			if(argv == nil) usage();
+			(extra, nil) = word(hd argv);
 		* =>
 			usage();
 		}
@@ -146,7 +156,12 @@ init(nil: ref Draw->Context, argv: list of string)
 
 	if(sys->fprint(ctl, "enable") < 0)
 		sys->fprint(sys->fildes(2), "qputry: enable: %r (continuing)\n");
-	if(sys->fprint(ctl, "exec %d %d %d", nqpus, noflush, timeout) < 0){
+	# ctlidx and the four words, because the layout is what is being
+	# established: the fourth word was believed to be a timeout and a
+	# 500x sweep of it moved the elapsed time by 0.004%, so nothing
+	# here assumes which word is which.
+	if(sys->fprint(ctl, "exec %d %d %d %d %d",
+	    ctlidx, nqpus, noflush, timeout, extra) < 0){
 		sys->fprint(sys->fildes(2), "qputry: exec: %r\n");
 		raise "fail:exec";
 	}
