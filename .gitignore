@@ -521,5 +521,18 @@ os/inferno/mangopi/mangopi.bin
 # generated root nearly got committed.  mkdevc, data2s and dis2s make all
 # of them from the config beside them.
 os/inferno/stm32f407/stm32f407.c
+
+# The derived conf and everything generated from it.  stm32f407auth is
+# stm32f407 plus three lines in its mod section, made by the mkfile
+# because $Keyring has to be registered for keyring(2) to load and
+# declaring it costs 197K that armv7minit cannot absorb.  Generated
+# rather than copied so there is nothing to keep in step.
+os/inferno/stm32f407/stm32f407auth
+os/inferno/stm32f407/stm32f407auth.c
+os/inferno/stm32f407/stm32f407auth.root.[sh]
+os/inferno/stm32f407/stm32f407auth.prog.*
+os/inferno/stm32f407/stm32f407auth.xipmod.*
+os/inferno/stm32f407/istm32f407auth
+os/inferno/stm32f407/istm32f407auth.*
 os/inferno/stm32f407/stm32f407.prog.s
 os/inferno/stm32f407/stm32f407.xipmod.c

@@ -54,6 +54,38 @@ Measured, two
 over a socket pair: twelve messages each way, costing 15 and 17
 transmissions with 3 and 5 retries, in 13.5 and 21.5 seconds.
 .PP
+.B "And measured on the stm32f407, which is the part that mattered:"
+the pipe form completes in
+.B "6.9 seconds"
+with every check passing, and the cost is
+.DS
+.CW "main  live 27520 -> 30080,  high water 28160 -> 59904  of 76244"
+.CW "heap  live  3456 ->  9472,  high water  3456 -> 13120  of 77800"
+.CW "nalloc 38364  nfree 38148"
+.DE
+So auth peaks about 32K above its baseline, leaves 16K of that pool's
+ceiling, and does thirty-eight thousand allocations of bignum
+temporaries.
+.B "The protocol fits on the target core,"
+which is what this form exists to establish.
+.PP
+It is run from
+.B os/inferno/init/armv7mauth.b
+in the
+.B image-armv7mauth
+image, under
+.BR "mk CONF=stm32f407auth" ,
+because
+.B $Keyring
+has to be in the conf's
+.B mod
+section and declaring it costs 197K of flash \- which
+.B armv7minit
+cannot absorb, being within 6K of
+.IR bin2ihex 's
+limit already.  The auth image carries no shell, no radio and no AX.25
+and comes to 822584.
+.PP
 The retries are not incidental.  Both ends send before either has
 received, so on a half-duplex radio their first transmissions overlap
 and neither hears the other; carrier sense cannot help two stations

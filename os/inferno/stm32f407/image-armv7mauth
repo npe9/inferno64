@@ -1,0 +1,37 @@
+# WHETHER keyring->auth() FITS ON THIS PART, and nothing else.
+#
+# os/inferno/init/armv7mauth.b runs authchk(1)'s pipe form: both ends of
+# the exchange in one kernel, no radio.  authchk's own man page says
+# that is the test everything else rests on -- "if it does not fit over
+# a pipe it will not fit over a radio, and the radio would have been the
+# expensive way to find out" -- and it had only been run on an
+# mps2-an386.
+#
+# This image exists because the SHELL image cannot hold $Keyring.
+# Declaring that module costs 197K of flash, measured, and armv7minit is
+# already within 6K of bin2ihex's limit.  This one carries authchk, the
+# two Authinfos, and no shell, no radio and no AX.25.
+XIPDIS=\
+	authchk.dis\
+
+
+# The identities, which are NOT in the conf's root section: they belong
+# to this image and to nothing else, and mkradiokeys(1) says why the
+# signer's own key must never be on a board -- a satellite that can mint
+# identities can be made to trust anything.
+EXTRAROOT=\
+	/dis/authchk.dis	/dis32/authchk.dis\
+	/keys/ground		/keys/ground\
+	/keys/satellite		/keys/satellite\
+
+# Four.  The init is one, authchk spawns one end of the exchange and
+# runs the other itself, and the kernel keeps a couple.  No #a, so none
+# of the three kprocs a packet device starts.
+NPROC=4
+
+# auth is 1024-bit arithmetic and the heap is where libmp's temporaries
+# live, so this split is the opposite of the station's: main carries no
+# exportfs buffers and no AX.25 window here.
+MAINPCNT=49
+HEAPPCNT=50
+IMAGEPCNT=1

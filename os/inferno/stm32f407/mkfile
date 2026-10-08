@@ -3,7 +3,7 @@
 #Configurable parameters
 
 CONF=stm32f407
-CONFLIST=stm32f407
+CONFLIST=stm32f407 stm32f407auth
 
 SYSTARG=$OSTARG
 OBJTYPE=thumb
@@ -15,6 +15,34 @@ ARCHDIR=../armv7m
 RADIODIR=../radio
 
 #end configurable parameters
+
+
+# A DERIVED CONF AND NOT A DUPLICATED ONE.
+#
+# $Keyring has to be in the mod section for keyring(2) to load at all --
+# lib links, mod registers -- and declaring it costs 197K of flash,
+# measured, which armv7minit cannot absorb: that image is within 6K of
+# bin2ihex's limit already.  So the authenticating kernel is a different
+# CONF, which is the unit that selects a kernel's modules.
+#
+# Generated from stm32f407 rather than copied beside it, because 401
+# lines of commented configuration kept in step by hand is 401 lines
+# that will drift.  The sed adds three names to one section and nothing
+# else; pc64's config .c are generated and gitignored for the same
+# reason.
+#
+#	mk CONF=stm32f407auth INIT=armv7mauth istm32f407auth
+#
+# crypt and math come with keyring because that is what mps2 and
+# nucleof303 declare, and they are where authchk(1) was measured.
+# awk and not sed: the entries must keep their leading TAB, because the
+# conf parser treats a line starting in column 0 as a new SECTION -- so
+# an untabbed "keyring" would end the mod section rather than join it,
+# and mkdevc would look for a section by that name.  BSD sed cannot put
+# a tab in a replacement.  No '$' appears in the awk program either,
+# because mk would eat it.
+stm32f407auth: stm32f407
+	awk '/^mod/{m=1} m && /^\tsys/{print; print "\tkeyring"; print "\tcrypt"; print "\tmath"; m=0; next} {print}' stm32f407 >$target
 
 <$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
 
