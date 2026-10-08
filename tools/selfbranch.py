@@ -45,8 +45,10 @@ def place(syms, a):
 
 def scan(path):
     d = open(path, 'rb').read()
-    if d[:4] != b'\x7fELF' or d[4] != 2:
-        return None, None
+    if d[:4] != b'\x7fELF':
+        return None, 'not ELF (Plan 9 a.out?)'
+    if d[4] != 2:
+        return None, 'ELF32, not 64-bit'
     #
     # AArch64 ONLY.  0x54000000 is B.cond on this architecture and
     # nothing in particular on any other, so scanning a riscv kernel for
@@ -55,7 +57,19 @@ def scan(path):
     #
     machine, = struct.unpack_from('<H', d, 0x12)
     if machine != 183:
-        return None, None
+        #
+        # SAY WHICH, because "not a 64-bit ELF" was wrong for most of
+        # what it rejected.  os/inferno/{spike,virts,sifiveu,shakti,
+        # mangopi,virt} ARE 64-bit ELF -- they are riscv64 -- and the
+        # caller reported them as unreadable in a way that read like a
+        # malformed file.  EM_X86_64 is 62 and is NOT handled either,
+        # which matters more: 6l is one of the two loaders this defect
+        # was confirmed in, and os/inferno/pc64/ipc64 is Plan 9 a.out
+        # rather than ELF, so there is nothing here for an amd64 arm of
+        # this scan to read even if the machine check allowed it.  That
+        # hole is real and no relink closes it.
+        #
+        return None, 'machine %d, not aarch64 (183)' % machine
     phoff, = struct.unpack_from('<Q', d, 0x20)
     phentsize, phnum = struct.unpack_from('<HH', d, 0x36)
     segs = []
@@ -79,9 +93,18 @@ def scan(path):
     return raw, placed
 
 for f in sys.argv[1:]:
-    raw, placed = scan(f)
+    raw, why = scan(f)
     if raw is None:
-        print("%s: not a 64-bit ELF" % f); continue
+        #
+        # SAY WHICH.  This printed "not a 64-bit ELF" for everything it
+        # declined, and that was WRONG for most of them: the riscv64
+        # images are 64-bit ELF and were being described as malformed.
+        # A caller counting these as unreadable then could not tell
+        # "wrong architecture" (a coverage limit) from "wrong format"
+        # (a hole no relink closes).
+        #
+        print("%s: skipped -- %s" % (f, why or 'unreadable')); continue
+    placed = why
     print("%s:" % f)
     print("   %d pattern matches in executable segments" % len(raw))
     print("   %d of them inside a function:" % len(placed))

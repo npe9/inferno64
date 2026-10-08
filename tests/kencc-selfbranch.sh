@@ -95,9 +95,10 @@ for k in os/inferno/*/i*; do
 	# target.  Counted and named here rather than hidden inside a
 	# staleness number.
 	#
-	if ! python3 tools/selfbranch.py "$k" 2>/dev/null |
-	    grep -qv 'not a 64-bit ELF'; then
-		echo "  n/a: $k is not 64-bit ELF; this test cannot read it"
+	why=`python3 tools/selfbranch.py "$k" 2>/dev/null |
+	    sed -n 's/.*: skipped -- //p'`
+	if [ -n "$why" ]; then
+		echo "  n/a: $k -- $why"
 		na=`expr $na + 1`
 		continue
 	fi
@@ -111,7 +112,7 @@ for k in os/inferno/*/i*; do
 		continue
 	fi
 	out=`python3 tools/selfbranch.py "$k" 2>/dev/null` || continue
-	echo "$out" | grep -q 'not a 64-bit ELF' && continue
+	printf '%s\n' "$out" | grep -q ': skipped -- ' && continue
 	found=`expr $found + 1`
 	n=`echo "$out" | sed -n 's/.*\([0-9][0-9]*\) of them inside a function.*/\1/p'`
 	[ -n "$n" ] || n=0
@@ -172,7 +173,7 @@ if [ $fail -eq 0 ]; then
 	# what a verdict line is for -- got the stronger claim.
 	#
 	echo "  checked $found image(s), skipped $stale as stale,"
-	echo "  $na not readable by this test (see the pc64 note above)"
+	echo "  $na not applicable (wrong architecture or format; see the pc64 note)"
 	echo "KENCC-SELFBRANCH-OK"
 	exit 0
 fi
