@@ -65,15 +65,33 @@ initialises it to 1;
 .B os/inferno/port/dis.c
 declares it
 .RB ( "int bflag;" )
-and nothing ever sets it, so on every native kernel it is zero and the
-compiled path indexes arrays unchecked \- an out-of-range store is
-accepted and writes wherever the index points.
-Measured on a Pi 3B kernel under QEMU with
+and for a long time nothing ever set it, so on a native kernel it was
+zero and the compiled path indexed arrays unchecked \- an out-of-range
+store was accepted and wrote wherever the index pointed.
+Measured on a Pi 3B kernel with
 .BR "cflag=1" :
 .B "BNDSTEST 7 ok, 4 fail"
 with
 .B "no exception, store accepted"
-for the three in-range-of-nothing cases.
+for the three out-of-range cases.
+.PP
+.B "This is now fixed where it was reachable."
+.B bflag
+is set on
+.B raspi3b-port
+(verified on real silicon, 7 ok 4 fail to 11 ok 0 fail) and on
+.BR cloud-port .
+On branches whose code generator is the stub
+.B comp-aarch64.c
+it is still zero and still unreachable, because nothing compiles.
+The cost of having the checks is about 6.5 per cent on
+.BR array ,
+the most index-heavy test in
+.IR disbench (1),
+and nothing measurable on
+.B int
+\- which does not index an array and is the control that makes the first
+number mean anything.
 .PP
 .I "Emu -B"
 suppresses the same checks and reproduces it exactly, message for
@@ -90,11 +108,18 @@ it is 11/11 even with
 .BR -B ,
 because the interpreter's
 .B ind
-instructions check unconditionally. So this is a JIT-only hole, and a
+instructions check unconditionally. So this was a JIT-only hole, and a
 kernel whose code generator is a stub is unaffected.
-Setting
+.PP
+.B "Running this test with the checks off is itself the hazard."
+Three of its cases store deliberately out of bounds, so under
+.I "emu -B"
+or a kernel with
 .B bflag
-is a one-line change in the kernel tree and is not made here.
+cleared they write wherever the index points. On a board that has been
+seen to wedge once, unrecovered until a hard reset. That is the defect
+behaving as the defect, not a property of the test \- but do not reach
+for the off switch on a machine whose state matters.
 .PP
 Two cases accept either
 .B "array bounds error"
