@@ -8652,3 +8652,63 @@ the other at around -17.
 and this does not claim it.  What the six points do establish is the
 negative, which is the useful half: the loss is not a link-budget
 problem, so a step attenuator would not have found it either.
+.NH 1
+THE ASYMMETRY IS THE ROLE, NOT THE BOARD
+.PP
+The receiver that abandons frames has been the ground's throughout, with
+the satellite's spotless and both hearing the other at about -17.  Two
+explanations fitted: the
+.I role
+\- the caller mounts and so receives the long 109-byte Styx replies while
+the answerer receives mostly short acknowledgements \- or the
+.I board ,
+one part on one spot of one desk.
+.PP
+Swapping
+.BR call ,
+.B peer
+and
+.B role
+between the two entries in
+.I /lib/radio
+separates them and costs nothing: no cable, no attenuator, nobody in the
+room.  Two runs each way, counters keyed by the uid that printed them:
+.DS
+.CW "board1 as caller   stale 1/1 crcbad 1/3"
+.CW "board1 as answerer stale 0/0 crcbad 0/0"
+.CW "board2 as answerer stale 0/0 crcbad 0/0"
+.CW "board2 as caller   stale 2/1 crcbad 0/2"
+.DE
+.B "Both boards are clean as answerer and dirty as caller."
+Four bigreads of four.
+.PP
+.B "And in the same runs the RSSI stayed with the BOARD:"
+-16 and -17 for board1, -11 for board2, in both arms.  So one variable
+followed the role and the other followed the part, measured together,
+which is what makes this a separation rather than a coincidence.
+.NH 2
+What it rules out, including something said two sections ago
+.PP
+.B "Not the part, not its antenna, not where it sits."
+.PP
+.B "And not overload, which item 9's sweep had suggested."
+That reading was that errors did not worsen as the signal fell, so the
+strong end might be the bad one.  Here
+.B "board2 hears a signal six decibels STRONGER than board1 and is the clean one"
+whenever it is the answerer \- and the dirty one, at the same -11,
+whenever it is the caller.
+.B "Signal level is not the driver in either direction."
+.NH 2
+Which leaves frame length, and a number worth looking at
+.PP
+The frames abandoned have been 82, 104 and 125 bytes, and the caller is
+the end that receives the long ones.
+.B "125 payload plus one length byte plus two APPEND_STATUS bytes is 128, which is the RX FIFO exactly."
+.PP
+So the next question is not about the link at all \- the sweep settled
+that \- but about length against FIFO capacity and the drain cadence.
+.B rxoverflow
+reads 0, so it is not the part reporting an overflow; what has not been
+measured is how much of the FIFO is in use when a long frame is being
+taken, and whether the longest frames are the ones that cannot fit
+beside whatever is already there.
