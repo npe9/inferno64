@@ -140,6 +140,14 @@ if [ "$found" = "0" ]; then
 	exit 1
 fi
 if [ $fail -eq 0 ]; then
+	#
+	# THE DENOMINATOR GOES IN THE VERDICT.  This reported the stale count
+	# but not the CHECKED count, so "OK" after reading 3 of 15 images
+	# read exactly like "OK" after reading all 15.  The per-image "ok:"
+	# lines carry it, but a reader who takes the verdict line -- which is
+	# what a verdict line is for -- got the stronger claim.
+	#
+	echo "  checked $found image(s), skipped $stale as stale"
 	echo "KENCC-SELFBRANCH-OK"
 	exit 0
 fi
