@@ -62,6 +62,49 @@ is the default, because
 is zero-initialised, so nothing in a running system takes the node path
 unless it is asked for.
 .PP
+.B "render scaled ?num ?den??"
+sets the scale the walk renders its trees at, and with no argument
+reports it along with what the last scaled renders could not be exact
+for. The scale is a rational because the renderer has no floating point
+\(em it has to work in a kernel \(em and positions scale about the
+target's top left, so that corner stays put and the tree grows into it.
+This is
+.B "resolution independence:"
+the same nodes drawn larger, which is the one thing a description can do
+that a raster cannot.
+.PP
+Geometry scales exactly. Two node kinds cannot and are
+.B counted
+rather than hidden:
+.B TkNglyphs
+names a font
+.I file
+whose size is in its name, so text keeps its natural size until a
+size\-selection step exists, and
+.BR TkNtexture 's
+image is drawn by
+.IR draw (2),
+which clips and replicates but does not resample. What this test checks,
+with the same figures on the host and on the Pi 3B kernel:
+.IP
+.EX
+scale 1:1              1 1 nodes 0 approx 0
+a raised frame at 2:1  2 1 nodes 4 approx 0
+a label at 2:1         2 1 nodes 4 approx 1
+.EE
+.PP
+So
+.B "approx 0"
+means something, because
+.B "approx 1"
+is demonstrated beside it: a frame is pure geometry and enlarges
+exactly, a label carries a glyph run and does not. The 2:1 render is
+checked by difference from the 1:1 one (2040 bytes) rather than by a
+byte comparison, because nothing can produce a 2x render to compare it
+against \(em that is the point of it. Setting the scale back to 1:1 must
+then be byte\-identical, which a scale that leaked state would fail
+after passing everything else.
+.PP
 With
 .B -v
 each passing check is printed as well as each failing one.
