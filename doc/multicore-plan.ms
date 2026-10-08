@@ -9800,3 +9800,69 @@ discards the status that separates "no match" from "error".  This session
 used exactly that shape to conclude the 7l pool defect was latent, with
 a plain-string pattern that could not have failed \(em but the next one
 might not be.
+.NH 2
+The sweep's own scope was the blind spot, and one published count is now uncertain
+.PP
+The anchored-grep sweep was defined as "grep with a
+.CW ^
+in
+.CW scripts/
+and
+.CW tests/ ".
+The class is "anything that reads interleaved console output with an
+anchored match", which is strictly larger: it includes
+.CW sed ,
+.CW awk ,
+python's
+.CW re.match ,
+and directories the sweep never looked in.  Re-swept by the right
+category.
+.PP
+.B "One more verdict-affecting instance, failing toward FAIL."
+.CW check-pc64-timers.sh
+took the clock with
+.CW "sed -n 's/^cpu0: \\([0-9]*\\)MHz.*/\\1/p'" ,
+and an interleaved line leaves
+.CW mhz
+empty, after which the test says "reached a shell but cpu0 is
+unreportedMHz" and fails.  A working kernel reported as broken.  Fixed to
+.CW ".*cpu0:" ,
+verified against a synthetic interleaved line and against a clean one.
+.CW check-cloudauth.sh 's
+display line had the same shape with less at stake.
+.PP
+Most of the other hits are
+.CW awk
+and
+.CW grep
+reading
+.CW /n/osprey/status ,
+which one process writes and one reads; there the anchor is correct and
+should stay.
+.NH 2
+And it reached my own measurements
+.PP
+Every log parser this session wrote used
+.CW "re.match(r'soak: ...')" ,
+which anchors.  Across the 49 logs still on disk that misses 15 of 98
+soak lines \(em 15 per cent \(em and in four logs the anchored count is
+zero where the line is present.
+.PP
+.B "What that does and does not touch."
+Each throughput figure is a ticks-and-quanta pair read out of the same
+soak line, so a missed line means an earlier sample was used, not a wrong
+ratio: the numbers quoted are sound as ratios.  The panic counts and the
+sweep counts came from unanchored
+.CW "grep -ao"
+and are unaffected.
+.PP
+What is now uncertain is a count of instances.  The Phase D re-run was
+reported as "nine instances gave nine panic counts and seven throughput
+figures: two of the six lock-off instances had not reached a soak line
+when the window closed".  That second clause came from the anchored
+parser, so those two instances may have produced a soak line it did not
+see.  The logs were in
+.CW /tmp
+and have been cleaned, so it cannot be rechecked.  The 2.5x stands; "four
+of six contributed" may be an undercount, and is now written as such
+rather than left looking measured.

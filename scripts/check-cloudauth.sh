@@ -111,4 +111,4 @@ fi
 [ $ok = 1 ] || exit 1
 echo "check-cloudauth: ok -- both sides took their identity from the provider"
 echo "  and authenticated; a certificate from a different signer was refused:"
-sed -n 's/^\(mount: authentication failed.*\)$/    \1/p' "$WORK/bad.log" | sed 1q
+grep -ao 'mount: authentication failed.*' "$WORK/bad.log" | sed -e 's/^/    /' -e 1q

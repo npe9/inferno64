@@ -55,7 +55,14 @@ for hpet in on off; do
 		-serial "file:$log" \
 		-display none -no-reboot >/dev/null 2>&1 || true
 
-	mhz=`sed -e 's/\r$//' "$log" | sed -n 's/^cpu0: \([0-9]*\)MHz.*/\1/p' | head -1`
+	# Unanchored, and ".*cpu0:" rather than "^cpu0:": the console
+	# interleaves writes without newlines, so the line that reports the
+	# clock can arrive with something in front of it.  Anchored, mhz
+	# came back empty and the test below then said "reached a shell but
+	# cpu0 is unreportedMHz" -- a working kernel reported as broken,
+	# which is the direction that costs a day.  Verified against a
+	# synthetic interleaved line.  See scripts/check-arm64-smp.sh.
+	mhz=`sed -e 's/\r$//' "$log" | sed -n 's/.*cpu0: \([0-9]*\)MHz.*/\1/p' | head -1`
 	if sed -e 's/\r$//' "$log" | grep -q 'spawn sh -n /dis/init'; then
 		if [ "$mhz" = 0 ] || [ -z "$mhz" ]; then
 			echo "hpet=$hpet: FAIL reached a shell but cpu0 is ${mhz:-unreported}MHz"
