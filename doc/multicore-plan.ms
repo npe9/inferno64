@@ -9520,3 +9520,75 @@ written down so the next hunt does not re-exclude them, and a boot-rate
 measurement rather than a throughput measurement as the acceptance test
 \(em eight boots an arm on each boot path, not eighteen long runs on
 one.
+.NH 2
+Is the fault reachable with no collector?  Inconclusive, and one new thing
+.PP
+The raspi3b-port session asked the sharp question about the open
+general protection violation: its stack is entirely allocator, while all
+three mechanisms excluded for it are collector-adjacent, so is it
+reachable with the collector out of the loop at all?
+.CW *gcoff=1
+answers that \(em
+.CW rungc()
+returns immediately, and
+.CW gcnruns
+confirms it really did: 0 against 16 to 48 million in the control arm.
+.PP
+Eight Compute Engine instances each way, four Xeons,
+.CW parallelvm=1 :
+.IP
+.nf
+collector on    0 panics of 8
+collector off   0 panics of 8
+.fi
+.PP
+.B "Which answers nothing about that fault,"
+and the honest reason is arithmetic: it occurs at about two instances in
+twenty-one, so zero of eight is exactly what both arms should produce
+most of the time.  The experiment is right and the batch was too small
+to run it.  Sixteen instances were spent learning that.
+.NH 2
+But the collector-off arm produced a different panic
+.PP
+.IP
+.nf
+panic: poolalloc: exact-match chain size mismatch:
+    tt 0x17df2350 tt->size 16000 t(=tt->fwd) 0x17dfcd00 t->size 0
+    wanted 16000
+.fi
+.PP
+That is a check an earlier hunt left in
+.CW poolalloc() :
+the exact-match branch matches on
+.CW tt->size
+and then hands out
+.CW tt->fwd
+without re-verifying that the chained block carries the same size, and
+.CW pooladd()
+and
+.CW pooldel()
+both assume that invariant by construction.  Here
+.CW fwd
+had size 0 where it should have had 16000, so a free-tree chain was
+corrupt.
+.PP
+.B "With the collector never having run once."
+That is the first time this shape has appeared in any batch on this
+branch, and it appeared in the arm where
+.CW gcnruns
+is zero \(em which does argue that allocator structures can go bad with
+nothing collecting.  The caveat is as large as the finding:
+.CW gcoff=1
+never reclaims, so the allocator is pushed through arena growth and
+exact-match chains far harder than it ever is normally, and this may be
+a path that only exhaustion reaches.  One instance, one occurrence.
+.PP
+.B "And a counting bug of my own, which is why that panic was nearly
+missed."
+Every panic count in this document came from
+.CW "grep -c '^panic'" ,
+and the console interleaves output without newlines, so a panic that
+does not start a line is invisible to it.  Re-counted unanchored across
+every batch: exactly one log differs, this one, and the earlier figures
+\(em 2 of 21 against 0 of 9 \(em are unchanged.  The anchored pattern
+was wrong for four weeks and cost one observation.
