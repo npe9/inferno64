@@ -5646,12 +5646,19 @@ instrument cannot tell you on its own: whether
 .CW 'v'
 arrives per frame or per operation.
 .PP
-.B "Also owed, and only this board can give it."
+.B "Also owed, and only this board can give it \(em NOW TAKEN, see the section"
+.B "headed"
+.I "a real wm session on the board looks like runtests -g"
+.B "at the end of this document."
 The damage histogram off a real
 .CW wm
 session for the coverage ratio to 1228800 bytes, and whether an interactive
-session looks like the two automated suites at all.  That limit has been flagged
-since the first measurement and cannot be removed from the other side.
+session looks like the two automated suites at all.  That limit had been flagged
+since the first measurement and could not be removed from the other side.
+.B "The answer is that it looks like"
+.CW "runtests -g"
+\(em 80.3 / 15.2 / 4.5 per cent against 74.6 / 19.8 / 4.1 \(em so the host-emu
+distribution transfers to silicon.
 .PP
 .B "The partial-overwrite counter is written."
 .CW os/inferno/port/devdraw.c
@@ -13972,3 +13979,80 @@ estimated out of fourteen samples.
 .B "~3.5 is the honest form,"
 and that is the third time today a number in this document carried digits
 chosen after the numbers were seen.
+.NH 2
+H1a's LAST OWED MEASUREMENT: a real wm session on the board looks like runtests -g
+.LP
+The item flagged since the first H1a measurement was
+.B "the damage histogram off a real"
+.CW wm
+.B "session, and whether an interactive session looks like the two automated"
+.B "suites at all."
+That limit was stated as one only this board could remove, and the peer's
+distribution \(em 197 and 122 flushes over
+.CW "runtests -g"
+and
+.CW "wmtest -n 40"
+\(em was taken on
+.I "host emu"
+at this board's geometry rather than on silicon.
+.LP
+.B "Taken, on the card, one boot, PRE and POST bracketing the session."
+.CW "wm/wm wm/sh"
+with synthetic pointer and keyboard input written to
+.CW /dev/pointer
+and
+.CW /dev/keyboard ,
+which is the same kernel path a real mouse takes:
+.P1
+damage buckets  <=4KB 21  <=64KB 32  <=256KB 0  <=1MB 10  >1MB 3   total 66
+presents 58, flushes 70
+ops 131  full 100  partial 31  partial-in-stale 31
+.P2
+Mapping the buckets onto the bands the host-emu table used \(em 5.3 per cent of
+1228800 is 65126 bytes, so the 64KB boundary, and 85 per cent is 1044480, the
+1MB one:
+.P1
+workload          flushes   <=5.3%   21-85%   >85%
+runtests -g (emu)     197    74.6%    19.8%   4.1%
+wmtest -n 40 (emu)    122    98.4%     0.0%   1.6%
+REAL wm, BOARD         66    80.3%    15.2%   4.5%
+.P2
+.B "The answer is yes, and specifically it looks like"
+.CW "runtests -g" :
+80.3 against 74.6 in the widget bucket, 15.2 against 19.8 in the middle, and
+.B "4.5 against 4.1 in the full-screen bucket that decides the rule."
+It does
+.I not
+look like
+.CW wmtest ,
+which saw nothing in the middle band at all.
+.LP
+.B "So the host-emu caveat is removed."
+The distribution that the whole eager-against-deferred argument rests on
+transfers to a real session on silicon, and the rare bucket \(em 4.1 per cent of
+flushes carrying 47 per cent of the damage bytes, which this plan had to correct
+itself about once \(em is present at the same frequency on the board.
+.LP
+.B "Mean damage, bounded by the buckets rather than measured:"
+89367 to 247808 bytes, 7.3 to 20.2 per cent coverage, which brackets
+.CW "runtests -g" 's
+106356 bytes (8.7 per cent).  The histogram cannot give a mean; this is the
+range the buckets permit.
+.LP
+.B "And the eager-repair hook fires on 23.7 per cent of operations"
+\(em 31 of 131 \(em which sits between
+.CW drawink 's
+2 of 15 (13.3 per cent) and
+.CW "wm/gfxstress mask" 's
+305 of 507 (60.2).  A real session is in the middle of the two synthetic ones on
+that measure too.
+.LP
+.B "What this is NOT."
+66 flushes against their 197 and 122, so a third the sample.  The input was
+SYNTHETIC \(em injected at the device, the same path as a mouse, but not a human
+moving one \(em so "interactive" is answered only in the sense that window
+operations and text entry happened.  One session, one client, short.  And the
+bucket-to-band mapping is approximate: the boundaries are 64KB and 1MB, not
+exactly 5.3 and 85 per cent.
+.B "The item is closed to the extent that only this board could close it;"
+a human at the screen for ten minutes would still say something this does not.
