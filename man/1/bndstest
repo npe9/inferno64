@@ -107,15 +107,18 @@ says, and four failures are reachable only through compiled code.
 .PP
 .B "What the checks cost, on the board:"
 .B array
-is
-.B "6 to 11 per cent"
-slower with them \- about 9 on the better (strictly alternating) design,
-pooled over six samples an arm, ranges 3350-3550ms against 3080-3210ms
-and never overlapping in any run.
-.B "The magnitude is quoted as a range on purpose:"
-two runs of the same six-sample design gave 7.4 and 10.8 per cent, so a
-single figure to two significant figures is more precision than the data
-carries.
+is about
+.B "8 per cent"
+slower with them \- median over median, 14 samples an arm, both arm
+orders, every one of three runs landing between 7.4 and 10.8 per cent
+with no run reversing the sign.
+.B "The direction rests on that repetition and NOT on disjoint ranges:"
+at three samples an arm the ranges did not overlap and at eight they do
+(3270-3560ms against 3020-3280ms), so the early non-overlap was a
+small-sample artifact.
+.B "The magnitude is a range on purpose"
+\- two runs of the same six-sample design gave 7.4 and 10.8 - and
+reversing the arm order gives 8.5, which excludes order as the cause.
 .B "The control is what makes that mean anything"
 \- the
 .B int

@@ -13801,3 +13801,60 @@ so a measurement that flips it must put it back, and the thing that pays if it
 does not is whatever starts next on a board nobody is watching.
 .CW man/3/cons
 now says so where the command is documented.
+.NH 3
+The non-overlap was an n=3 artifact, and the order is excluded
+.LP
+A peer pointed out that my "unexplained" spread had an explanation already
+excluded by my own numbers, free to check:
+.B "only the bflag=1 arm moved between runs"
+\(em ON 3376.7 to 3490.0, +3.36 per cent, against OFF 3143.3 to 3150.0, +0.21.
+.B "Drift lifts BOTH arms;"
+thermal or a warming machine would have shown in the control.  So my
+attribution to "thermal or scheduling variance" is
+.B WITHDRAWN :
+it was a guess that my own control refutes.
+.LP
+They proposed two cheap discriminators.  Both run, 8 pairs, arm order
+.I reversed
+so order and arm are no longer confounded \(em and this time the loop ends on
+.CW "bflag 1" :
+.P1
+                       n  mean   med   min   max   sd
+bflag=0 (checks off)   8  3138  3140  3020  3280   84
+bflag=1 (checks on)    8  3405  3375  3270  3560   98
+.P2
+.B "ORDER IS EXCLUDED."
+Reversed gives +8.5 per cent, inside the 7.4-to-10.8 span the on-first runs
+gave, so the effect survives reversal and is the checks rather than the
+sequence.
+.LP
+.B "THE LAYOUT HYPOTHESIS IS NOT SUPPORTED."
+It predicts the ON arm is noisier, not merely higher; the standard-deviation
+ratio is 1.17 and the spreads are 290 against 260.
+.B "Not excluded either"
+\(em n=8 cannot settle it \(em but the predicted signal is absent.
+.LP
+.B "AND THE NON-OVERLAP WAS AN n=3 ARTIFACT."
+At eight samples an arm the ranges
+.B OVERLAP :
+ON min 3270 against OFF max 3280.
+.P1
+pooled, both orders, n=14 each
+  on  mean 3417 med 3390      off  mean 3141 med 3140      +8.0% of medians
+  ranges  on[3270..3560]  off[3020..3280]   OVERLAP
+.P2
+.B "That corrects a claim this plan published and I repeated twice,"
+that the ranges never overlapped in any run.  They did not, at three samples.
+The irony is exact: the section above says non-overlap licences the direction
+and not the magnitude, and
+.B "the non-overlap itself was the thing that did not survive more data."
+.LP
+.B "Where it leaves the number."
+Every one of three runs puts the delta between 7.4 and 10.8 per cent and no run
+reverses the sign, so the direction stands on repetition rather than on
+disjoint ranges.
+.B "Best estimate +8.0 per cent on medians over 14 samples an arm, both orders,"
+on the most index-heavy test in the suite \(em still an upper bound and not a
+typical cost, with the
+.CW int
+control showing nothing.
