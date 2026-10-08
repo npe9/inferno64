@@ -227,7 +227,14 @@ if [ "$ndev" -ne "$nwant" ]; then
 	echo "  a pass." >&2
 	exit 1
 fi
-echo "man-cmdtab: $ndev device(s) checked"
+#
+# BOTH NUMBERS, not just the one.  "6 device(s) checked" requires the
+# reader to already know six is right; "6 of 6 in the list" does not.
+# The equality is asserted above either way, but a count that explains
+# itself in the output is worth the extra word -- a peer's "ran 7 checks,
+# expected 8 -- NOT a pass" is the better form and this is the same idea.
+#
+echo "man-cmdtab: checked $ndev of $nwant device(s) in the list"
 
 if [ $rc -ne 0 ]; then
 	echo

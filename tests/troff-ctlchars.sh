@@ -184,7 +184,7 @@ if [ "$nscanned" != "$nfiles" ]; then
 fi
 n=`printf '%s\n' "$hits" | grep -c .`
 if [ "$n" -eq 0 ]; then
-	echo "troff-ctlchars: ok -- $nscanned sources scanned, no control characters"
+	echo "troff-ctlchars: ok -- opened $nscanned of $nfiles source(s) found, no control characters"
 	exit 0
 fi
 echo "troff-ctlchars: $n line(s) with a C0 control character:"
