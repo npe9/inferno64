@@ -36,7 +36,21 @@ struct
 	Atidle*	idletasks;
 } isched;
 
-int	bflag;
+/*
+ * bflag -- emit array bounds checks in compiled code.
+ *
+ * This was a bare `int bflag;', i.e. zero, while emu/port/main.c has
+ * initialised it to 1 since forever.  Every comp-*.c wraps its IINDX
+ * and IIND* range tests in `if(bflag)', so a kernel with the JIT on
+ * indexed arrays with NO check at all: measured on this board with
+ * cflag=1, bndstest(1) gave 7 ok 4 fail -- "no exception, store
+ * accepted" -- and `a[5] = 1' on a two-element array wrote wherever
+ * the index pointed, with the following read returning what it wrote.
+ * The interpreter was never affected; xec.c's ind instructions test
+ * a == H and i >= a->len unconditionally, which is why no interpreted
+ * run and no hosted run could see it (hosted emu sets the flag).
+ */
+int	bflag = 1;
 int	cflag;
 uvlong	gcbusy;
 uvlong	gcidle;
