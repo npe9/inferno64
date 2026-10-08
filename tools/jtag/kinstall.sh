@@ -185,19 +185,44 @@ rcseq=0
 runcmd() {
 	marker=$1; limit=$2; shift 2
 	rcseq=`expr $rcseq + 1`
-	tok=KI-DONE-$$-$rcseq
-	printf '%s; echo %s\n' "$*" "$tok" > "$CMD"
+	#
+	# THE TOKEN IS SENT SPLIT, for the reason boardrun's is.  The
+	# command is echoed back by the poller, so a token that appears
+	# whole in both the command and the output forces every match below
+	# to be anchored -- and this console interleaves prints from
+	# interrupt context, so an anchor silently loses a marker that does
+	# not start a line.  In THIS tool that costs more than a
+	# measurement: the marker grep decides whether a step SUCCEEDED, so
+	# a lost marker reports a completed copy-and-verify as a failure, in
+	# the program that writes the card.
+	#
+	# So: 'KI'^'-DONE-...' in the command, KI-DONE-... in the output.
+	# awk is given the SPLIT form, because that is what the echoed
+	# command line actually contains.
+	#
+	tokbase=DONE-$$-$rcseq
+	tok=KI-$tokbase
+	cmdtok="KI'^'-$tokbase"
+	printf "%s; echo 'KI'^'-%s'\n" "$*" "$tokbase" > "$CMD"
 	i=0
 	while [ $i -lt "$limit" ]; do
 		sleep 5
 		i=`expr $i + 5`
 		[ -f "$OUT" ] || continue
 		LC_ALL=C tr -cd '\11\12\40-\176' < "$OUT" > "$S/ki-out.txt" 2>/dev/null
-		awk -v t="$tok" '
-			/^RCMD / && index($0, t) { run = 1; next }
+		#
+		# index(), not /^RCMD /: if the RCMD line itself does not
+		# start a line this awk never sets run, ki-last.txt comes out
+		# EMPTY and every check below fails -- which is fail-safe but
+		# reports a working install as broken.
+		#
+		awk -v t="$cmdtok" '
+			index($0, "RCMD ") && index($0, t) { run = 1; next }
 			run { print }
 		' "$S/ki-out.txt" > "$S/ki-last.txt" 2>/dev/null
-		if grep -q "^$tok" "$S/ki-last.txt" 2>/dev/null; then
+		# unanchored: the command carries the SPLIT form, so the only
+		# way the joined token appears here is the board printing it.
+		if grep -q "$tok" "$S/ki-last.txt" 2>/dev/null; then
 			#
 			# The command RAN.  Whether the step SUCCEEDED is a
 			# separate question, and the board answers it by
@@ -208,7 +233,14 @@ runcmd() {
 			# failure costs five seconds instead of the full
 			# timeout.
 			#
-			if grep -q "^$marker\$" "$S/ki-last.txt" 2>/dev/null; then
+			#
+			# Unanchored, and no trailing $ either.  The old
+			# pattern required the marker to be the WHOLE line,
+			# so any console output sharing its line hid it.
+			# The command's own copy of the marker is not in this
+			# file, because awk dropped the RCMD line.
+			#
+			if grep -q "$marker" "$S/ki-last.txt" 2>/dev/null; then
 				return 0
 			fi
 			echo "kinstall: the board ran the command but never reached $marker:" >&2
