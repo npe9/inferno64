@@ -54,23 +54,48 @@ scan() {	# scan <file>...; prints "file:line: text" per hit
 
 #
 # SELF-TEST, because a scanner that silently matches nothing and a clean
-# tree are indistinguishable from the outside.  Two fixtures: one with the
-# exact damage this test exists for, one clean.
+# tree are indistinguishable from the outside.
+#
+# EVERY PROPERTY OF THESE FIXTURES IS LOAD-BEARING, and that is MEASURED
+# by mutating the scanner rather than argued.  A fixture tidier than the
+# real input tests a path the real input never takes.
+#
+#	scanner mutation                        self-test
+#	stop after the first hit (`last')       exit 2, CAUGHT
+#	count characters instead of lines       exit 2, CAUGHT
+#	flag every byte above 0x7f too          exit 2, CAUGHT
+#
+#	bad.ms line 1	two control characters on ONE line, which must
+#			count as one hit and not two
+#	bad.ms line 3	a SECOND damaged line further down, so a scanner
+#			that stops at the first hit is caught
+#	bad.ms line 2	clean, so the two hits are not adjacent and a
+#			line counter that drifts is caught
+#	good.ms line 2	a legitimate UTF-8 character -- devlogfs's device
+#			letter is U+029F, and man/3/logfs rightly contains
+#			it.  An earlier version of this predicate counted
+#			any byte outside 0x20-0x7e and so flagged that page.
+#			This fixture locks the false positive out.
 #
 T=/tmp/troff-ctl-self.$$
 mkdir -p $T || exit 2
-printf 'A \014(CWlibdraw/\014P line\n' > $T/bad.ms
-printf 'A \\f(CWlibdraw/\\fP line\n' > $T/good.ms
+printf 'A \014(CWlibdraw/\014P line\n' >  $T/bad.ms
+printf 'an undamaged line\n'             >> $T/bad.ms
+printf 'and \014ISLOW\014P here\n'       >> $T/bad.ms
+printf 'A \\f(CWlibdraw/\\fP line\n'     >  $T/good.ms
+printf "bind -b '#\302\237' /dev\n"      >> $T/good.ms
 nbad=`scan $T/bad.ms | grep -c .`
 ngood=`scan $T/good.ms | grep -c .`
+badlines=`scan $T/bad.ms | cut -d: -f2 | tr '\n' ' '`
 rm -rf $T
-if [ "$nbad" -ne 1 ] || [ "$ngood" -ne 0 ]; then
-	echo "troff-ctlchars: SELF-TEST FAILED -- known-bad gave $nbad (want 1)," >&2
-	echo "  known-good gave $ngood (want 0).  The scanner is broken, so a" >&2
-	echo "  clean result below would mean nothing." >&2
+if [ "$nbad" -ne 2 ] || [ "$ngood" -ne 0 ] || [ "$badlines" != "1 3 " ]; then
+	echo "troff-ctlchars: SELF-TEST FAILED -- known-bad gave $nbad hit(s)" >&2
+	echo "  on line(s) [$badlines] (want 2 on [1 3 ]), known-good gave" >&2
+	echo "  $ngood (want 0).  The scanner is broken, so a clean result" >&2
+	echo "  below would mean nothing." >&2
 	exit 2
 fi
-echo "troff-ctlchars: self-test ok (flags the damaged line, passes the correct one)"
+echo "troff-ctlchars: self-test ok (2 hits on lines 1 and 3; UTF-8 not flagged)"
 
 files=`ls doc/*.ms man/*/* 2>/dev/null`
 [ -n "$files" ] || { echo "troff-ctlchars: no troff sources found" >&2; exit 2; }
