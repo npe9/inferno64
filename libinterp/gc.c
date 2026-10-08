@@ -75,6 +75,7 @@ struct Ptrhash
 	 * which is what an unbounded walk should have cost all along.
 	 */
 	ulong	gcoutofarena;
+	int	gcoff;		/* *gcoff=1: do not collect at all */
 	ulong	gchalted;
 	ulong	gcepochs;
 	uvlong	gcdestroys;
@@ -1210,6 +1211,30 @@ rungc(Prog *p)
 				curP->syncpc, R.PC, getcallerpc(&p));
 		}
 	}
+
+	/*
+	 * *gcoff=1: the collector never runs.
+	 *
+	 * A question from the raspi3b-port session, and a good one.  The
+	 * general protection violation this branch is chasing has a stack
+	 * that is entirely allocator -- poolfree, poolalloc, smalloc --
+	 * while all three mechanisms excluded for it so far are
+	 * collector-adjacent.  So: is it reachable with the collector out
+	 * of the loop at all?  If it still faults, the search stops being
+	 * about the collector; if it stops faulting, the collector is
+	 * involved even though none of the three detectors fires, which is
+	 * also worth knowing.
+	 *
+	 * Here rather than through gchalt, which is a nesting count other
+	 * code is entitled to raise and lower, and which rungc() tests two
+	 * lines below for a different purpose.
+	 *
+	 * The heap is not collected at all with this set, so a soak will
+	 * eventually exhaust it.  That is the limit of the experiment and
+	 * whichever comes first is the result.
+	 */
+	if(gcoff)
+		return;
 
 	gcnruns++;
 	if(gchalt) {
