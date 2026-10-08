@@ -10,6 +10,7 @@
 #include	"keyboard.h"
 
 extern int cflag;
+extern int bflag;
 extern int keepbroken;
 extern int rdbstarted;
 extern u32 kerndate;
@@ -121,6 +122,7 @@ enum
 	CMilock,
 	CMsched,
 	CMsignfault,
+	CMbflag,
 };
 
 /*
@@ -268,6 +270,24 @@ static Cmdtab sysctlcmd[] =
 	 * plausible.
 	 */
 	CMsignfault,	"signfault",	0,
+	/*
+	 * bflag at RUNTIME, so the price of array bounds checks can be
+	 * measured on the BOARD in one boot instead of across two installs.
+	 *
+	 * It is read by the code generators when a module is COMPILED, so
+	 * this affects modules loaded after the write and not those already
+	 * compiled.  That is a feature here: a Limbo command is compiled at
+	 * each invocation, so "bflag 0; disbench; bflag 1; disbench" gives
+	 * two arms on one silicon boot with nothing else differing.
+	 *
+	 * AND IT CARRIES ITS OWN CONTROL.  bndstest(1) reports 11 ok with
+	 * checks compiled in and 7 ok 4 fail without, so toggling the flag
+	 * and re-running it says whether the write actually reached compiled
+	 * code or whether a cached module was reused -- which would make any
+	 * A/B taken with this knob meaningless.  Check it before trusting a
+	 * number from here.
+	 */
+	CMbflag,	"bflag",	2,	/* 2 = "bflag" plus its argument, not 1 argument */
 };
 
 Cmdtab rebootmsg[] =
@@ -1452,6 +1472,17 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 			 * wedged kproc is otherwise invisible from the shell.
 			 */
 			kstackdump();
+			break;
+		case CMbflag:
+			{
+				int x;
+
+				x = atoi(cb->f[1]);
+				if(x != 0 && x != 1)
+					error(Ebadarg);
+				bflag = x;
+				print("BFLAG %d (modules compiled from now on)\n", bflag);
+			}
 			break;
 		case CMsignfault:
 			{
