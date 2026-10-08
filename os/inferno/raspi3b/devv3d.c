@@ -59,7 +59,7 @@
  * THE QEMU BASELINE, measured, so a real board's answer is not read
  * against an expectation but against a number:
  *
- *	clock hz 700000000
+ *	clock hz 700000000	<- FALSE. Silicon says 250000000.
  *	enabled 1
  *	code 15
  *	exec accepted resp 0x1 22 us
@@ -69,6 +69,19 @@
  * anything and far too fast to have timed out: that is the signature of
  * a mailbox that accepts the tag and does nothing, which is what
  * v3dprobe()'s nonsense-tag control already says of this emulator.
+ *
+ * AND THE CLOCK IS THE HARDER LESSON. The real board reports 250 MHz
+ * where QEMU reported 700. So the emulator does not only accept tags it
+ * does not implement -- it FABRICATES PLAUSIBLE VALUES for tags it does
+ * accept, and the nonsense-tag control cannot catch that: there is no
+ * nonsense VALUE. Anything sized against a firmware number read under
+ * emulation is wrong by whatever the emulator felt like, here 2.8x.
+ * On QEMU the only safe reading of a firmware number is that it is a
+ * number. (Found by the raspi3b-port session running this on silicon.)
+ *
+ * SILICON, 2026-10-08: the nonsense tag is REFUSED, SET_ENABLE_QPU is
+ * accepted and the block is clocked at 250 MHz. So the firmware half of
+ * the seam is real and the open question is EXECUTE_QPU.
  *
  * So on silicon, with garbage code:
  *	elapsed ~= the timeout	the QPUs really ran it and never ended

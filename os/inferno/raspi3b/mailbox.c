@@ -163,8 +163,14 @@ mboxprop(u32 *buf)
  * firmware answers it at all is the thing worth knowing before anyone
  * writes QPU code.
  *
- * QEMU's raspi3b emulates neither, so a V3D-NONE here is expected and
- * says nothing about silicon; the line names which it is.
+ * QEMU emulates neither, and worse than not emulating them: it accepts
+ * the tags and makes up the values. Under emulation this prints
+ * V3D-BLIND because of the control below. On silicon (2026-10-08) the
+ * control is refused and the verdict is V3D-OK with the clock at
+ * 250 MHz -- where QEMU claimed 700. The control catches a tag that is
+ * not implemented; nothing catches a VALUE that is invented, which is
+ * why the number is written down here from the board and not from the
+ * emulator.
  */
 void
 v3dprobe(void)

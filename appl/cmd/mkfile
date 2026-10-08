@@ -126,6 +126,7 @@ TARG=\
 	prof.dis\
 	ps.dis\
 	puttar.dis\
+	qputry.dis\
 	pwd.dis\
 	ramfile.dis\
 	raisetest.dis\

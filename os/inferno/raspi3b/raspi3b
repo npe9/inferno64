@@ -257,5 +257,6 @@ root
 	/dis/math/draw3d.dis
 	/dis/math/draw3ddev.dis
 	/dis/math/polyfill.dis
+	/dis/qputry.dis
 	/fonts/pelm/unicode.8.font
 	/fonts/pelm/latin1.8
