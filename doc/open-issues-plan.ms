@@ -13559,3 +13559,68 @@ recursed into three directories under
 .CW man/lib ,
 so the file list carried directory headers and bare filenames.
 .B "The input to a scan is as untested as the scan."
+.NH 3
+"Could not look" mapped onto "fine", and a list that read seven of eight
+.LP
+Two more, and they are the exit-code inversion
+.B "with the sign flipped"
+\(em not a finding reported as BROKE, but an inability to look reported as a
+PASS.  A peer found the identical shape in a network check that answers "cannot
+tell" by exiting 0.
+.IP 1.
+.CW kencc-selfbranch
+printed
+.CW KENCC-SELFBRANCH-SKIP ,
+"no aarch64 kernel built; nothing to check", and
+.B "exited 0."
+So a tree with no kernel built reported this defect
+.I absent .
+Now 1, which the suite reads as BROKE \(em verified by pointing its discovery
+glob at a directory that does not exist, which gives "1 could not run" where it
+used to give "9 pass".
+.B "A first attempt to force that path forced the wrong variables and was inconclusive;"
+that is not evidence a fix works and is not what is recorded here.
+.IP 2.
+.CW troff-argorder 's
+hardcoded document list used
+.CW "[ -f \"$f\" ] && echo \"$f\"" ,
+so a named file that does not exist was dropped in silence.  A guard found one
+on its first run:
+.CW doc/session.ms
+exists only on the
+.CW inferno-rio
+branch, so
+.B "that check named eight documents and read seven for its whole life."
+.LP
+.B "And a verdict that was stronger than its evidence."
+.CW kencc-selfbranch
+reported the stale count \(em 12 images skipped as older than their own loader
+\(em and not the CHECKED count, so
+.CW OK
+after reading
+.B "3 of 15 images"
+was identical to
+.CW OK
+after reading all fifteen.  The per-image lines carried it; the verdict line,
+which is the line a verdict line exists for, did not.  It now says
+.CW "checked 3 image(s), skipped 12 as stale" .
+.LP
+.B "Open, and not a defect:"
+12 of 15 board images are older than their loaders, so this check reaches three
+boards.  Refreshing them is twelve relinks with
+.CW kbuild ,
+which is affordable but has not been done; the coverage is now stated rather
+than implied, which is the part that was wrong.
+.LP
+.B "The audit of the other four found nothing, and my first classifier said otherwise"
+by grepping for a phrasing.
+.CW kencc-brloop
+names its two cases individually,
+.CW kencc-widencast
+says "all three shapes",
+.CW 7l-bigconst
+says "4 DWORD pool entries (0 plain WORD)".
+.B "A fixed, small set of named cases states its own denominator;"
+it is the variable-size scan that needs a count, and
+.CW selfbranch
+was the only one of the five with that shape.
