@@ -9960,3 +9960,51 @@ one rather than zero: the interpreter cap and the channel lock are both
 on.  That is the same structural property that made the earlier
 permissions answer come out clean, and it is worth naming as the reason
 rather than claiming diligence for it.
+.NH 2
+Asked at full precision: the zero spread was my rounding, and the arms stay disjoint
+.PP
+A sibling session withdrew its own disjointness evidence \(em arms clean
+at three samples each, overlapping at eight \(em and asked whether the
+same held here, flagging
+.CW "on[3.2..3.2]"
+as the shape worth doubting, because zero observed spread is the least
+informative spread there is.  It was right to flag it and the zero was my
+own reporting.  Recomputed from the quanta and tick counts, which are the
+primary data:
+.IP
+.nf
+                lock-on q/tick              spread    lock-off q/tick            spread
+channel amd64   42.630 43.017 43.330          1.6%    86.3 110.1 110.2 111.5      29.2%
+module  amd64    3.191  3.234  3.247          1.7%    11.0  12.3  12.6            15.0%
+channel arm64   21.121 21.730 22.530          6.7%    88.2  88.7  89.1             1.1%
+.fi
+.PP
+.CW "3.2 3.2 3.2"
+was three values 1.7 per cent apart printed to one decimal place.  That is
+an over-precision error in the opposite direction to the 2.5x: there it
+claimed more resolution than the data had, here it claimed more
+repeatability.  Both come from choosing the number of digits after seeing
+the numbers.
+.NH 2
+And the disjointness does survive, for a reason that is not diligence
+.IP
+.nf
+                min ratio  max ratio  med/med   disjoint by
+channel amd64        1.99       2.62     2.56       2.0x
+module  amd64        3.39       3.96     3.81       3.4x
+channel arm64        3.91       4.22     4.08       3.9x
+.fi
+.PP
+All three hold at the full sample, and they hold because the arms are
+separated by multiples rather than by percentages: the closest is a factor
+of two, where the sibling session's was 8 per cent.  A few more samples
+cannot close a factor of two, and that is a property of the effect rather
+than of how carefully it was measured.
+.PP
+.B "What this branch cannot claim, and they can."
+What replicated for them was repetition across runs \(em three runs all in
+the same direction, plus a reversed-order run inside the span, 14 samples
+an arm.  Every figure here is one batch per arm, in one arm order, so the
+direction is supported by separation and not by replication.  Their
+design is the better one and the difference is worth naming rather than
+leaving the two sets of numbers looking equally earned.
