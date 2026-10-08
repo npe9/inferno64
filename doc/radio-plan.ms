@@ -8600,3 +8600,55 @@ above about 40dB the air path between two boards a metre apart will
 dominate and the curve will floor \- and the CC1120's own +14dBm
 absolute maximum input, which is why fixed attenuation should be
 permanent and the sweep taken on top of it.
+.NH 1
+ITEM 9, MEASURED WITH THE TRANSMITTER AS THE ATTENUATOR
+.PP
+Six power points, both ends on one image, both printing the ramp they
+applied:
+.DS
+.CW "ramp  dBm    bigread  stale  crcbad  last"
+.CW "  15  -10.0  1 of 1   1      1       -17"
+.CW "  11  -12.0  1 of 1   2      2       -18"
+.CW "   7  -14.0  1 of 1   1      1       -20"
+.CW "   3  -16.0  1 of 1   0      2       -22"
+.CW "   1  -17.0  1 of 1   0      2       -54"
+.CW "   0  -17.5  1 of 1   0      2       -86"
+.DE
+.NH 2
+The PA is violently non-linear at the bottom of its range
+.PP
+.B "Ramp 3 to ramp 0 is 1.5dB by the formula and 64dB at the receiver."
+.CW "(ramp+1)/2 - 18"
+holds from 15 down to 3 \- the received RSSI goes -17, -18, -20, -22
+against a commanded -10, -12, -14, -16, so about a decibel out over six
+\- and then falls off a cliff: -54 at ramp 1 and -86 at ramp 0.
+.PP
+So
+.B "the ramp is not a linear attenuator below 3"
+and the table in item 9 that reads -17.5dBm at ramp 0 is a conducted
+measurement of a PA that is barely on.  As an attenuator the cliff is
+useful \- it is 64dB in one step \- but it cannot be interpolated, and
+anything quoting those bottom two rows as dBm is quoting the formula
+and not the part.
+.NH 2
+And the link survived all sixty-nine decibels of it
+.PP
+.B "Six bigreads of six, and the errors do not get worse as the signal falls."
+At -17dBm received there was 1 stale and 1 crcbad; at -86, four
+decibels above the -90 carrier-sense threshold, there were
+.B 0
+stale and 2 crcbad.
+.PP
+.B "That points away from sensitivity entirely."
+The frames being abandoned at full power are not being lost because the
+signal is weak \- taking 69dB out of the received power did not make it
+worse, and the weak end was marginally better.
+.B "If the trend is real it is receiver overload at close range, which is the opposite of what an attenuator was wanted for"
+\- and it would explain the asymmetry already recorded, where the
+satellite's receiver is spotless and the ground's is not while both hear
+the other at around -17.
+.PP
+.B "One run a point is not enough to claim that trend,"
+and this does not claim it.  What the six points do establish is the
+negative, which is the useful half: the loss is not a link-budget
+problem, so a step attenuator would not have found it either.
