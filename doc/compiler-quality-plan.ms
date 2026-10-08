@@ -995,6 +995,52 @@ The board's within-arm coefficient of variation is 2.2 to 2.6 per cent.
 They are code-size and instruction-count wins, and saying so is more useful
 than a speed claim that cannot be supported.
 .NH 2
+The shiftprop kernel on silicon
+.LP
+.B "Installed to the card and exercised, which the port's commit said was"
+.B "still owed."
+Build 1791496543, no
+.CW #Q ,
+running from the card with the poller answering.
+.P1
+bndstest             11 ok, 0 fail
+drawink              all checks passed, pixel-verified
+#Q present?          ls '#Q' -> errors (absent, as intended)
+ping loss            0% at 64, 1400, 4000 and 8000 bytes
+1MB styx read (s)    1.6  1.9  1.6
+1MB styx write (s)   2.4  2.4  2.4
+.P2
+.LP
+.B "What this is and is not evidence for."
+It is evidence that a kernel whose array indexing was rewritten in 164 places
+boots, runs the Dis bounds checks, draws verified pixels and moves a megabyte
+each way over styx without loss.  It is
+.B "not"
+evidence that the fold made anything faster, and there is no control arm here
+on purpose:
+.B "this document's own rule 6 says nothing in the tradespace is individually"
+.B "measurable on hardware,"
+the board's within-arm coefficient of variation being 2.2 to 2.6 per cent
+against 164 instructions in 135333.  Quoting these as a speed result would be
+the error the rule exists to prevent.  The write arm's 2.4/2.4/2.4 is reported
+because zero spread across three repeats is itself worth seeing.
+.LP
+.B "And one operational finding that cost two failed installs."
+Both earlier attempts died at
+.CW "build <stamp> boots but its command poller never answered" ,
+and a bare
+.CW boardrun
+returned nothing either, on a board that had answered twenty minutes before.
+The cause was a background
+.CW netwatch
+loop left running against the board's address from earlier in the session \(em
+its script file already deleted from the scratchpad, so it did not even appear
+as a readable script.  Stopping it and the next install reached
+.CW "the poller answers" .
+.B "A kernel that boots, confirms its build stamp from the ring, and cannot be"
+.B "driven is not necessarily faulty;"
+check for strays before diagnosing it.
+.NH 2
 Width-aware copyprop is now the largest row, and its ceiling is measured
 .LP
 The table carried
