@@ -226,7 +226,35 @@ being destroyed,
 writing
 .B broken
 ensures that they are left in this state to allow debugging (the default).
-Only the privileged user is allowed to write to this file.
+Only the privileged user is allowed to write to this file \- but
+.B "the two implementations enforce that differently,"
+and this sentence asserted a mechanism without naming one.
+In the NATIVE kernel
+.RB ( os/inferno/port/devcons.c )
+the write path begins
+.B "if(!iseve()) error(Eperm)" ,
+so it is checked explicitly.
+In HOSTED emu
+.RB ( emu/port/devcons.c )
+.B sysconwrite()
+performs no such check, although
+.B iseve()
+exists in that same file and IS called on the
+.B user
+and
+.B sysname
+write paths, which are the same mode.
+There the only gate is the ordinary permission check against the file's
+owner.
+.PP
+.B "That is recorded as an inconsistency and NOT as a hole:"
+no unprivileged write has been demonstrated to succeed, and emu's
+single-user model makes the attempt awkward to set up honestly \- the
+tester is the owner either way.
+The hosted gap was found by
+.B inferno-rio-71
+and the native half checked here; neither side of the split was visible
+from the other.
 .PP
 .B "Writing"
 .B bflag
