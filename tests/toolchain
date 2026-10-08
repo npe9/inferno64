@@ -21,6 +21,15 @@
 #                     so it needs them built -- and it is the one test here
 #                     that can fail because of a stale image rather than a
 #                     stale compiler.
+#   kencc-widthprop   a 32-bit sign extension surviving copy propagation.
+#                     peep.c excludes AMOVW/AMOVWU from copyprop with a
+#                     comment saying an int -1 became 0xffffffff.  This
+#                     landed BEFORE the width-aware pass it guards, so
+#                     whoever writes those 50 lines is not grading their own
+#                     homework.  Asserts on `MOVW Rn,Rm' only: a 32-bit
+#                     memory load is ALSO spelled MOVW, and the loose
+#                     version of this test passed two probes the mutation
+#                     had broken.
 #   kencc-shiftfold   a shift folded into the next instruction's shifted
 #                     operand.  7c's shiftprop had never been ported from
 #                     32-bit ARM: the field layout was 5c's, so a correct
@@ -96,7 +105,7 @@ cd "$ROOT" || exit 1
 TESTS="kencc-brloop.sh kencc-selfbranch.sh kencc-narrowcast.sh \
 	kencc-widencast.sh 7l-bigconst.sh troff-argorder.sh man-cmdtab.sh \
 	troff-ctlchars.sh selfbranch-refused.sh troff-p1.sh \
-	kencc-shiftfold.sh"
+	kencc-shiftfold.sh kencc-widthprop.sh"
 
 pass=0
 broke=0
