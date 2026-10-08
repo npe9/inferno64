@@ -123,6 +123,38 @@ class PortBoard:
     ctl = None
 
 
+def session_for(port):
+    """The screen session that owns this serial device.
+
+    Board takes a SESSION name, because screen's -S wants one and the
+    board's console belongs to screen -- opening the device a second
+    time wedges the adapter until it is replugged, so going around
+    screen is not an option.  Callers naturally have the device path,
+    and handing that to Board makes every "screen -S <path> -X ..."
+    fail with "Must run suid root for multiuser support." and exit 1.
+
+    Nothing then raises.  reset() resets nothing, clear() clears
+    nothing, and hardcopy writes nothing -- so text() re-reads the
+    hardcopy file from whenever it last worked and returns it as the
+    live console, for as long as you keep asking.  Two runs were read
+    out of a file frozen half an hour earlier, and screen's error was
+    printed hundreds of times into the same log while that happened.
+
+    Resolved the way tools/f407/flashverify.sh resolves it: whoever has
+    the device open, matched against screen's own session list.
+    """
+    pids = subprocess.run(["lsof", "-t", port],
+                          capture_output=True, text=True).stdout.split()
+    out = subprocess.run(["screen", "-ls"],
+                         capture_output=True, text=True).stdout
+    for s in re.findall(r"(\d+\.ttys\d+\.\S+)", out):
+        if s.split(".")[0] in pids:
+            return s
+    raise Dead("no screen session has %s open; screen must own the "
+               "board's console and a second opener wedges the adapter"
+               % port)
+
+
 class Board:
     def __init__(self, session, name=None, scratch=None):
         self.sess = session

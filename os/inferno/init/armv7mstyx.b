@@ -235,6 +235,19 @@ serve(carrier: int)
 	}
 	sys->print("styx: accepted on #a/%d, iounit %d of a carrier's %d\n",
 		cv, sys->iounit(dfd), carrier);
+	# THE CORE AT LINK-UP, BEFORE THE RELAY TAKES ANY OF IT.
+	#
+	# Measured: with $Keyring registered the station reaches
+	# EXPORTING with 2992 bytes of core free, and keyring->auth()
+	# peaks 32K above its baseline -- so auth cannot run there.  The
+	# only arrangement that could work is to authenticate HERE,
+	# before relay() spawns its processes and its 65536 pipe and
+	# before protect() pushes ssl, because auth is a one-off at link
+	# setup and exportfs's buffers are what main is full of later.
+	#
+	# Whether that is possible is one number: how much core is free
+	# at this point.  Printed rather than assumed.
+	core("at link-up");
 	sfd := relay(dfd);
 	if(sfd == nil){
 		sys->print("ARMV7M-STYX-NOPIPE\n");
@@ -279,6 +292,47 @@ serve(carrier: int)
 	if(sys->export(sfd, "/", Sys->EXPWAIT) < 0)
 		sys->print("styx: export: %r\n");
 	sys->print("ARMV7M-STYX-EXPORTDONE\n");
+}
+
+# THE CORE xalloc STILL HAS, at a named moment.
+#
+# #c/xalloc prints the hole table to the console; this read asks for it
+# and prefixes nothing, so the caller says when.  It is the number that
+# decides whether anything expensive can still be done -- the pools'
+# own ceilings are not the constraint on this part, the core behind them
+# is, and 2992 bytes at EXPORTING is what ruled auth out there.
+core(when: string)
+{
+	b := array[1] of byte;
+	# THE POOLS FIRST, AND THE HOLES SECOND, because of what the
+	# console does when both go out at once.
+	#
+	# xsummary() dumps the whole hole table and poolhist() dumps
+	# every live block by size and by caller.  With the holes read
+	# first, this function's own next print -- a plain
+	# sys->print of one short line -- did not appear on the console
+	# AT ALL, twice, on an image proven byte-for-byte to contain it,
+	# and execution plainly continued because relay()'s line came
+	# out afterwards.  The output was lost in the console FIFO
+	# behind the dump, not skipped.
+	#
+	# So the reading that matters goes out while the console is
+	# still quiet.  The pools are that reading: #c/xalloc reports
+	# the core the pools cannot GROW into, which is not what an
+	# allocation sees -- a pool that has already brk'd its arena
+	# satisfies a request from the free space WITHIN it and asks
+	# xalloc for nothing.  At EXPORTING main was live 46528 of a
+	# 51072 span with 3648 free inside and 2992 of core behind it,
+	# so keyring->auth()'s 32K peak had nowhere to come from; at
+	# link-up the core is 10464 and main's span is what decides it.
+	sys->print("styx: pools %s\n", when);
+	ph := sys->open("#c/poolhist", Sys->OREAD);
+	if(ph != nil)
+		sys->read(ph, b, len b);
+	sys->print("styx: core %s\n", when);
+	fd := sys->open("#c/xalloc", Sys->OREAD);
+	if(fd != nil)
+		sys->read(fd, b, len b);
 }
 
 # THE OTHER END'S COUNTERS, FETCHED OVER THE LINK THEY DESCRIBE.

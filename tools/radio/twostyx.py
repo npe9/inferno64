@@ -19,8 +19,12 @@ SAT = sys.argv[1]
 GND = sys.argv[2]
 SECS = float(sys.argv[3]) if len(sys.argv) > 3 else 420.0
 
-ends = [("sat", twoboard.Board(SAT, name="sat")),
-        ("gnd", twoboard.Board(GND, name="gnd"))]
+# Board wants the SCREEN SESSION, not the device path.  Passing the
+# path made every screen command a silent no-op and text() kept
+# returning a hardcopy file frozen at whatever time it last worked --
+# see twoboard.session_for().
+ends = [("sat", twoboard.Board(twoboard.session_for(SAT), name="sat")),
+        ("gnd", twoboard.Board(twoboard.session_for(GND), name="gnd"))]
 
 # CLEAR THE WINDOW, THEN RESET BOTH, SATELLITE FIRST, so that
 # everything in the scrollback belongs to this run.

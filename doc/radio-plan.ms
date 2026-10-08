@@ -9148,3 +9148,87 @@ cannot test.
 the mount was not observed in the ssl-off keyring arm, because the
 ground was reflashed mid-run.  The satellite's export and its pool table
 were, and they are what this rests on.
+.NH 2
+And the one arrangement left open is closed too: 17184 against 41408
+.PP
+The section above left one option standing \- a station that
+authenticates
+.I before
+the relay and ssl take their core, since auth is a one-off at link setup
+and exportfs's buffers are what main is full of later.  That is a
+software change, so it was worth a number before it was worth any code.
+The number is now measured and the answer is no.
+.PP
+.B "What decides it is not the core, and that matters."
+.CW #c/xalloc
+reports the holes xalloc still has, which is the memory the pools cannot
+.I grow
+into.  It is not what an allocation sees: a pool that has already brk'd
+its arena satisfies a request from the free space
+.I within
+it and asks xalloc for nothing.  Reading 2992 bytes of core at
+EXPORTING and concluding auth cannot run was an inference from the wrong
+number, and it happened to reach the right verdict.  The right number
+is each pool's free bytes against its span, which
+.CW #c/poolhist
+prints, read at the moment the link comes up.
+.PP
+Both, at link-up, from
+.CW armv7mstyx.b 's
+.CW core() :
+.DS
+.CW "pool main:  live 40128 in 280 blocks, free 2880 in 6, span 43776"
+.CW "pool heap:  live 18624 in 181 blocks, free 3264 in 4, span 23104"
+.CW "pool image: live     0 in   0 blocks, free  576 in 1, span   640"
+.CW "core (xalloc holes)                        10464"
+.CW "                                     total 17184"
+.DE
+.PP
+And at EXPORTING, for comparison, 3648 + 1856 + 576 inside the pools
+against 2992 of core: 9072.  The accounting between the two is
+self-consistent, which is how it is known not to be a misread: net live
+bytes allocated by relay and export setup is 66560 \- 58752 = 7808,
+main's span grew 43776 to 51072 = 7296, and 6720 + 7296 \- 7808 = 6208
+against 6080 of pool free measured at EXPORTING, a difference of one
+block's rounding.
+.PP
+.B "Against that, what auth actually costs, from its own run."
+Not the current size \- the
+.I "high water,"
+which is what a peak means:
+.DS
+.CW "            cursize  maxsize       hw  nalloc"
+.CW "before main   27520    76244    28160     308"
+.CW "after  main   30080    76244    59904   38364"
+.CW "before heap    3456    77800     3456      27"
+.CW "after  heap    9472    77800    13120     234"
+.DE
+.PP
+main's high water rises 31744 bytes and heap's 9664, so
+.B "keyring->auth() peaks 41408 bytes above its baseline"
+\- in 38056 allocations.  The earlier note put the figure at 32K, which
+was main alone.
+.PP
+.B "17184 bytes available at the most favourable moment, 41408 needed."
+Short by a factor of 2.4, and that is the generous reading: it counts
+every free byte in every pool and every core hole as usable, when
+main's 2880 free bytes are in six blocks averaging 480 and auth's
+38056 allocations have to come out of them.  Doing auth before the
+relay buys 8112 bytes over doing it at EXPORTING.  It is not close, and
+no ordering of the same work makes it close.
+.PP
+.B "So the conclusion of step 5's identity half stands as:"
+auth fits on the core and the station does not fit around it, on this
+part, at any point in the sequence.  The answer is a bigger part.  The
+.CW core()
+instrument stays in
+.CW armv7mstyx.b
+because it is the measurement that decides it, and it costs two file
+reads at link setup.
+.PP
+.B "What is NOT claimed:"
+that auth would fit on a larger part \- nothing here measures that.
+And the before/after pool table above is from the
+.CW armv7mauth
+image, where auth ran alone; it is auth's cost, not auth's cost
+alongside a running station, which would only be higher.
