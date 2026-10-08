@@ -982,19 +982,36 @@ punt(Inst *i, int m, void (*fn)(void))
 }
 
 /*
+ * excfault -- set R.PC for this instruction, then branch to a macro
+ * that raises.
+ *
+ * handler() locates the enclosing Limbo handler by deriving an offset
+ * from R.PC, so a macro that calls error() has to be reached with R.PC
+ * pointing at this instruction.  The JIT otherwise leaves R.PC stale
+ * between reschedules, and a stale value lands outside every
+ * [pc1, pc2) range: the exception is raised but escapes the
+ * `{} exception {}' block that should have caught it, all the way to
+ * the shell.  This is the store punt() makes for WRTPC.
+ *
+ * Callers place this on the faulting path only, jumped over by an
+ * inverted test, so a check that passes costs one branch rather than a
+ * four-instruction constant load.  Clobbering RA0 is safe because the
+ * macro never returns.
+ */
+static void
+excfault(Inst *i, int mac)
+{
+	con(RELPC(patch[i - mod->prog + 1]), RA0);
+	mem(Stw, O(REG, PC), RREG, RA0);
+	bramac(mac);			/* error(...); never returns */
+}
+
+/*
  * zdivchk -- raise "zero divide" if register r (the divisor) is zero.
  *
  * AArch64 SDIV yields 0 for a zero divisor and does not trap, so unlike
  * x86 (which gets this from SIGFPE) the check has to be explicit here;
  * libinterp/xec.c does the same for the interpreted path.
- *
- * R.PC has to be stored before error() runs, or handler() cannot find
- * the Limbo handler covering this instruction: it derives the offset
- * from R.PC, so a stale value lands outside every [pc1, pc2) range and
- * the exception escapes the enclosing `{} exception {}' block instead
- * of being caught.  This is the same store punt() makes for WRTPC, and
- * it sits on the faulting path only -- an ordinary division pays one
- * CBNZ, not the four-instruction constant load.
  */
 static void
 zdivchk(Inst *i, int r)
@@ -1003,10 +1020,25 @@ zdivchk(Inst *i, int r)
 
 	nz = code;
 	CBNZ_X(r, 0);			/* patched below: skip the fault path */
-	con(RELPC(patch[i - mod->prog + 1]), RA0);
-	mem(Stw, O(REG, PC), RREG, RA0);
-	bramac(MacZDIV);		/* error(exZdiv); never returns */
+	excfault(i, MacZDIV);
 	PATCH_BCOND(nz);
+}
+
+/*
+ * excbra -- branch to an exception macro when cond holds, with R.PC set.
+ *
+ * Replaces a bare bcondbra() to a raising macro.  The condition is
+ * inverted so the common, non-faulting path skips the R.PC store.
+ */
+static void
+excbra(Inst *i, int cond, int mac)
+{
+	u32int *ok;
+
+	ok = code;
+	BCOND(cond ^ 1, 0);		/* patched below: skip the fault path */
+	excfault(i, mac);
+	PATCH_BCOND(ok);
 }
 
 /*
@@ -2011,7 +2043,7 @@ comp(Inst *i)
 	case IINDB:
 		opwld(i, Ldw, RA0);
 		CMN_IMM(RA0, 1);
-		bcondbra(EQ, MacBNDS);
+		excbra(i, EQ, MacBNDS);
 		if(bflag)
 			mem(Ldw, O(Array, len), RA0, RA2);
 		mem(Ldw, O(Array, data), RA0, RA0);
@@ -2027,7 +2059,7 @@ comp(Inst *i)
 			if(bflag) {
 				con((uvlong)i->d.imm, RCON);
 				CMP_REG(RA2, RCON);
-				bcondbra(LS, MacBNDS);
+				excbra(i, LS, MacBNDS);
 			}
 			{
 				long off = (r > 0) ? ((long)i->d.imm << r) : i->d.imm;
@@ -2042,7 +2074,7 @@ comp(Inst *i)
 			opwst(i, Ldw, RA1);
 			if(bflag) {
 				CMP_REG(RA2, RA1);
-				bcondbra(LS, MacBNDS);
+				excbra(i, LS, MacBNDS);
 			}
 			if(r > 0) {
 				con(r, RCON);
@@ -2055,12 +2087,12 @@ comp(Inst *i)
 	case IINDX:
 		opwld(i, Ldw, RA0);
 		CMN_IMM(RA0, 1);
-		bcondbra(EQ, MacBNDS);
+		excbra(i, EQ, MacBNDS);
 		opwst(i, Ldw, RA1);
 		if(bflag) {
 			mem(Ldw, O(Array, len), RA0, RA2);
 			CMP_REG(RA2, RA1);
-			bcondbra(LS, MacBNDS);
+			excbra(i, LS, MacBNDS);
 		}
 		mem(Ldw, O(Array, t), RA0, RA2);
 		mem(Ldw, O(Array, data), RA0, RA0);
@@ -2074,7 +2106,7 @@ comp(Inst *i)
 
 		opwld(i, Ldw, RA1);
 		CMN_IMM(RA1, 1);
-		bcondbra(EQ, MacBNDS);
+		excbra(i, EQ, MacBNDS);
 		mid(i, Ldw, RA2);
 		mem(Ldw32s, O(String, len), RA1, RA0);
 		if(bflag) {
@@ -2087,7 +2119,7 @@ comp(Inst *i)
 				PATCH_BCOND(sk);
 			}
 			CMP_REG(RA3, RA2);
-			bcondbra(LS, MacBNDS);
+			excbra(i, LS, MacBNDS);
 		}
 		ADD_IMM(RA1, RA1, O(String, data));
 		CMP_IMM(RA0, 0);
@@ -2110,7 +2142,7 @@ comp(Inst *i)
 	case ITAIL:
 		opwld(i, Ldw, RA0);
 		CMN_IMM(RA0, 1);
-		bcondbra(EQ, MacBNDS);
+		excbra(i, EQ, MacBNDS);
 		mem(Ldw, O(List, tail), RA0, RA1);
 		goto movp;
 	case IMOVP:
@@ -2119,7 +2151,7 @@ comp(Inst *i)
 	case IHEADP:
 		opwld(i, Ldw, RA0);
 		CMN_IMM(RA0, 1);
-		bcondbra(EQ, MacBNDS);
+		excbra(i, EQ, MacBNDS);
 		mem(Ldw, OA(List, data), RA0, RA1);
 	movp:
 		CMN_IMM(RA1, 1);
@@ -2141,14 +2173,14 @@ comp(Inst *i)
 	case IHEADF:
 		opwld(i, Ldw, RA0);
 		CMN_IMM(RA0, 1);
-		bcondbra(EQ, MacBNDS);
+		excbra(i, EQ, MacBNDS);
 		mem(Ldw, OA(List, data), RA0, RA0);
 		opwst(i, Stw, RA0);
 		break;
 	case IHEADB:
 		opwld(i, Ldw, RA0);
 		CMN_IMM(RA0, 1);
-		bcondbra(EQ, MacBNDS);
+		excbra(i, EQ, MacBNDS);
 		mem(Ldb, OA(List, data), RA0, RA0);
 		opwst(i, Stb, RA0);
 		break;
@@ -2157,7 +2189,7 @@ comp(Inst *i)
 	case IHEADM:
 		opwld(i, Ldw, RA1);
 		CMN_IMM(RA1, 1);
-		bcondbra(EQ, MacBNDS);
+		excbra(i, EQ, MacBNDS);
 		ADD_IMM(RA1, RA1, OA(List, data));
 		movmem(i);
 		break;
