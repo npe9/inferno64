@@ -164,6 +164,7 @@ TARG=\
 	tkcmd.dis\
 	ellipsetest.dis\
 	styxdirtest.dis\
+	wstattest.dis\
 	tkscenetest.dis\
 	tl.dis\
 	touch.dis\

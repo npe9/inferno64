@@ -1040,7 +1040,19 @@ ipwstat(Chan *c, uchar *dp, int n)
 		error(Eperm);
 	if(!emptystr(d->uid))
 		kstrdup(&cv->owner, d->uid);
-	if(d->mode != ~0UL)
+	/*
+	 * ~0U and NOT ~0UL.  Dir.mode is a u32 and emu's `ulong' is the host's
+	 * 64-bit unsigned long, so ~0UL promotes the field and compares it
+	 * against 0xFFFFFFFFFFFFFFFF -- always true.  The 9P "do not change
+	 * this field" sentinel was therefore never recognised: it was taken for
+	 * a real mode and applied as 0xFFFFFFFF & 0777, so a no-change wstat
+	 * opened a pipe to everyone (8r660 -> 8r777, measured).
+	 *
+	 * os/inferno/port has the identical line and is CORRECT, because
+	 * kencc's long is 32 bits.  That is why this sat here: the kernel is
+	 * what gets tested.  See wstattest(1).
+	 */
+	if(d->mode != ~0U)
 		cv->perm = d->mode & 0777;
 	poperror();
 	free(d);

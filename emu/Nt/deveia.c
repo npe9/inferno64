@@ -370,7 +370,14 @@ eiawstat(Chan *c, uchar *dp, int n)
 
 	n = convM2D(dp, n, &d, nil);
 	i = Nqid*NETID(c->qid.path)+NETTYPE(c->qid.path)-Ndataqid;
-	if(d.mode != ~0UL)
+	/*
+	 * ~0U and not ~0UL: Dir.mode is a u32 and emu's `ulong' is 64 bits
+	 * on a 64-bit host, so ~0UL is always unequal and the 9P "do not
+	 * change" sentinel is applied as a real mode.  Same as the six
+	 * emu/port devices; see wstattest(1).  Not compiled here, so this
+	 * one is by inspection.
+	 */
+	if(d.mode != ~0U)
 		eiadir[i+1].perm = d.mode&0666;
 	return n;
 }
