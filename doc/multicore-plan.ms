@@ -9905,3 +9905,58 @@ What is unaffected: every arm's ranges are disjoint in every run, on both
 architectures and both workloads, and no instance of the parallel VM was
 slower than any instance of the control.  The direction is as solid as it
 looked; the magnitudes are a range, and the channel one is a wide range.
+.NH 2
+Is the 86.3 a contaminated sample?  No, and the test does not appeal to the answer
+.PP
+A sibling session supplied a criterion that does not require knowing what
+you hoped to find: a sample lying outside its own arm's range
+.I "in the wrong direction"
+\(em one that reaches into or past the other arm \(em is identifiable as
+contaminated without any appeal to the expected result.  Theirs came from
+a case where a 99 ms outlier above every sample in the opposite arm
+dragged a six-pair estimate from 6.73 to 3.96, in the direction that made
+a fix look cheaper.
+.PP
+Applied to all three arms here:
+.IP
+.nf
+channel amd64   on[42.6..43.3]  off[86.3..111.5]   none
+module  amd64   on[ 3.2..3.2 ]  off[11.0..12.6 ]   none
+channel arm64   on[21.1..22.5]  off[88.2..89.1 ]   none
+.fi
+.PP
+So the 86.3 is not one bad reading: it is genuine spread inside the
+lock-off arm, which is the same thing the sibling session concluded about
+its own 7.4-to-10.8 \(em the whole arm moving, unexplained, rather than
+one contaminated point.  That is a worse finding than an outlier would
+have been, because an outlier can be excluded and a shifting arm cannot.
+.NH 2
+Nothing here can leave a weakened invariant behind, and that is structural
+.PP
+They reported the thing worth reporting: a replication loop that ended on
+.CW "echo bflag 0"
+and did not put it back, so a board ran with array bounds checks disabled
+for everything compiled afterwards.  Their correct conclusion is that "a
+reboot restores the compiled-in default" is not sufficient, because the
+flag persists for the rest of the
+.I boot ,
+and what pays is whatever starts next on a board nobody is watching.
+.PP
+Audited here, and the answer is clean for a structural reason rather than
+through care.  Every flag this session added is read once, through
+.CW getconf() ,
+from the boot configuration, and nothing in any device writes any of
+them \(em so none can be changed on a running system and none can outlive
+a boot.  The committed defaults:
+.IP
+.nf
+parallelvm  0      gcoff     0      disdumpon  0
+pmaplarge   0      poolstat  0      progquar   0
+spawncap    1      chanlockon 1
+.fi
+.PP
+The last two are the ones to check, because for those the safe value is
+one rather than zero: the interpreter cap and the channel lock are both
+on.  That is the same structural property that made the earlier
+permissions answer come out clean, and it is worth naming as the reason
+rather than claiming diligence for it.
