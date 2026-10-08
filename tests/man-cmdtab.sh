@@ -30,8 +30,13 @@
 # WHAT THE SELF-TEST ACTUALLY CATCHES, measured by breaking it two ways
 # rather than asserted:
 #
-#	named() -> bare `grep -qw'	self-test finds 7 of 8, exit 2.  CAUGHT.
-#	[[:space:]] -> [ \t]		self-test finds 8, exit 1.  NOT caught.
+#	named() -> bare `grep -qw'	finds 7 of 8, exit 2.      CAUGHT
+#	(B|BR|BI|IB|I) -> (B)		exit 2 via fixture 2.      CAUGHT
+#	[[:space:]] -> [ \t]		finds 8, exit 1.           NOT caught
+#
+# The middle one was NOT caught until a second fixture was added for it,
+# and it had been reported as caught on the strength of the first fixture
+# passing.  See the note beside that fixture.
 #
 # The second is honest to record: `[ \t]' matches a literal space as one
 # of its three characters, and these pages happen to use a space after
@@ -94,7 +99,33 @@ if [ "$got" -ne 8 ]; then
 	echo "  would be meaningless.  Are you running this under zsh?" >&2
 	exit 2
 fi
-echo "man-cmdtab: self-test ok (reproduced the 8 known cons(3) gaps)"
+
+#
+# SECOND SELF-TEST, and it exists because the first one cannot do this
+# job.  The historical page's eight gaps are TOTAL absences -- those words
+# appear under no macro at all -- so narrowing named()'s macro set from
+# (B|BR|BI|IB|I) to (B) alone does not change its answer, and that
+# mutation sailed through while reporting false gaps on every page that
+# names a command with .BR.  Measured: rc=1, self-test "ok".
+#
+# So this fixture names one command with .BR and one with .I and requires
+# BOTH to count as present.  Remove either line and a narrowed macro set
+# stops being caught.
+#
+F=/tmp/man-cmdtab-macro.$$
+printf '.TH X 3\n.B reboot\n.BR halt ,\n.I panic\n' > $F
+for c in reboot halt panic; do
+	if ! named "$c" $F; then
+		echo "man-cmdtab: SELF-TEST FAILED -- '$c' is named on the" >&2
+		echo "  macro fixture and was not found, so the macro set is too" >&2
+		echo "  narrow and gaps reported below may be false." >&2
+		rm -f $F
+		exit 2
+	fi
+done
+rm -f $F
+
+echo "man-cmdtab: self-test ok (8 known cons(3) gaps; .B/.BR/.I all recognised)"
 
 rc=0
 for pair in \
