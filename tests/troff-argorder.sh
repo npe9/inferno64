@@ -65,13 +65,44 @@ else
 	# DEDUPED: open-issues-plan.ms matches doc/*-plan.ms as well, and the
 	# first version listed it twice, so it was reported twice and its
 	# sites counted twice in the total.
-	FILES=`for f in doc/*-plan.ms doc/open-issues-plan.ms \
+	#
+	# A NAMED FILE THAT IS MISSING IS SAID, NOT SKIPPED.  This list is
+	# hardcoded, so renaming a document silently removes it from the
+	# check -- the same `|| continue' shape that let a missing source
+	# drop a whole device from man-cmdtab without changing its status.
+	# A glob that matches nothing is fine; a name that does not resolve
+	# is a stale list.
+	#
+	want=
+	for f in doc/*-plan.ms doc/open-issues-plan.ms \
 	    doc/inferno-ports.ms doc/osprey-progress.ms doc/osprey-gap.ms \
 	    doc/osprey-plan.ms doc/parallel-allocator-survey.ms \
-	    doc/kernel-builds.ms doc/session.ms; do
-		[ -f "$f" ] && echo "$f"
-	done | sort -u | tr '\n' ' '`
+	    doc/kernel-builds.ms; do
+	    #
+	    # doc/session.ms WAS in this list and exists only on the
+	    # inferno-rio branch (committed 40e16452d, never on
+	    # raspi3b-port).  `[ -f "$f" ] && echo' dropped it in silence, so
+	    # this check named eight documents and read seven for its whole
+	    # life.  The guard below found it on its first run.
+	    #
+		case "$f" in *'*'*) continue;; esac	# unmatched glob
+		if [ -f "$f" ]; then
+			want="$want $f"
+		else
+			echo "troff-argorder: $f is in the list and does not" >&2
+			echo "  exist -- the list is stale and that document is" >&2
+			echo "  no longer being checked.  Not reporting a pass." >&2
+			exit 1
+		fi
+	done
+	FILES=`for f in $want; do echo "$f"; done | sort -u | tr '\n' ' '`
 fi
+
+if [ -z "$FILES" ]; then
+	echo "troff-argorder: no documents to check; not reporting a pass" >&2
+	exit 1
+fi
+printf 'troff-argorder: %s document(s) checked\n' "`echo $FILES | wc -w | tr -d ' '`"
 
 python3 - $FILES <<'PYEOF'
 import re, sys

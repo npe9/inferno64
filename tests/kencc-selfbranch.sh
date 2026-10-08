@@ -125,9 +125,19 @@ if [ "$found" = "0" ]; then
 		echo "KENCC-SELFBRANCH-STALE"
 		exit 1
 	fi
+	#
+	# 1, NOT 0.  "Nothing to check" is an INABILITY TO LOOK and belongs
+	# in the suite's BROKE column; exiting 0 made it a PASS, so a tree
+	# with no kernel built reported this defect absent.  That is the
+	# silent-pass direction -- it costs a belief rather than a
+	# measurement -- and it is the exit-code inversion with the sign
+	# flipped: the other five mapped a finding onto "broke", this mapped
+	# "could not look" onto "fine".  A peer found the same shape in a
+	# network check that answers "cannot tell" with 0.
+	#
 	echo "  no aarch64 kernel built; nothing to check"
 	echo "KENCC-SELFBRANCH-SKIP"
-	exit 0
+	exit 1
 fi
 if [ $fail -eq 0 ]; then
 	echo "KENCC-SELFBRANCH-OK"
