@@ -15,11 +15,21 @@
 # files in this tree, thirty occurrences, after a peer hit the same thing.
 #
 # WHY A LINT DOES NOT CATCH IT.  A stray control character is not a macro
-# error.  groff emitted exactly ONE warning for twenty-four occurrences in
-# doc/osprey-gap.ms -- "character with input code 12 not defined", once,
-# because it dedupes per character -- sitting among unrelated warnings
-# about fonts it has no business mounting.  Nothing said the document was
-# damaged, and the damage is visible only in the rendered output.
+# error, and HOW MUCH A RENDERER SAYS ABOUT IT IS NOT PORTABLE:
+#
+#	groff 1.23.0 here        ONE warning for twenty-four occurrences,
+#	                         "character with input code 12 not defined",
+#	                         once, because it dedupes per character --
+#	                         among unrelated warnings about fonts it
+#	                         cannot mount
+#	a peer's groff           ZERO warnings for the same thirty bytes in
+#	                         the same three files, and zero for nineteen
+#	                         more in another
+#
+# So "not quite silent, which is worse than silent" was my reading of my
+# own groff and it does not generalise: on another install the signal is
+# absent entirely.  A check that depends on a renderer mentioning this is
+# a check that works on one machine.
 #
 # AND THE WARNING COUNT WENT UP WHEN THE FILES WERE FIXED, from 4 to 15,
 # because the correct `\f(CW' makes groff say "cannot select font 'CW'"
