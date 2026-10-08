@@ -196,6 +196,7 @@ TARG=\
 	xargs.dis\
 	xd.dis\
 	yacc.dis\
+	zdivtest.dis\
 	zeros.dis\
 
 MODULES=\
