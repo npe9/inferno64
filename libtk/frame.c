@@ -98,7 +98,19 @@ tkdrawframe(Tk *tk, Point orig)
 	 * until it has been compared against the other one.
 	 */
 	framescene = nil;
-	if(tkviascene && tkstyleflat(tk) && tk->type == TKframe)
+	/*
+	 * A SEPARATOR takes this path too.  It is drawn by this function --
+	 * separatormethod's draw is tkdrawframe -- but the condition used to
+	 * name TKframe alone, so a separator drew its fill and border
+	 * directly and contributed nothing to the tree: `render types' read
+	 * `separator 2 0', two draws and no joins, which is what sent me
+	 * looking.  A separator IS a frame geometrically, so the three nodes
+	 * below describe it exactly as they describe a frame, and the posted
+	 * menu in tkscenetest(1) -- which contains one -- is the byte
+	 * comparison that says so.
+	 */
+	if(tkviascene && tkstyleflat(tk) &&
+	   (tk->type == TKframe || tk->type == TKseparator))
 		framescene = tkwalkjoin(tk->env->top->ctxt, i);
 	if(framescene != nil){
 		ulong own, par;
@@ -188,6 +200,30 @@ tkdrawframe(Tk *tk, Point orig)
 		r.max.x -= 4;
 		r.min.y += (Dy(r) - 2)/2;
 		r.max.y = r.min.y+1;
+		/*
+		 * The two rules have to go the SAME way as the fill above.
+		 * Drawing them directly while the fill was a node put them
+		 * underneath it: the draw()s run now, the node is flushed
+		 * later, and the flush paints over them.  498 bytes differed
+		 * in tkscenetest(1)'s posted menu, which is the whole of a
+		 * separator's ink -- the two lines were simply gone.
+		 *
+		 * That is the general hazard of a deferred tree beside
+		 * immediate painting, and it is why the else branch above and
+		 * tkdrawpanel() call tkwalkflush() before they paint.  Here
+		 * the better answer is to describe the lines as nodes too, so
+		 * a separator is entirely a scene and nothing about it has to
+		 * be ordered by hand.
+		 */
+		if(framescene != nil){
+			tkscenecolour(framescene, r,
+				tk->env->colors[TkCbackgnddark]);
+			r.min.y += 1;
+			r.max.y += 1;
+			tkscenecolour(framescene, r,
+				tk->env->colors[TkCbackgndlght]);
+			return nil;
+		}
 		draw(i, r, tkgc(tk->env, TkCbackgnddark), nil, ZP);
 		r.min.y += 1;
 		r.max.y += 1;
