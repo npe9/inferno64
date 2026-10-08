@@ -59,29 +59,40 @@ run() {	# run ncpu mem logfile
 # the tell that the other three were an oversight rather than a decision.
 
 ok=1
+nck=0
+
+# want <file> <pattern> <what it means if absent>
+#
+# Counts as well as checks, so the verdict line can say how many checks
+# it actually ran.  "ok" on its own is a verdict stronger than its
+# evidence: it reads identically whether six checks passed or none were
+# reached, and a verdict line exists precisely to carry that.  A sibling
+# session had a test print OK after reading 3 of 15 images, character for
+# character the same as OK after reading all fifteen.
+want() {
+	nck=`expr $nck + 1`
+	grep -q "$2" "$1" || { echo "check-arm64-smp: FAIL -- $3" >&2; ok=0; }
+}
 
 run 4 512 "$WORK/four.log"
+nck=`expr $nck + 1`
 if ! grep -q 'cpu: 3 started, 3 answered' "$WORK/four.log"; then
 	echo "check-arm64-smp: FAIL -- 3 secondaries did not start on -smp 4" >&2
-	grep -E '^cpu: |ACPI' "$WORK/four.log" >&2 || true
+	grep -E 'cpu: |ACPI' "$WORK/four.log" >&2 || true
 	ok=0
 fi
-grep -q 'cpu: machnos 1 2 3' "$WORK/four.log" || {
-	echo "check-arm64-smp: FAIL -- secondaries did not take their own machnos" >&2; ok=0; }
-grep -q 'interactive sh' "$WORK/four.log" || {
-	echo "check-arm64-smp: FAIL -- no shell on -smp 4" >&2; ok=0; }
+want "$WORK/four.log" 'cpu: machnos 1 2 3' "secondaries did not take their own machnos"
+want "$WORK/four.log" 'interactive sh'     "no shell on -smp 4"
 
 # More processors than MAXMACH: the extra ones must be left alone rather
 # than overrunning machp[].
 run 17 1024 "$WORK/seventeen.log"
-grep -q 'more processors than MAXMACH' "$WORK/seventeen.log" || {
-	echo "check-arm64-smp: FAIL -- no MAXMACH clip on -smp 17" >&2; ok=0; }
-grep -q 'cpu: 7 started, 7 answered' "$WORK/seventeen.log" || {
-	echo "check-arm64-smp: FAIL -- did not start MAXMACH-1 secondaries on -smp 17" >&2; ok=0; }
-grep -q 'interactive sh' "$WORK/seventeen.log" || {
-	echo "check-arm64-smp: FAIL -- no shell on -smp 17" >&2; ok=0; }
+want "$WORK/seventeen.log" 'more processors than MAXMACH' "no MAXMACH clip on -smp 17"
+want "$WORK/seventeen.log" 'cpu: 7 started, 7 answered' "did not start MAXMACH-1 secondaries on -smp 17"
+want "$WORK/seventeen.log" 'interactive sh' "no shell on -smp 17"
 
 for f in "$WORK/four.log" "$WORK/seventeen.log"; do
+	nck=`expr $nck + 1`
 	if grep -q 'panic' "$f"; then
 		echo "check-arm64-smp: FAIL -- panic in `basename $f`" >&2
 		grep -m2 'panic' "$f" >&2
@@ -90,7 +101,16 @@ for f in "$WORK/four.log" "$WORK/seventeen.log"; do
 done
 
 [ $ok = 1 ] || exit 1
-echo "check-arm64-smp: ok"
-sed -n 's/^\(cpu: .*\)$/  \1/p' "$WORK/four.log"
-sed -n 's/^\(cpu: .*MAXMACH.*\)$/  \1/p' "$WORK/seventeen.log"
-sed -n 's/^\(cpu: ticks.*\)$/  \1/p' "$WORK/seventeen.log"
+[ "$nck" -eq 8 ] || { echo "check-arm64-smp: ran $nck checks, expected 8 -- NOT a pass" >&2; exit 2; }
+echo "check-arm64-smp: ok -- $nck checks over 2 boots"
+#
+# Unanchored, like the checks above.  These three were left anchored by
+# the earlier sweep because that sweep looked at pass/fail greps and not
+# at the lines printed underneath the verdict -- so "ok" could print with
+# nothing beneath it on a boot whose console interleaved, which is the
+# same defect the sweep was for.  An audit with a blind spot the shape of
+# the thing it audits for.
+#
+grep -o 'cpu: .*' "$WORK/four.log" | sed 's/^/  /'
+grep -o 'cpu: .*MAXMACH.*' "$WORK/seventeen.log" | sed 's/^/  /'
+grep -o 'cpu: ticks.*' "$WORK/seventeen.log" | sed 's/^/  /'
