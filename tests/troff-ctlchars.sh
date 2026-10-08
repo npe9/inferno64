@@ -112,10 +112,24 @@ if [ -z "$files" ]; then
 	exit 2
 fi
 
+# The verdict line states HOW MANY files it read. "clean" after scanning
+# three files and "clean" after scanning all of them are otherwise the
+# same sentence, and the count is the whole of the evidence behind it: if
+# the find expression above ever over-matches an exclusion, or the tree
+# moves, this is the only place that shows it. A peer had a verdict line
+# saying OK after reading 3 of 15 images, indistinguishable from OK after
+# fifteen.
+n=$(printf '%s\n' "$files" | wc -l | tr -d ' ')
+
 if scan $files; then
-	echo "troff-ctlchars: clean"
+	echo "troff-ctlchars: clean, checked $n file(s)"
 	exit 0
 else
-	echo "troff-ctlchars: stray control characters above; a 0x0C followed by I, B, R, P or ( is a lost \\f" >&2
+	# printf '%s', not echo: sh's echo interprets backslash escapes, so
+	# echo "... a lost \\f" printed an actual FORM FEED and the message
+	# about losing font escapes lost its own. The defect is reachable
+	# from the diagnostic for it.
+	printf '%s\n' "troff-ctlchars: stray control characters above in $n file(s) checked;" >&2
+	printf '%s\n' "  a 0x0C followed by I, B, R, P or ( is a lost backslash-f" >&2
 	exit 1
 fi
