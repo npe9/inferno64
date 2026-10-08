@@ -30,9 +30,9 @@
 # WHAT THE SELF-TEST ACTUALLY CATCHES, measured by breaking it two ways
 # rather than asserted:
 #
-#	named() -> bare `grep -qw'	finds 7 of 8, exit 2.      CAUGHT
-#	(B|BR|BI|IB|I) -> (B)		exit 2 via fixture 2.      CAUGHT
-#	[[:space:]] -> [ \t]		finds 8, exit 1.           NOT caught
+#	named() -> bare `grep -qw'	finds 7 of 8, refuses.     CAUGHT
+#	(B|BR|BI|IB|I) -> (B)		refused by fixture 2.      CAUGHT
+#	[[:space:]] -> [ \t]		finds 8, runs on.          NOT caught
 #
 # The middle one was NOT caught until a second fixture was added for it,
 # and it had been reported as caught on the strength of the first fixture
@@ -50,10 +50,25 @@
 # expansion that zsh leaves alone.  Checked, not assumed: zsh and sh give
 # the same output here.)
 #
-# Exit 0 all documented, 1 gaps found, 2 the harness could not verify
-# itself.  TWO IS NOT A PASS.
+# EXIT CODES FOLLOW tests/toolchain, WHICH IS NOT THE OBVIOUS ORDER:
+#
+#	0	all documented
+#	2	DEFECT -- gaps found in the tree
+#	1	BROKE  -- the harness could not look, so no verdict
+#
+# It is written this way because the suite maps 2 to DEFECT and every
+# other nonzero to BROKE.  The first version of this test used 1 for
+# "gaps found" and 2 for "could not look", which is the intuitive
+# assignment and is exactly inverted: run through the suite, a real gap in
+# man/3/flash was reported as "BROKE ... could not reach its subject" and
+# the summary said "0 defect(s), 1 could not run".  The finding was
+# invisible in the one line a reader reads.  Verified by planting a gap
+# and running the suite, not by reading the suite.
+#
+# NEITHER NONZERO IS A PASS, and they must stay distinguishable: a harness
+# that cannot look is not a tree with no gaps.
 
-cd "`dirname $0`/.." || exit 2
+cd "`dirname $0`/.." || exit 1   # 1 = could not look
 
 #
 # A command is "named" if it appears as the argument of a font macro,
@@ -99,7 +114,7 @@ SELF=/tmp/man-cmdtab-self.$$
 if ! git show b2dad56f5~1:man/3/cons > $SELF 2>/dev/null; then
 	echo "man-cmdtab: cannot read the known-bad page; not reporting a pass" >&2
 	rm -f $SELF
-	exit 2
+	exit 1
 fi
 got=`gaps os/inferno/port/devcons.c $SELF | tr ' ' '\n' | grep -c .`
 rm -f $SELF
@@ -108,7 +123,7 @@ if [ "$got" -ne 8 ]; then
 	echo "  page, expected 8 (bflag console ilock panic procdump rdb sched" >&2
 	echo "  signfault).  The checker is broken, so a clean result below" >&2
 	echo "  would be meaningless.  Are you running this under zsh?" >&2
-	exit 2
+	exit 1
 fi
 
 #
@@ -117,7 +132,8 @@ fi
 # appear under no macro at all -- so narrowing named()'s macro set from
 # (B|BR|BI|IB|I) to (B) alone does not change its answer, and that
 # mutation sailed through while reporting false gaps on every page that
-# names a command with .BR.  Measured: rc=1, self-test "ok".
+# names a command with .BR.  Measured: it reported gaps while its
+# self-test said "ok".
 #
 # So this fixture names one command with .BR and one with .I and requires
 # BOTH to count as present.  Remove either line and a narrowed macro set
@@ -131,7 +147,7 @@ for c in reboot halt panic; do
 		echo "  macro fixture and was not found, so the macro set is too" >&2
 		echo "  narrow and gaps reported below may be false." >&2
 		rm -f $F
-		exit 2
+		exit 1
 	fi
 done
 rm -f $F
@@ -147,7 +163,7 @@ echo "man-cmdtab: self-test ok (8 known cons(3) gaps; .B/.BR/.I all recognised)"
 # A peer hit the mirror of this, exiting 1 ("I found something") from a run
 # that had looked at nothing.
 #
-# So: a missing source is exit 2, and the number of devices actually
+# So: a missing source refuses outright, and the number of devices actually
 # reported on is asserted against the number in the list at the end.
 #
 rc=0
@@ -169,11 +185,11 @@ do
 		echo "  The list is stale or this is the wrong tree; a device" >&2
 		echo "  that was not checked must not read as a device with no" >&2
 		echo "  gaps.  Not reporting a pass." >&2
-		exit 2
+		exit 1
 	fi
 	if [ ! -f "$page" ]; then
 		echo "man-cmdtab: $src has no man page at $page"
-		rc=1
+		rc=2
 		continue
 	fi
 	n=`cmdsof "$src" | grep -c .`
@@ -188,7 +204,7 @@ do
 	if [ "$n" -eq 0 ]; then
 		echo "man-cmdtab: EXTRACTED NOTHING from $src, which has a" >&2
 		echo "  Cmdtab -- the extractor failed.  Not reporting a pass." >&2
-		exit 2
+		exit 1
 	fi
 	g=`gaps "$src" "$page"`
 	ng=`echo $g | wc -w | tr -d ' '`
@@ -198,7 +214,7 @@ do
 	else
 		printf 'man-cmdtab: GAP    %-14s %2d commands, %d not named: %s\n' \
 			"$page" "$n" "$ng" "$g"
-		rc=1
+		rc=2
 	fi
 done
 
@@ -206,7 +222,7 @@ if [ "$ndev" -ne "$nwant" ]; then
 	echo "man-cmdtab: reported on $ndev device(s) of $nwant in the list." >&2
 	echo "  A device that produced no row was not checked; not reporting" >&2
 	echo "  a pass." >&2
-	exit 2
+	exit 1
 fi
 echo "man-cmdtab: $ndev device(s) checked"
 

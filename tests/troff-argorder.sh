@@ -128,5 +128,12 @@ else:
     print("troff-argorder: so each one comes out in the wrong order, SILENTLY --")
     print("troff-argorder: only the four-argument form warns.  Quote the whole")
     print("troff-argorder: phrase, or move the prose to the next line.")
-sys.exit(1 if total else 0)
+#
+# 2, NOT 1, because tests/toolchain maps 2 to DEFECT and every other
+# nonzero to BROKE.  With exit 1 a real reordered .CW was reported as
+# "BROKE ... could not reach its subject" and the summary said "0
+# defect(s)" -- verified by planting one and running the suite.  A
+# finding that reads as a harness failure is worse than no check.
+#
+sys.exit(2 if total else 0)
 PYEOF

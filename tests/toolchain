@@ -72,6 +72,22 @@ broke=0
 defect=0
 worst=0
 
+#
+# THE CONVENTION, which every test here now follows and three did not:
+#
+#	0	clean
+#	2	DEFECT -- something wrong in the tree
+#	other	BROKE  -- the test could not reach its subject; no verdict
+#
+# kencc-brloop, kencc-selfbranch and troff-argorder each returned 1 for a
+# FINDING, which this loop maps to BROKE, so a real defect printed
+# "BROKE ... could not reach its subject" and the summary line said
+# "0 defect(s)".  Verified by planting a reordered .CW and running the
+# suite, not by reading the scripts.  All three are now 2 on a finding,
+# and the 1s they still use -- 7a would not assemble, 7l would not link,
+# nothing fresh left to check -- are genuine inabilities to look, which is
+# what the third status exists to separate.
+#
 for t in $TESTS; do
 	[ -f "tests/$t" ] || { echo "toolchain: no tests/$t"; broke=`expr $broke + 1`; continue; }
 	out=`sh "tests/$t" 2>&1`

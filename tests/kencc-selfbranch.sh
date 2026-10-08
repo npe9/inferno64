@@ -133,5 +133,11 @@ if [ $fail -eq 0 ]; then
 	echo "KENCC-SELFBRANCH-OK"
 	exit 0
 fi
+#
+# 2 is DEFECT in tests/toolchain.  The STALE exit above stays 1, because
+# "nothing fresh was left to check" IS an inability to look and belongs in
+# the BROKE column -- which is the distinction the suite's third status
+# exists for.
+#
 echo "KENCC-SELFBRANCH-FAIL"
-exit 1
+exit 2

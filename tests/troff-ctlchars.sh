@@ -38,10 +38,22 @@
 # That is why this test counts BYTES in the source and not diagnostics
 # from a renderer.
 #
-# Exit 0 clean, 1 control characters found, 2 the check could not verify
-# itself.  TWO IS NOT A PASS.
+# EXIT CODES FOLLOW tests/toolchain, WHICH IS NOT THE OBVIOUS ORDER:
+#
+#	0	clean
+#	2	DEFECT -- control characters found in the tree
+#	1	BROKE  -- the check could not look, so no verdict
+#
+# The suite maps 2 to DEFECT and every other nonzero to BROKE, so the
+# intuitive assignment (1 for "found something") is exactly inverted: a
+# real finding then prints "BROKE ... could not reach its subject" and the
+# summary says "0 defect(s)".  Verified on the sibling test by planting a
+# gap and running the suite.
+#
+# NEITHER NONZERO IS A PASS, and they must stay distinguishable: a check
+# that could not look is not a tree with nothing in it.
 
-cd "`dirname $0`/.." || exit 2
+cd "`dirname $0`/.." || exit 1   # 1 = could not look
 
 # Perl, not grep: this machine's grep is ugrep, which rejects the bracket
 # expression below outright rather than matching it, so a grep-based
@@ -109,7 +121,7 @@ scanned() {	# how many files scan() actually opened
 #			This fixture locks the false positive out.
 #
 T=/tmp/troff-ctl-self.$$
-mkdir -p $T || exit 2
+mkdir -p $T || exit 1
 printf 'A \014(CWlibdraw/\014P line\n' >  $T/bad.ms
 printf 'an undamaged line\n'             >> $T/bad.ms
 printf 'and \014ISLOW\014P here\n'       >> $T/bad.ms
@@ -124,7 +136,7 @@ if [ "$nbad" -ne 2 ] || [ "$ngood" -ne 0 ] || [ "$badlines" != "1 3 " ]; then
 	echo "  on line(s) [$badlines] (want 2 on [1 3 ]), known-good gave" >&2
 	echo "  $ngood (want 0).  The scanner is broken, so a clean result" >&2
 	echo "  below would mean nothing." >&2
-	exit 2
+	exit 1
 fi
 echo "troff-ctlchars: self-test ok (2 hits on lines 1 and 3; UTF-8 not flagged)"
 
@@ -137,7 +149,7 @@ echo "troff-ctlchars: self-test ok (2 hits on lines 1 and 3; UTF-8 not flagged)"
 # "1016 sources, no control characters" had checked 1010.
 #
 files=`find doc man -type f \( -name '*.ms' -o -path 'man/*' \) 2>/dev/null | sort`
-[ -n "$files" ] || { echo "troff-ctlchars: no troff sources found" >&2; exit 2; }
+[ -n "$files" ] || { echo "troff-ctlchars: no troff sources found" >&2; exit 1; }
 raw=`scan $files`
 hits=`echo "$raw" | hitsonly`
 nfiles=`echo "$files" | wc -w | tr -d ' '`
@@ -145,7 +157,7 @@ nscanned=`echo "$raw" | scanned`
 if [ "$nscanned" != "$nfiles" ]; then
 	echo "troff-ctlchars: passed $nfiles file(s) but only opened $nscanned." >&2
 	echo "  A file that was not read was not checked; not reporting a pass." >&2
-	exit 2
+	exit 1
 fi
 n=`echo "$hits" | grep -c .`
 if [ "$n" -eq 0 ]; then
@@ -159,4 +171,4 @@ echo "troff-ctlchars: <0C> before (CW, I, P, B or R is a LOST FONT ESCAPE --"
 echo "  the source wanted \\f and a non-raw string ate it.  Replace each"
 echo "  0x0C with the two characters backslash-f; check the RENDER, because"
 echo "  the warning count moves the wrong way when this is fixed."
-exit 1
+exit 2

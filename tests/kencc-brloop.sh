@@ -167,5 +167,11 @@ if [ $fail -eq 0 ]; then
 	say "KENCC-BRLOOP-OK"
 	exit 0
 fi
+#
+# 2 is DEFECT in tests/toolchain; 1 is BROKE and is used above for "7a
+# would not assemble" and "7l would not link", which really are harness
+# conditions.  This line is the defect itself and must not read as an
+# inability to look.
+#
 say "KENCC-BRLOOP-FAIL"
-exit 1
+exit 2
