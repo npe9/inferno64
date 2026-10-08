@@ -257,7 +257,6 @@ OP(indx)
 	i = W(d);
 	DBG("indx a %p a->len %zd i %zd\n", a, a->len, i);
 	if(a == H || i >= a->len){
-	print("indx a %p a->len %zd i %zd\n", a, a->len, i);
 		error(exBounds);
 	}
 	W(m) = (WORD)(a->data+i*a->t->size);
@@ -271,7 +270,6 @@ OP(indw)
 	i = W(d);
 	DBG("indw a %p a->len %zd i %zd\n", a, a->len, i);
 	if(a == H || i >= a->len){
-	print("indw a %p a->len %zd i %zd\n", a, a->len, i);
 		error(exBounds);
 	}
 	W(m) = (WORD)(a->data+i*sizeof(WORD));
@@ -285,7 +283,6 @@ OP(indf)
 	i = W(d);
 	DBG("indf a %p a->len %zd i %zd\n", a, a->len, i);
 	if(a == H || i >= a->len){
-	print("indf a %p a->len %zd i %zd\n", a, a->len, i);
 		error(exBounds);
 	}
 	W(m) = (WORD)(a->data+i*sizeof(REAL));
@@ -299,7 +296,6 @@ OP(indl)
 	i = W(d);
 	DBG("indl a %p a->len %zd i %zd\n", a, a->len, i);
 	if(a == H || i >= a->len){
-	print("indl a %p a->len %zd i %zd\n", a, a->len, i);
 		error(exBounds);
 	}
 	W(m) = (WORD)(a->data+i*sizeof(LONG));
@@ -313,7 +309,6 @@ OP(indb)
 	i = W(d);
 	DBG("indb a %p a->len %zd a->data 0x%p i %zd\n", a, a->len, a->data, i);
 	if(a == H || i >= a->len){
-	print("indb a %p a->len %zd a->data 0x%p i %zd\n", a, a->len, a->data, i);
 		error(exBounds);
 	}
 	W(m) = (WORD)(a->data+i*sizeof(BYTE));

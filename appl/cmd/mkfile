@@ -37,6 +37,7 @@ TARG=\
 	auplay.dis\
 	auhdr.dis\
 	basename.dis\
+	bndstest.dis\
 	bind.dis\
 	bit2gif.dis\
 	bsky.dis\
