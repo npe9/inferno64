@@ -1815,27 +1815,37 @@ enverror(void)
  * shortage into a silent one.  Callers see the same error every time,
  * at the same point, as before.
  *
- * Resources are compared by POINTER, because every caller passes a
- * string literal from a fixed call site; two different resources
- * therefore always print rather than suppressing each other, which is
- * the behaviour that matters when one shortage causes another.
+ * Two different resources always print rather than suppressing each
+ * other, which is the behaviour that matters when one shortage causes
+ * another.  The name is COPIED rather than kept by pointer: every
+ * caller in os/inferno, os/osprey, os/9front and emu passes a string
+ * literal today, but the suppressed-count print below runs on a LATER
+ * call than the one that set it, so a caller passing a stack buffer
+ * would make this a read after scope in the kernel.  Thirty-two bytes
+ * of bss costs less than that invariant.
+ *
+ * The statics are unsynchronised.  On the SMP ports two processors can
+ * both print, or lose an increment of the count; that is a diagnostic
+ * losing precision and not a correctness question, and a lock here
+ * would be a lock taken on every exhausted resource for the sake of
+ * a message.
  */
 void
 exhausted(char *resource)
 {
-	static char *lastres;
+	static char lastres[32];
 	static ulong lastprint, nsupp;
 	char buf[64];
 	ulong now;
 
 	snprint(buf, sizeof(buf), "no free %s", resource);
 	now = MACHP(0)->ticks;
-	if(resource != lastres || (long)(now - lastprint) >= HZ){
+	if(strcmp(resource, lastres) != 0 || (long)(now - lastprint) >= HZ){
 		if(nsupp != 0)
 			iprint("no free %s: %lud more suppressed\n",
 				lastres, nsupp);
 		iprint("%s\n", buf);
-		lastres = resource;
+		kstrcpy(lastres, resource, sizeof(lastres));
 		lastprint = now;
 		nsupp = 0;
 	} else
