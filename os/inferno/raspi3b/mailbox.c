@@ -141,6 +141,103 @@ mboxprop(u32 *buf)
 }
 
 /*
+ * Can anything on this board be asked to do 3D?
+ *
+ * devdraw implements the draw3d letters in software and leaves its
+ * gpudraw* hooks nil, so the question a GPU backend has to answer first
+ * is what the VideoCore will accept. Only the firmware knows, so this
+ * asks it, at boot, in the style of every other subsystem here: a
+ * verdict line rather than an assumption.
+ *
+ * Two questions, both cheap and neither of which changes anything:
+ *
+ * V3D CLOCK (GET_CLOCK_RATE, clock id 5). A rate of zero means the
+ * firmware does not have the block running; non-zero means it does and
+ * says how fast, which is also the number any later throughput claim
+ * has to be reconciled against.
+ *
+ * SET_ENABLE_QPU (tag 0x00030012). This is the documented bare-metal
+ * route to the twelve QPUs -- enable them, then hand EXECUTE_QPU
+ * (0x00030011) a block of QPU machine code. There is no GL here and no
+ * V3D register driver, so that interface is the seam, and whether the
+ * firmware answers it at all is the thing worth knowing before anyone
+ * writes QPU code.
+ *
+ * QEMU's raspi3b emulates neither, so a V3D-NONE here is expected and
+ * says nothing about silicon; the line names which it is.
+ */
+void
+v3dprobe(void)
+{
+	static u32 raw[32+4];
+	u32 *buf;
+	u32 rate;
+	int clockok, qpuok;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+
+	/* GET_CLOCK_RATE, clock id 5 == V3D */
+	buf[0] = 8*4;
+	buf[1] = 0;
+	buf[2] = 0x00030002;
+	buf[3] = 8;
+	buf[4] = 0;
+	buf[5] = 5;			/* clock id: V3D */
+	buf[6] = 0;			/* <- rate in Hz */
+	buf[7] = 0;
+	rate = 0;
+	clockok = mboxprop(buf) >= 0;
+	if(clockok)
+		rate = buf[6];
+
+	/* SET_ENABLE_QPU: 1 to turn the QPUs on */
+	buf[0] = 7*4;
+	buf[1] = 0;
+	buf[2] = 0x00030012;
+	buf[3] = 4;
+	buf[4] = 0;
+	buf[5] = 1;			/* enable */
+	buf[6] = 0;
+	qpuok = mboxprop(buf) >= 0;
+
+	/*
+	 * THE CONTROL, and it is not optional. A property mailbox can
+	 * accept a tag without implementing it -- QEMU's bcm2835 does
+	 * exactly that for much of the interface -- so "SET_ENABLE_QPU
+	 * accepted" on its own does not distinguish real firmware from a
+	 * stub. Ask for a tag that cannot exist and see whether that is
+	 * accepted too. If it is, every answer above is worthless and this
+	 * says so rather than reporting a capability nobody has.
+	 */
+	buf[0] = 7*4;
+	buf[1] = 0;
+	buf[2] = 0x000f0f0f;		/* no such tag, and never will be */
+	buf[3] = 4;
+	buf[4] = 0;
+	buf[5] = 0;
+	buf[6] = 0;
+	if(mboxprop(buf) >= 0){
+		print("V3D-BLIND the firmware `accepted' tag 0x000f0f0f, which does not exist,\n");
+		print("  so SET_ENABLE_QPU accepted (clock %ud Hz) means nothing here\n", rate);
+		return;
+	}
+
+	if(!clockok && !qpuok){
+		print("V3D-NONE the firmware answered neither the V3D clock nor SET_ENABLE_QPU\n");
+		return;
+	}
+	print("v3d: clock %s %ud Hz, SET_ENABLE_QPU %s\n",
+		clockok ? "reported" : "refused", rate,
+		qpuok ? "accepted" : "refused");
+	if(rate != 0 && qpuok)
+		print("V3D-OK the QPUs can be enabled and the block is clocked; EXECUTE_QPU is the seam\n");
+	else if(qpuok)
+		print("V3D-PART SET_ENABLE_QPU accepted but the V3D clock reads 0\n");
+	else
+		print("V3D-PART the clock answers but SET_ENABLE_QPU does not\n");
+}
+
+/*
  * Boot probe: ask the firmware two things whose answers are fixed so the
  * round trip is verifiable, not merely non-empty -- the firmware
  * revision (a constant) and the ARM memory split (base must be 0).  This
