@@ -158,7 +158,16 @@ while [ $n -le "$MAXN" ]; do
 	why=""
 	if [ $lst -eq 124 ]; then
 		why="the crashed load never exited"
-	elif [ $cst -eq 124 ] && grep -q '^MARK done' $T/efs-c-chk.txt; then
+	#
+	# UNANCHORED.  The marker reaches this file only as emu's own stdout
+	# (sh.dis runs the script without echoing it), so there is no command
+	# line to collide with -- but emu interleaves pool and kernel prints
+	# into the same stream, and a 'MARK done' that lands mid-line would be
+	# LOST by an anchor.  That loses it in the harmful direction: the trial
+	# then falls through to being counted as a filesystem fault, which is
+	# precisely the random fault report the comment below exists to avoid.
+	#
+	elif [ $cst -eq 124 ] && grep -q 'MARK done' $T/efs-c-chk.txt; then
 		#
 		# The work finished and emu did not exit.
 		#

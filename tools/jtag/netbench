@@ -137,6 +137,18 @@ echo
 # phase 1 of the plan exists to answer.  A styx read is a small request
 # and a large reply; a write is the reverse.
 #
+#
+# THE MARKERS ARE SENT SPLIT ('M'^'0'), so the command line the poller echoes
+# back does not contain M0 or M1 and the waits below need no anchor.
+#
+# They used to be "grep -q '^M0'", anchored for the same reason boardrun's token
+# was: the script sent to the board IS "echo M0; dd ...; echo M1", so an
+# unanchored match fires on the echo of the command.  But an anchor loses a
+# marker that does not start a line, and this console interleaves output from
+# interrupt context.  A peer lost an observation for four weeks to exactly that
+# (grep -c '^panic' never matching a panic mid-line).  Splitting removes the
+# need to choose.
+#
 runboard() {	# runboard <tag> <script>; prints seconds between M0 and M1
 	rm -f "$OUT"
 	printf '%s\n' "$2" > "$CMD"
@@ -144,11 +156,11 @@ runboard() {	# runboard <tag> <script>; prints seconds between M0 and M1
 	while [ ! -s "$OUT" ] && [ $i -lt 400 ]; do sleep 0.25; i=`expr $i + 1`; done
 	[ -s "$OUT" ] || { echo "-"; return; }
 	i=0
-	while ! grep -q '^M0' "$OUT" 2>/dev/null && [ $i -lt 400 ]; do sleep 0.25; i=`expr $i + 1`; done
+	while ! grep -q 'M0' "$OUT" 2>/dev/null && [ $i -lt 400 ]; do sleep 0.25; i=`expr $i + 1`; done
 	t0=`python3 -c 'import time; print(time.time())'`
 	i=0
-	while ! grep -q '^M1' "$OUT" 2>/dev/null && [ $i -lt 2400 ]; do sleep 0.25; i=`expr $i + 1`; done
-	grep -q '^M1' "$OUT" 2>/dev/null || { echo "-"; return; }
+	while ! grep -q 'M1' "$OUT" 2>/dev/null && [ $i -lt 2400 ]; do sleep 0.25; i=`expr $i + 1`; done
+	grep -q 'M1' "$OUT" 2>/dev/null || { echo "-"; return; }
 	python3 -c "import time; print('%.1f' % (time.time() - $t0))"
 }
 
@@ -156,8 +168,8 @@ K=/n/remote/os/inferno/raspi3b/kernel8.img
 echo "  1MB over styx, $N repeats (seconds)"
 for dir in read write; do
 	case $dir in
-	read)	sc="echo M0; dd -if $K -of /dev/null -bs 8192 -count 128; echo M1";;
-	write)	sc="echo M0; dd -if /dev/zero -of /n/remote/tmp/nbw.bin -bs 8192 -count 128; echo M1";;
+	read)	sc="echo 'M'^'0'; dd -if $K -of /dev/null -bs 8192 -count 128; echo 'M'^'1'";;
+	write)	sc="echo 'M'^'0'; dd -if /dev/zero -of /n/remote/tmp/nbw.bin -bs 8192 -count 128; echo 'M'^'1'";;
 	esac
 	vals=
 	r=0

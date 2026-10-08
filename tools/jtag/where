@@ -101,7 +101,15 @@ resume_all='foreach c {0 1 2 3} { catch { targets bcm2837.cpu$c ; resume } };'
 	-c "mdw ${KDADDR:-0} 1" \
 	-c "$resume_all exit" ) >"$TMP" 2>&1
 
-if ! grep -aq '^WHERE cpu' "$TMP"; then
+#
+# UNANCHORED, because the marker reaches $TMP only as openocd's own echo output
+# -- openocd does not print its -c arguments -- so there is no command line here
+# for an unanchored match to collide with, and an anchor would lose a marker
+# that openocd's other messages ran into without a newline.  (boardrun and
+# netbench had to SPLIT their markers instead, because there the command is
+# echoed back.)
+#
+if ! grep -aq 'WHERE cpu' "$TMP"; then
 	echo "where: the debugger did not answer; is the adapter attached?" >&2
 	grep -a 'Error' "$TMP" | head -3 >&2
 	exit 1
@@ -132,7 +140,7 @@ fi
 #
 grep -a 'WHERE-UNREAD' "$TMP" | sed 's/^WHERE-UNREAD /where: could NOT read /'
 
-grep -a '^WHERE cpu' "$TMP" | while read -r _ cpu _ _ pc; do
+grep -a 'WHERE cpu' "$TMP" | while read -r _ cpu _ _ pc; do
 	if [ "$NAMES" = no ]; then
 		printf '%-5s %s  %s\n' "$cpu" "$pc" "(no name: wrong kernel)"
 		continue
