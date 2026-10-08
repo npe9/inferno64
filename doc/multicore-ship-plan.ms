@@ -234,6 +234,21 @@ that is not
 is inside it.  The persistence check that asks whether the same pid is
 still like that at the next audit has never fired.  The window is in
 the audit, not in the kernel.
+.IP \(bu
+.B "An unexplained general protection violation in the allocator."
+Two of twenty-one
+.CW parallelvm=1
+instances, none of nine controls, stack through
+.CW poolfree ,
+.CW poolalloc
+and
+.CW smalloc .
+Three candidate mechanisms now have direct detectors and all three read
+zero: a cross-arena sweep cursor (0 in 11 million sweeps), a size larger
+than the pool (0 in 6.4 million), and a chain broken at the resume (0).
+The arms are not comparable on panic rate either \(em with the cursor
+fixup off, every broken chain discards the cursor and so papers over
+cursor damage that lands on a bad magic.  Rare, characterised, open.
 .PP
 .B "Closed since this plan was written:"
 .CW nucleof303
