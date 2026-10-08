@@ -13279,3 +13279,119 @@ is not exposed, because it removes
 first and prints the
 .CW 7l
 count, which is what makes the link observable rather than assumed.
+.NH 2
+A partial list reads as a complete one, and the survey that found it was wrong four times
+.LP
+.CW man/3/cons
+described four of
+.CW /dev/sysctl 's
+twelve commands and gave no signal the list was partial, so
+.CW panic ,
+.CW console ,
+.CW rdb ,
+.CW procdump ,
+.CW ilock ,
+.CW sched ,
+.CW signfault
+and the
+.CW bflag
+command added above were invisible to a reader who had only the page.
+.B "Chasing it across every device with a Cmdtab found cons was not the outlier:"
+.P1
+man/3/usb     18 commands,  1 named
+man/3/logfs   11 commands,  4 named
+man/3/prog     5 commands,  4 named
+man/3/flash    5 commands,  4 named
+.P2
+.B "The failure is the same one as a stale status claim."
+Both assert something the reader cannot check from the page, and neither gives
+any signal that it might be incomplete \(em the sibling case being
+.CW man/1/bndstest
+saying the fix "is not made here" in the tree that made it.
+.B "The repair is to NAME the rest even without describing them,"
+because
+.I "document it properly or not at all"
+is the false choice that keeps the partial list in place, and a reader who can
+SEE that the list is partial is in a different position from one who cannot.
+.NH 3
+Four clean sweeps over pages that had gaps
+.LP
+.B "The survey reported NOTHING TO REPORT four times, for four different reasons."
+Every one failed in that direction:
+.P1
+bare word-grep        matched "console" in the prose of a page about the
+                      console device: 8 gaps reported as 0
+$ in an ERE group     a literal, not an anchor -- flipped the answer to
+                      "all 12 missing"
+[ \t] in a bracket    POSIX ERE: space, backslash or `t', NEVER a tab, so
+                      the extractor found 1 command in a table of 12
+for c in $cmds        zsh does not word-split parameter expansions, so it
+                      iterated ONCE over the whole newline-separated blob
+.P2
+.B "The last is the portable trap worth keeping:"
+zsh DOES split command substitutions, so
+.CW "for c in `cmd`"
+is fine while
+.CW "for c in $var"
+silently iterates once.  A loop that is correct under
+.CW sh
+can pass vacuously under
+.CW zsh .
+.LP
+.B "What fixed it was not a better regular expression."
+.CW tests/man-cmdtab.sh
+runs itself against a page whose answer is already known \(em the parent of the
+.CW cons
+fix, with eight gaps \(em and
+.B "exits 2 rather than 0 if it cannot reproduce that."
+.LP
+.B "And what the self-test catches is measured, not asserted."
+The comment first said "verified: breaking the matcher makes it find 0 of the 8
+and exit 2".  Breaking it twice says otherwise:
+.P1
+named() -> bare grep -qw      finds 7 of 8, exit 2.      CAUGHT
+[[:space:]] -> [ \t]          finds 8, exit 1.           NOT CAUGHT
+.P2
+The second is inert on these pages because that bracket matches a literal space
+and they use a space after
+.CW .B ;
+it would bite a page using a tab.
+.B "A self-test is a floor, not a proof,"
+and the comment now says which mode it misses.  That is the second time in this
+section's work that a sentence claiming verification was written from reasoning
+rather than from running it.
+.LP
+.B "It then caught a bug in the commit that added it."
+The first edit put each list's leading command on the same line as the word
+preceding it, so it was not at the start of a line, and the test reported
+exactly one remaining gap per page \(em the first name in each.  A test that
+fires on its own author is the best evidence available that it fires at all.
+.NH 3
+A privilege sentence that asserted a mechanism
+.LP
+The same page said
+.I "Only the privileged user is allowed to write to this file."
+A peer found that hosted
+.CW emu 's
+.CW sysconwrite()
+performs no such check; the other half, checked here, completes a split neither
+side could see alone:
+.P1
+native   os/inferno/port/devcons.c:1454   case Qsysctl: if(!iseve()) error(Eperm)
+hosted   emu/port/devcons.c sysconwrite   no check, though iseve() is called
+                                          on the user and sysname paths
+.P2
+.B "Recorded as an inconsistency and NOT as a hole:"
+no unprivileged write has been demonstrated to succeed, and emu's single-user
+model makes the attempt awkward to set up honestly, since the tester is the
+owner either way.
+.B "A claim of no check and a claim of exploitability are different"
+and only the first is established.
+.LP
+It also made the
+.CW bflag
+capability claim above
+.I stronger
+than it was written: on the board that write is behind an explicit
+.CW iseve()
+check and not merely behind mode 0644.
