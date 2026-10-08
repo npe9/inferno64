@@ -9866,3 +9866,42 @@ see.  The logs were in
 and have been cleaned, so it cannot be rechecked.  The 2.5x stands; "four
 of six contributed" may be an undercount, and is now written as such
 rather than left looking measured.
+.NH 2
+Non-overlapping ranges license a direction, not a point estimate
+.PP
+A sibling session re-ran a published figure with an unanchored extraction
+and found 6.5 per cent was really 9.1, with 7.4 and 10.8 from two runs of
+the same six-sample design \(em and drew the conclusion that matters:
+non-overlapping ranges license the
+.I direction ,
+not two significant figures.  Asked of this branch's own numbers, from
+the per-instance figures recorded above:
+.IP
+.nf
+                        quoted   min    max   med/med  spread
+channel traffic, amd64    2.5x   1.99   2.62    2.56     31%
+module loading, amd64     3.7x   3.44   3.94    3.84     15%
+channel traffic, arm64    4.1x   3.92   4.22    4.09      8%
+.fi
+.PP
+.B "The arm64 figure carries its precision and the amd64 channel one does
+not."
+Eight per cent of spread over six instances is a number worth two
+figures; thirty-one per cent is not.  The lock-off channel arm ran 86.3,
+110.1, 110.2 and 111.5 quanta per tick \(em one instance a quarter below
+the other three \(em so the honest statement is "2.0x to 2.6x, about 2.6
+at the median", and "2.5x" was a point estimate the data does not
+support.  It appears as a flat 2.5x in several commit messages here,
+including the one that flipped the default, and that is the overclaim
+rather than the direction.
+.PP
+.B "And the method was not consistent between them."
+3.7x came from the mean of the lock-off arm over 3.2; 2.5x came from a
+median.  The table above uses median over median throughout, which is
+the right choice for three and four samples with an outlier in one of
+them.
+.PP
+What is unaffected: every arm's ranges are disjoint in every run, on both
+architectures and both workloads, and no instance of the parallel VM was
+slower than any instance of the control.  The direction is as solid as it
+looked; the magnitudes are a range, and the channel one is a wide range.
