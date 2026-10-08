@@ -34,6 +34,37 @@ BOOT="check-pc64-timers check-pc64-tcp check-pc64-disk check-pc64-redeploy check
 # Bisect or sweep; tens of minutes.  Measurements rather than pass/fail
 # -- check-pc64-parallelvm FAILS on purpose, because the parallel VM is
 # broken and the check says so; it is here to detect the day that changes.
+#
+# TWO CHANNEL DEFECTS IN THIS RUNNER, recorded rather than changed,
+# because the protocol is one other sessions build against and a
+# unilateral change to it is worse than a documented hole.
+#
+# This loop below has two states: zero is ok, anything else is FAIL.
+# Reality has at least four -- passed, found something, could not look,
+# and expected to fail -- and squeezing them through two bits loses the
+# distinctions that matter:
+#
+#   check-pc64-parallelvm is expected to fail, so this runner can never
+#   report success with -a, and a NEW failure is indistinguishable from
+#   the standing one except by reading the names.  An EXPECT list, or a
+#   third column, is what that wants.
+#
+#   check-tls answers "cannot tell" by exiting 0, as its own comment
+#   says, so a machine with no network reports a PASS for a check that
+#   did not run.  That is the silent-pass direction, and it is the one
+#   that costs a belief rather than a measurement.
+#
+# A sibling session found five of eight of its own tests mapping a real
+# finding onto "the harness broke", and the reason it survived is the
+# general one: standalone, in a terminal where any nonzero is a failure,
+# every mapping looks right.  An exit code is only sound if it survives
+# the channel that will read it, so a check's statuses have to be read
+# back through this runner at least once.
+#
+# Checks here are run with NO ARGUMENTS.  A check-*.sh that needs
+# arguments must do something useful without them -- scripts/check-
+# kernel-stamp.sh runs its self-test -- or it is a permanent FAIL the
+# day somebody adds it to a list.
 SLOW="check-pc64-memfloor check-pc64-parallelvm"
 
 list=; all=

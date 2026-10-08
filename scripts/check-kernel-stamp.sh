@@ -30,7 +30,20 @@
 # A self-test is a floor and not a proof, and the modes this one misses
 # are named at the bottom of this file rather than left to be assumed.
 set -u
-if [ "${1-}" = --self-test ]; then
+#
+# No arguments runs the self-test, because this file is named check-*.sh
+# and scripts/check-all.sh runs its members with no arguments at all.  A
+# check that answered "usage ... exit 2" there would be a permanent FAIL
+# in the suite the day anyone added it to a list -- a landmine whose
+# trigger is someone else being tidy.
+#
+# Found by asking the question a sibling session arrived at the hard
+# way: an exit code is only sound if it survives THE CHANNEL THAT WILL
+# READ IT.  They had five of eight tests mapping a real finding to
+# "harness broke" because standalone, in a terminal where any nonzero is
+# a failure, every mapping looks right.
+#
+if [ $# -eq 0 ] || [ "${1-}" = --self-test ]; then
 	t=`mktemp -d`
 	trap 'rm -rf "$t"' 0
 	#
@@ -115,7 +128,7 @@ MKFIX
 	echo "check-kernel-stamp: self-test ok (stamp 305419896; match 0, mismatch 1, no stamp 2)"
 	exit 0
 fi
-[ $# -eq 2 ] || { echo "usage: check-kernel-stamp.sh <log> <kernel> | --self-test" >&2; exit 2; }
+[ $# -eq 2 ] || { echo "usage: check-kernel-stamp.sh [<log> <kernel>]" >&2; exit 2; }
 log=$1; kern=$2
 [ -f "$log" ]  || { echo "check-kernel-stamp: no log $log" >&2; exit 2; }
 [ -f "$kern" ] || { echo "check-kernel-stamp: no kernel $kern" >&2; exit 2; }
