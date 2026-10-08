@@ -24,6 +24,14 @@ dev
 	pointer
 	usb
 	wifi
+#
+# #Q: the VideoCore QPUs, as far as the firmware exposes them. An
+# instrument rather than a driver -- there is no VideoCore
+# documentation on hand, so the QPU encoding has to be established from
+# the hardware, and this makes each attempt a write from Limbo instead
+# of a kernel rebuild and a card swap. See devv3d.c's own comment.
+#
+	v3d
 	ether		netif
 	ip	ip ipv6 ipaux ptclbsum parseip eipfmt classmask equivip parseether iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
 
