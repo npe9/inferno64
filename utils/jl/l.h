@@ -302,6 +302,7 @@ void	asmb(void);
 int	asmcompressed(Prog*, Optab*, int, int);
 void	asmlc(void);
 int	asmout(Prog*, Optab*, int);
+void	checkout(Prog*, Optab*);
 void	asmsym(void);
 vlong	atolwhex(char*);
 Prog*	brloop(Prog*);

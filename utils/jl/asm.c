@@ -51,6 +51,7 @@ asmb(void)
 		}
 		curp = p;
 		o = oplook(p);	/* could probably avoid this call */
+		checkout(p, o);	/* refuse what cannot be right; check.c */
 		pc += asmout(p, o, 0);
 	}
 	if(debug['a'])

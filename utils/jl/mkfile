@@ -4,6 +4,7 @@ TARG=jl
 
 OFILES=\
 	asm.$O\
+	check.$O\
 	compress.$O\
 	list.$O\
 	noop.$O\

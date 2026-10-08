@@ -49,7 +49,13 @@ done
 # diagnostic is the one under test: without it the loaders add "entry not text"
 # and "not defined", which would make a count of their output meaningless.
 #
-arch() {	# arch <tag> <as> <ld> <suffix> <cond-jump> <uncond-jump>
+#
+# The conditional and unconditional branch are passed as WHOLE INSTRUCTIONS,
+# not as opcodes: riscv64 folds the comparison into the branch, so jl's form is
+# "BEQ R0, R0, loop" where 7l's is "BEQ loop" and 6l's "JEQ loop".  An opcode
+# parameter would have forced a special case here for no gain.
+#
+arch() {	# arch <tag> <as> <ld> <suffix> <cond-branch> <uncond-branch>
 	tag=$1; as=$2; ld=$3; sfx=$4; cj=$5; uj=$6
 	for t in "$as" "$ld"; do
 		[ -x "$BIN/$t" ] || {
@@ -60,9 +66,8 @@ arch() {	# arch <tag> <as> <ld> <suffix> <cond-jump> <uncond-jump>
 
 	cat > "$S/$tag-bad.s" <<EOF
 TEXT	_main(SB), \$0
-	$cj	loop
 loop:
-	$cj	loop
+	$cj
 	RET
 EOF
 	#
@@ -74,7 +79,7 @@ EOF
 	cat > "$S/$tag-good.s" <<EOF
 TEXT	_main(SB), \$0
 spin:
-	$uj	spin
+	$uj
 	RET
 EOF
 	( cd "$S" && "$BIN/$as" $tag-bad.s && "$BIN/$as" $tag-good.s ) \
@@ -115,8 +120,15 @@ EOF
 
 rc=0
 ndone=0
-for spec in "a64 7a 7l 7 BEQ B" "amd 6a 6l 6 JEQ JMP"; do
-	set -- $spec
+#
+# IFS=| so a branch form can contain spaces.  The three loaders cover 10 of
+# this tree's 17 boards: jl six, 7l three, 6l one.
+#
+OIFS=$IFS
+for spec in "a64|7a|7l|7|BEQ	loop|B	spin" \
+	    "amd|6a|6l|6|JEQ	loop|JMP	spin" \
+	    "rv64|ja|jl|j|BEQ	R0, R0, loop|JMP	spin"; do
+	IFS='|'; set -- $spec; IFS=$OIFS
 	arch "$1" "$2" "$3" "$4" "$5" "$6"
 	r=$?
 	[ "$r" = 2 ] && rc=2
@@ -129,9 +141,9 @@ done
 # same as "ok" once if a loader quietly went missing, and a test that silently
 # checks half its subject is the shape this suite exists to refuse.
 #
-echo "selfbranch-refused: checked $ndone of 2 loader(s)"
-if [ "$ndone" -ne 2 ] && [ "$rc" = 0 ]; then
-	echo "selfbranch-refused: only $ndone of 2 loaders could be checked;" >&2
+echo "selfbranch-refused: checked $ndone of 3 loader(s)"
+if [ "$ndone" -ne 3 ] && [ "$rc" = 0 ]; then
+	echo "selfbranch-refused: only $ndone of 3 loaders could be checked;" >&2
 	echo "  not reporting a pass." >&2
 	rc=1
 fi
