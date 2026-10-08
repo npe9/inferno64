@@ -9082,3 +9082,69 @@ and then the build \- and
 does the first itself whenever it is asked for a conf that is not the
 default.  Proved by deleting the conf and letting the tool rebuild,
 flash and verify from nothing.
+.NH 1
+AUTH DOES NOT FIT INSIDE THE STATION, AND THE NUMBER IS 2992
+.PP
+The control was taken after all \- partly.  The ground was reflashed
+underneath it for an unrelated regression check, which cost the mount,
+.B "but the satellite had already printed the figure the question turned on."
+.NH 2
+With $Keyring registered and ssl OFF
+.PP
+.DS
+.CW "ARMV7M-STYX-EXPORTING          reached"
+.CW "main  live 46528 of 115144,  high water 47168"
+.CW "heap  live 20928 of  38900"
+.CW "2992 bytes free"
+.DE
+.B "So it exports, and it does so with 2992 bytes of core left."
+Past
+.IR protect (),
+past
+.IR pools (),
+into
+.IR export ().
+.PP
+Against that:
+.IP \(bu
+.B "ssl wants about 26K more"
+\- the station without keyring and with ssl on had 12512 bytes free \-
+which is why the keyring station with ssl on stops after printing
+.B ARMV7M-STYX-SSL
+and never reaches
+.BR EXPORTING .
+The stall is explained.
+.IP \(bu
+.B "and auth peaks 32K above its baseline,"
+measured on this part at 60608 of 76244 in an image that carries
+nothing else.
+.PP
+.B "2992 bytes does not accommodate either, and certainly not both."
+.NH 2
+So the answer is no, on this part
+.PP
+.B "The protocol fits on the core and the station does not fit around it."
+Those are different results and both are now measured: auth completes
+in 13.9 seconds in its own image, and the station with the module merely
+REGISTERED has 2992 bytes of core to spare before auth is called at all.
+.PP
+What would change it, in the order the numbers favour:
+.IP \(bu
+.B "The 197K of text is not the problem; the core is."
+Registering the module costs a page at boot and the pool percentages
+then apply to a smaller arena \- heap's ceiling fell from 39925 to
+38900 on the same split.
+.IP \(bu
+.B "A station that does not export while it authenticates."
+Auth is a one-off at link setup and exportfs's buffers are what main is
+full of; doing them in sequence rather than together is a software
+change and not a part change.
+.IP \(bu
+.B "Or a bigger part,"
+which is the honest answer for a flight build and the one this bench
+cannot test.
+.PP
+.B "What is NOT claimed:"
+the mount was not observed in the ssl-off keyring arm, because the
+ground was reflashed mid-run.  The satellite's export and its pool table
+were, and they are what this rests on.
