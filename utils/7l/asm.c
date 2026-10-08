@@ -61,6 +61,7 @@ asmb(void)
 		}
 		curp = p;
 		o = oplook(p);	/* could probably avoid this call */
+		checkout(p, o);	/* refuse what cannot be right; check.c */
 		asmout(p, o);
 		pc += o->size;
 	}

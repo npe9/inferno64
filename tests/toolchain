@@ -43,6 +43,17 @@
 #                     earlier versions of that survey each reported a clean
 #                     sweep over pages that had gaps.
 #
+#   7l-selfbranch-refused
+#                     the LOADER must REFUSE a conditional branch to itself,
+#                     not merely warn: utils/7l/check.c asserts it between
+#                     oplook and asmout.  Companion to kencc-selfbranch, which
+#                     scans a built kernel -- that only runs when someone runs
+#                     it and reads 3 of 17 images, while a refusal covers every
+#                     target every time.  Checks three things (nonzero exit,
+#                     the REFUSING message, and NO output file left), and has a
+#                     negative control: for(;;) is an UNCONDITIONAL self-branch
+#                     and must still link.
+#
 #   troff-ctlchars    a C0 control character in a troff source, which is the
 #                     generated-document failure: \f(CW written from a non-raw
 #                     string becomes a FORM FEED and the font escape is lost,
@@ -65,7 +76,7 @@ cd "$ROOT" || exit 1
 
 TESTS="kencc-brloop.sh kencc-selfbranch.sh kencc-narrowcast.sh \
 	kencc-widencast.sh 7l-bigconst.sh troff-argorder.sh man-cmdtab.sh \
-	troff-ctlchars.sh"
+	troff-ctlchars.sh 7l-selfbranch-refused.sh"
 
 pass=0
 broke=0

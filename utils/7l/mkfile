@@ -6,6 +6,7 @@ OFILES=\
 	asm.$O\
 	asmout.$O\
 	bits.$O\
+	check.$O\
 	cnam.$O\
 	dyn.$O\
 	elf.$O\

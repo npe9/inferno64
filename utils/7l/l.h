@@ -301,6 +301,7 @@ void	asmb(void);
 void	asmdyn(void);
 void	asmlc(void);
 void	asmout(Prog*, Optab*);
+void	checkout(Prog*, Optab*);
 void	asmsym(void);
 void	buildop(void);
 void	buildrep(int, int);
