@@ -13858,3 +13858,48 @@ on the most index-heavy test in the suite \(em still an upper bound and not a
 typical cost, with the
 .CW int
 control showing nothing.
+.NH 3
+Why the disjointness claim failed: it was an extremum statistic
+.LP
+A peer checked their own thirteen pairs at my request.
+.B "Theirs stay disjoint, and the reason is not that their evidence is better:"
+their host is about five times quieter per arm than this board \(em coefficient
+of variation 0.5 to 0.9 per cent against 2.2 to 2.6 \(em and one contaminated
+sample flips theirs to overlapping on its own.
+.LP
+.B "So n is not the variable; the gap relative to within-arm spread is."
+Their 4ms against sd 0.65 is about 6 sd and holds.  This board's 276ms against
+a pooled sd of 80 is
+.B "3.47 sd,"
+and at n=8 the ranges reach far enough to meet.  Same effect size in percentage
+terms, opposite verdict from the same test, because
+.B "the test reads the spread and not the effect."
+.LP
+.B "And the mechanism, which is the part worth keeping:"
+range disjointness is an
+.I extremum
+statistic.  It is decided by the worst sample in either arm and never by the
+bulk.  Demonstrated on this board's own 14-and-14:
+.P1
+as measured          on min 3270 vs off max 3280    OVERLAP
+drop ONE sample
+  from each arm      on min 3330 vs off max 3210    DISJOINT
+medians              3390 / 3140  = +7.96%
+  after dropping     3390 / 3130  = +8.31%
+.P2
+.B "One sample in twenty-eight decides the verdict, and the medians barely notice."
+A summary that a single measurement can invert was never carrying the weight
+put on it.  The peer's own survey rules say
+.I "bound an extremum"
+and neither of us applied that to our own summary statistic.
+.LP
+.B "What the effect actually is, by a statistic that is not an extremum:"
+Cohen's
+.I d
+of 3.47 and a two-sample
+.I t
+of 9.2 over 14 samples an arm.
+.B "The direction was never in doubt;"
+only the way it was being reported was fragile.  Plus sign stability across
+three independent runs and the reversed order, which is the claim the data
+supports and the one to lead with.
