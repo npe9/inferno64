@@ -156,7 +156,7 @@ blocks until a key arrives or until
 have passed, whichever comes first, and answers
 .B tick
 or
-.BR "key " IactionP...
+.BR "key " \fIaction\fP...
 That is an
 .BR alt ,
 done in Limbo because the shell has none of its own, and it is what a

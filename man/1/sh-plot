@@ -206,7 +206,7 @@ drawn into a window
 opened, and the way to have controls around a plot is to put them in the
 plot's own window.
 .TP
-.B plot IidB namechan InameR [ItknameR]
+.B plot \fIid\fB namechan \fIname\fR [\fItkname\fR]
 Make a channel this handle owns visible to Tk under
 .I tkname
 (default
@@ -220,7 +220,7 @@ script can
 to it.  See
 .IR send (9).
 .TP
-.B ${plot IidB recvR [InameR [ImsR]]}
+.B ${plot \fIid\fB recv\fR [\fIname\fR [\fIms\fR]]}
 Wait for the next message.  While waiting it services this window's own
 keyboard and pointer events \(em nothing else is doing so, and without
 that a binding never fires and a click never reaches a widget \(em the
@@ -237,11 +237,11 @@ as well, an empty result means the clock ran out and nothing happened,
 so a script can run its own animation in the same loop that reads its own
 events.
 .TP
-.B plot IidB winctl ImessageR
+.B plot \fIid\fB winctl \fImessage\fR
 Hand a window-manager message back to
 .IR tkclient (2).
 .TP
-.B plot IidB fit
+.B plot \fIid\fB fit
 Reallocate the drawing buffer to the panel's current size.  The size
 given to
 .B plot new
