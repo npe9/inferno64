@@ -899,7 +899,7 @@ duplicate RETURN       77   0.57       1  none    HIGH   NO, see below
 shift fold (shiftprop)164   1.21     ~30  flow    med    DONE, ported
 branch to next instr  153   1.13      ~8  none    low    LISTING only
 adjacent spill/reload  69   0.51      ~8  none    low    marginal
-width-aware copyprop <=38886 <=58.6  ~40  flow    HIGH   LARGEST, see below
+width-aware copyprop <=38886 <=58.6  ~40  flow    HIGH   OPEN, 44% bound
 MUL+ADD -> MADD        18   0.13     ~20  flow    med    NO -- too rare
 extension pair         14   0.10       1  none    med    DONE (see below)
 switch -> arithmetic    -      -    ~300  SSA     high   NO
@@ -994,6 +994,94 @@ The board's within-arm coefficient of variation is 2.2 to 2.6 per cent.
 .B "Nothing in the table above is individually measurable on hardware."
 They are code-size and instruction-count wins, and saying so is more useful
 than a speed claim that cannot be supported.
+.NH 2
+Which of the 32-bit moves are redundant, by producer
+.LP
+The ceiling for the width-aware row is 38886.
+.B "The question that decides the row is what fraction of those is REDUNDANT,"
+and a classification by what produced the move's source separates the removable
+class from the class that must never be touched.  Five large kernel sources
+\(em
+.CW chan.c ,
+.CW proc.c ,
+.CW qio.c ,
+.CW xalloc.c ,
+.CW tcp.c
+\(em 21333 listing lines:
+.P1
+same-register MOVW/MOVWU (pure SXTW/UXTW)        192   never removable
+reg-to-reg 32-bit moves, different source       1162
+
+  producer of the source register:
+    MOVW        515   44.3%   already sign-extended -> REDUNDANT
+    MOV         264   22.7%   64-bit value; SXTW truncates, NOT redundant
+    MOVWU       134   11.5%   zero-extended; SXTW differs, NOT redundant
+    ADD          92    7.9%   64-bit, NOT redundant
+    ADDW         62    5.3%   W-form ZERO-extends -- THE DOCUMENTED BUG
+    SUBW         37    3.2%   same
+    SUB          22    1.9%   64-bit, NOT redundant
+    other        33    2.9%   ANDW, MULW, UDIVW, LSLW, NEGW, MOVHU, MOVBU
+    unknown       3    0.3%
+.P2
+.LP
+.B "The removable class is the idempotent SXTW chain, and nothing else."
+A
+.CW MOVW
+whose source was itself produced by a
+.CW MOVW
+sign-extends a value that is already sign-extended, and
+.CW "MOVW reg,reg"
+assembles to
+.CW "SBFM 0,31"
+\(em the same
+.CW asmout
+arm as
+.CW ASXTW
+\(em which is idempotent.  That is 515 of 1162.
+.LP
+.B "And the 110 W-form producers are the miscompile this tree already has"
+.B "written down."
+A W-form result
+.I zero -extends
+to 64 bits on aarch64, so a following
+.CW SXTW
+is
+.B not
+redundant \(em dropping it is exactly how
+.CW "int -1"
+became
+.CW 0xffffffff
+in
+.CW peep.c 's
+inline comment.  A width-aware propagation that keys on \(lqis the source 32
+bits\(rq rather than \(lqwas the source SIGN-extended\(rq reintroduces it.
+.B "The distinction is sign versus zero extension, not width,"
+and that is the whole design constraint on the forty lines.
+.LP
+.B "Three reasons this 44.3 per cent is still an upper bound and not a payoff."
+.IP 1.
+.B "It is a LISTING proportion applied to an IMAGE count,"
+which is the error this document made twice already.  38886 is measured in the
+linked kernel; 44.3 per cent is measured in 7c's output.  Multiplying them is
+not licensed and no number is quoted here from doing so.
+.IP 2.
+.B "The survey has no basic blocks."
+It records the last instruction seen writing a register, in source order,
+across branches.  A producer on the other side of a branch is not a producer,
+so the real figure is lower.
+.IP 3.
+.B "A producer being a MOVW does not prove the value is still sign-extended at"
+.B "the point of use;"
+anything between can clobber the register, which is what the real analysis has
+to establish and the survey does not.
+.LP
+.B "So the row stays open with a sharper statement than it had:"
+the mechanism is known, the removable class is named, the class that must not be
+touched is named and is the one with a recorded miscompile, and the bound is
+44.3 per cent of the different-source population rather than a question mark.
+.B "The forty lines are not written here,"
+because the measurement that would justify them is basic-block-aware and that
+is the same work as the pass.
 .NH 2
 The shiftprop kernel on silicon
 .LP
