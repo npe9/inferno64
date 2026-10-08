@@ -1,0 +1,107 @@
+.TH RAMPTRIAL 1
+.SH NAME
+ramptrial, stalerate \- error rate against link budget, and how often a frame is abandoned
+.SH SYNOPSIS
+.B tools/radio/ramptrial.py
+.I sat-session
+.I gnd-session
+.RI [ runs
+.RI [ ramps... ]]
+.br
+.B tools/radio/stalerate.py
+.I answerer-session
+.I caller-session
+.RI [ runs ]
+.SH DESCRIPTION
+.B Ramptrial
+sweeps the transmitter's power and measures what the link does.
+.B "PA_CFG2's PA_POWER_RAMP is a step attenuator already inside the part"
+\-
+.CW "(ramp+1)/2 - 18"
+dBm, 31dB in half-dB steps \- with no connectors, no pigtails and none
+of the leakage that floors a cabled pad between two boards a metre
+apart.  Both boards get the same ramp, because a one-sided change makes
+the two directions different links and the counters cannot be compared.
+.PP
+.B "What it is NOT is the same experiment as attenuating the path."
+Attenuating the path moves the receiver's operating point only;
+attenuating the transmitter also changes what its own carrier sense
+hears and where the far AGC settles.  The curve is the link budget
+either way and the difference matters before it is quoted as a receiver
+sensitivity.
+.PP
+.B Stalerate
+flashes nothing and changes nothing: it runs
+.IR twostyx (1)
+.I runs
+times and tallies
+.B rxstale
+and
+.BR crcbad .
+It exists because a fault that appears one or twice a run cannot be
+called absent from three clean runs, and because an instrument added to
+an interrupt path can perturb the timing it measures \- two
+explanations that only a rate can separate.
+.SH "WHAT RAMPTRIAL FOUND"
+.DS
+.CW "ramp  dBm    bigread  stale  crcbad  last"
+.CW "  15  -10.0  1 of 1   1      1       -17"
+.CW "  11  -12.0  1 of 1   2      2       -18"
+.CW "   7  -14.0  1 of 1   1      1       -20"
+.CW "   3  -16.0  1 of 1   0      2       -22"
+.CW "   1  -17.0  1 of 1   0      2       -54"
+.CW "   0  -17.5  1 of 1   0      2       -86"
+.DE
+.B "The PA is violently non-linear at the bottom."
+The formula holds from 15 down to 3 \- about a decibel out over six \-
+and then ramp 3 to ramp 0, 1.5dB by the formula, is
+.B 64dB
+at the receiver.  The cliff is useful as one large step and
+.B "cannot be interpolated;"
+anything quoting those bottom two rows as dBm is quoting the formula
+and not the part.
+.PP
+.B "And the link survived all 69dB."
+Six bigreads of six, errors flat or better as the signal fell.  So the
+frames being abandoned are not lost because the signal is weak, which
+is the useful half:
+.B "a step attenuator would not have found this either."
+.SH "THREE WAYS THIS REPORTED NOTHING FIRST"
+Each is in the source as a comment, because each would have been
+published as a result.
+.IP \(bu
+.B "Nothing read txramp."
+.I /lib/radio
+documented the key and only
+.B armv7max25.b
+ever read it, so a station's
+.B txramp=
+line did nothing.  The tell was identical counters AND an identical RSSI
+at two powers 2dB apart.  Both stations print the ramp they applied now
+and a row that cannot show both says
+.BR "NOT APPLIED" .
+.IP \(bu
+.B "The counter parse glued the end prefix onto each field."
+.CW "\(dq\e| \(dq + \(dqrxstale (\ed+)\(dq"
+demands the pipe immediately before the field, and the line reads
+.CW "| rxstall 2 rxpartial 3 resume 0 rxstale 2" ,
+so every error column silently returned its default.
+.IP \(bu
+.B "And then it kept every line that was not the far end,"
+which includes the other station's own lines.  With one console dead it
+was the wrong board every time, identical at six power levels, and that
+read as a flat curve.  A missing console is an error now.
+.SH SOURCE
+.B tools/radio/ramptrial.py
+.br
+.B tools/radio/stalerate.py
+.SH "SEE ALSO"
+.IR roleswap (1),
+.IR radiocal (1),
+.IR radio (3),
+.B doc/radio-plan.ms
+.SH BUGS
+About six minutes a point, nearly all of it flashing, and it reflashes
+when only
+.I /lib/radio
+changed because the root is inside the image.

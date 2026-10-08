@@ -1,0 +1,98 @@
+.TH ROLESWAP 1
+.SH NAME
+roleswap \- do the receive errors follow the role or the board?
+.SH SYNOPSIS
+.B tools/radio/roleswap.py
+.I board1-session
+.I board2-session
+.RI [ runs-per-arm ]
+.SH DESCRIPTION
+One station abandons received frames and the other does not.
+.B "Two explanations fit and they are not distinguishable from a single arrangement:"
+the
+.I role
+\- the caller mounts and so receives the long 109-byte Styx replies,
+while the answerer receives mostly short acknowledgements \- or the
+.IR board ,
+one part on one spot of one desk with one antenna.
+.PP
+This swaps
+.BR call ,
+.B peer
+and
+.B role
+between the two entries in
+.IR radiocal (1)'s
+.IR /lib/radio ,
+flashes both, and runs
+.IR twostyx (1)
+.I runs-per-arm
+times each way.
+.B "It costs nothing: no cable, no attenuator, nobody in the room."
+.PP
+.B ppb ,
+.BR rssioffset ,
+.B csthr
+and
+.B rssislope
+are deliberately NOT swapped.  They are per-part measurements and
+swapping them would move two things at once, which is how this bench
+has produced most of its wrong answers.
+.SH "WHAT IT FOUND"
+.DS
+.CW "board1 as caller   stale 1/1 crcbad 1/3"
+.CW "board1 as answerer stale 0/0 crcbad 0/0"
+.CW "board2 as answerer stale 0/0 crcbad 0/0"
+.CW "board2 as caller   stale 2/1 crcbad 0/2"
+.DE
+.B "Both boards are clean as answerer and dirty as caller."
+Four bigreads of four.
+.PP
+.B "And in the same runs the RSSI stayed with the BOARD"
+\- -16 and -17 for board1, -11 for board2, in both arms \- so one
+variable followed the role and the other followed the part, measured
+together.
+.B "That is what makes it a separation and not a coincidence,"
+and it is the whole reason to swap rather than to reason.
+.SH "COUNTERS BY UID, NOT BY LABEL"
+.IR Twostyx 's
+session labels mean
+.I answerer
+and
+.IR caller ,
+and after a swap those are different boards \-
+.B "so reading the near column as \(lqthe ground\(rq silently compares two different parts."
+Every station prints its uid at boot and its counters later on lines
+carrying the same session prefix, so this keys everything by uid.
+.PP
+.B "And a \(lqstyx: far\(rq line belongs to the PEER."
+.IR Counters ()
+prints where a relay direction dies, so on a run that succeeds only the
+caller prints its own and the answerer's arrive through
+.IR farcounters ()
+fetching them over the link.  The first cut excluded them and left the
+answerer's columns empty, which was the entire comparison.
+.SH FILES
+.TF /lib/radio
+.TP
+.B /lib/radio
+.BR call ,
+.B peer
+and
+.B role
+per board; the rest is left alone
+.TP
+.B tools/f407/flashverify.sh
+the build and the proof the board runs what was flashed
+.SH SOURCE
+.B tools/radio/roleswap.py
+.SH "SEE ALSO"
+.IR ramptrial (1),
+.IR radiocal (1),
+.IR radio (3),
+.B doc/radio-plan.ms
+.SH BUGS
+Two runs an arm is enough to see a separation this clean and not enough
+for a rate; see
+.B tools/radio/stalerate.py
+for that.

@@ -442,6 +442,7 @@ radiossl radiossl
 radiostyx radiostyx
 raindrops raindrops
 raise sh-std
+ramptrial ramptrial
 raw2iaf auplay
 rawhide rawhide
 rblock sh-file2chan
@@ -459,6 +460,7 @@ rget sh-file2chan
 rm tiny
 rocket rocket
 rocketscience rocketscience
+roleswap roleswap
 rread sh-file2chan
 rreadone sh-file2chan
 rt wm-misc
@@ -501,6 +503,7 @@ squirt squirt
 stack stack
 stackv stack
 stadium stadium
+stalerate ramptrial
 status sh-std
 std sh-std
 stopwatch wm-misc
