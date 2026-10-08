@@ -8812,3 +8812,105 @@ and
 .IR ramptrial (1)
 for the two questions that are already answered.
 .B "Every wrong guess in this chase was killed by a counter, and all of them are still there."
+.NH 1
+WHAT STEP 5'S IDENTITY HALF COSTS, WHICH IS 197K OF FLASH
+.PP
+.I Protect ()
+in
+.B os/inferno/init/armv7mstyx.b
+has said all along that the secret is a constant in the file and that
+.IR keyring (2)'s
+.B auth
+is what would make it real, wanting a certificate per board under
+.B /keys
+which the root has not got.
+.B "Everything for that exists except one thing, and the one thing is expensive."
+.NH 2
+What is already there
+.PP
+.IR Mkradiokeys (1)
+makes a self-signed signer and a certified
+.B Authinfo
+per name, and
+.B keys/ground ,
+.B keys/satellite
+and
+.B keys/radio-signer
+have been generated \- 1424, 1427 and 1430 bytes.
+.IR Authchk (1)
+runs
+.B auth
+between two identities over a pipe, over a file descriptor and over a
+.IR lora (3)
+conversation, and has been measured on two
+.BR mps2-an386 :
+twelve messages each way, 15 and 17 transmissions with 3 and 5 retries,
+13.5 and 21.5 seconds.
+.PP
+.B "And its retries are not incidental,"
+which matters here: both ends send before either has received, so on a
+half-duplex radio their first transmissions overlap and carrier sense
+cannot help two stations that start in the same instant.
+.B "AX.25's connected mode retransmits, so the station's link already has what lora needed acks for."
+.NH 2
+And the one missing thing
+.PP
+.B "$Keyring was never registered."
+The conf's
+.B lib
+section has
+.BR keyring ,
+.B sec
+and
+.B mp
+\- the libraries are named \- but
+.B mod
+had only
+.BR sys ,
+so
+.CW "load Keyring Keyring->PATH"
+could not work:
+.B "lib links, mod registers."
+.B mps2
+and
+.B nucleof303
+declare it, which is where
+.I authchk
+was measured; this board is the one that did not.
+.PP
+.B "I wrote that the flash was therefore already paid for.  It is not."
+Declaring the module pulled the libraries in for real \- the loader had
+been discarding them unreferenced \- and the measurement is:
+.DS
+.CW "image         without keyring   with keyring   limit"
+.CW "armv7mstyx           644560        839712     913408"
+.CW "armv7minit           908056       1097376     913408"
+.CW "beepsatinit          646968     did not link  913408"
+.DE
+.B "197K, and mod is a property of the conf, which all three images share."
+The station would fit with 73K to spare; the shell image goes 184K over
+and the beepsat image does not link at all.
+.NH 2
+So it is a conf and not a line, which is the next session's decision
+.PP
+Three ways and none of them free:
+.IP \(bu
+.B "A second conf"
+\- the conf is exactly the unit that selects a kernel's modules, and an
+authenticating station is a different kernel.  It costs a duplicated
+configuration to keep in step with this one.
+.IP \(bu
+.B "Drop enough from the other two images to absorb 197K,"
+which the shell image cannot do: it is 908056 of 913408 already and its
+whole XIP list is smaller than the shortfall.
+.IP \(bu
+.B "Leave auth off and keep saying so,"
+which is where it is now and which
+.I protect ()
+already says in the right words.
+.PP
+The conf change is reverted and both images build.
+.B "What this records is the number,"
+because the question "what would the identity half cost" now has an
+answer measured rather than estimated, and the answer is what makes it a
+structural decision instead of a patch.
