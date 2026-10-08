@@ -14056,3 +14056,92 @@ bucket-to-band mapping is approximate: the boundaries are 64KB and 1MB, not
 exactly 5.3 and 85 per cent.
 .B "The item is closed to the extent that only this board could close it;"
 a human at the screen for ten minutes would still say something this does not.
+.NH 2
+The consctl poller hang, narrowed by one mechanism without triggering it
+.LP
+Writing anything to
+.CW /dev/consctl
+from the remote-command poller stops it dead, measured three times, and
+.B "where it stops has been undiagnosed"
+since the qlock theory was refuted by a JTAG read showing
+.CW kbd 's
+QLock entirely zero and
+.CW kbd.ctl
+back at 0 \(em so the open, write and close all completed.
+.LP
+.B "The kernel side is clean, read end to end."
+.CW consopen
+on
+.CW Qconsctl
+checks
+.CW iseve()
+and increments
+.CW kbd.ctl ;
+.CW conswrite
+handles
+.CW rawon
+and
+.CW rawoff
+and
+.B "does nothing whatever for any other string;"
+.CW consclose
+decrements and clears
+.CW kbd.raw
+on the last close.  Its loop terminates on every input \(em
+.CW "strchr(a, ' ')"
+returns nil at the end of the buffer.  There is no blocking call in any of it.
+.NH 3
+The obvious next mechanism is EXCLUDED, from evidence already in hand
+.LP
+.CW runremote
+runs each command in a
+.I child
+that, as its own comment says,
+.B "shares this process's file descriptor group."
+So the natural theory is that the child's
+.CW "> /dev/consctl"
+redirection, or its cleanup, mutates the POLLER's descriptors \(em which would
+explain the symptom precisely: output appears, the token never does, because
+the token's
+.CW echo
+went somewhere other than
+.CW board.out .
+.LP
+.B "It is wrong, and no new experiment was needed to show it."
+This session ran dozens of commands of the form
+.P1
+echo bflag 0 > /dev/sysctl; ... ; echo 'BR'^'-<token>'
+.P2
+\(em a redirection to a device file in the same shared group, followed by the
+token \(em and
+.B "the token appeared in board.out every time."
+So a redirection in the child does not leak onto the poller's fd 1, and the
+mechanism is excluded.
+.LP
+.B "Which leaves exactly two differences between consctl and sysctl,"
+and the answer has to be in one of them:
+.P1
+                consctl                 sysctl
+mode            0220, WRITE-ONLY        0644
+consopen        iseve(), kbd.ctl++      no case at all, no side effect
+consclose       kbd.ctl--, raw = 0      no case at all
+.P2
+.CW /dev/sysctl
+is written constantly here with no ill effect, so it is not "writing to a
+devcons file" that does this.
+.B "It is one of the open/close side effects on"
+.CW kbd ,
+or the write-only mode.
+.LP
+.B "The experiment that would settle it, NOT RUN."
+Trigger the hang and read the process table over JTAG \(em
+.CW tools/jtag/kstack
+dumps every process with its state and saved pc, which is exactly the question
+("where does the poller stop, and does it still exist") and is the one thing
+nobody has done.
+.B "It requires BOARDRUN_CONSCTL=1,"
+the override on
+.CW boardrun 's
+refusal, and that was denied to this session as a safety-bypass flag \(em
+correctly, since the guard exists because the hang needs a reboot to clear.
+.B "The narrowing above is what could be done without it."
