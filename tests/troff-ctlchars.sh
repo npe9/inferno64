@@ -28,6 +28,24 @@
 # [\x00-\x08] range outright rather than matching it, so a grep version
 # fails to run while looking like it found nothing.
 
+# EXIT STATUS: 0 clean, 1 stray control characters found, 2 could not
+# look (broken scanner, wrong directory, nothing matched).
+#
+# That mapping is NOT self-evident and must be read off whatever calls
+# this, because the two conventions in use here are opposites:
+# tests/cryptolverify.sh, the only prior shell test in this tree that
+# distinguishes them, uses 2 for "cryptol not found" -- could-not-look --
+# which this follows. A peer's tests/toolchain suite maps 2 to DEFECT and
+# every other nonzero to BROKE, the other way round, and five of its eight
+# tests reported real defects as harness failures while the summary said
+# "0 defect(s)" -- because the author chose 1-for-found by intuition. The
+# inversion lives in the mapping, so it is invisible from the test itself
+# and only appears when something other than a human runs it.
+#
+# Nothing in this tree aggregates this script today (runtests(1) runs Dis
+# tests, not shell ones). If that changes, check the mapping before
+# trusting a summary line.
+
 set -e
 cd "$(dirname "$0")/.."
 
