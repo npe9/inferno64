@@ -94,7 +94,11 @@ idle() {
 	if [ -z "${TOK:-}" ]; then
 		return
 	fi
-	if ! grep -q "$TOK" "$CMD" 2>/dev/null; then
+	# The file holds the SPLIT form ('BR'^'-pid-time'), not $TOK, so this
+	# looks for the part that survives the split.  Checked: a grep for
+	# "$TOK" here matched nothing, so idle() thought another run had taken
+	# the channel and never reset it.
+	if ! grep -q "${TOK#BR-}" "$CMD" 2>/dev/null; then
 		return
 	fi
 	printf 'load std; echo BR-IDLE-%s\n' "`date +%s`" > "$CMD"
@@ -202,13 +206,32 @@ if [ "$BIND" = 1 ]; then
 else
 	PRE="load std; "
 fi
-printf '%s%s; echo %s\n' "$PRE" "$1" "$TOK" > "$CMD"
+#
+# THE TOKEN IS ECHOED IN TWO PIECES, so the command line that the poller prints
+# back does NOT contain the string the wait is looking for.
+#
+# Why that matters: the wait used to anchor on "^$TOK", because the poller
+# echoes the whole command and the command contains "echo BR-...", so an
+# unanchored match would have fired the instant the command was issued.  But
+# anchoring means a token that does NOT start a line is missed -- and this
+# console interleaves output without newlines, as the kernel prints from
+# interrupt context into the middle of whatever a Dis process is writing.  A
+# peer found exactly this in their own log counting (grep -c '^panic' missed a
+# panic for four weeks because it did not begin a line) and it cost them an
+# observation.
+#
+# So neither anchored nor unanchored is right against one token.  Splitting it
+# makes them both unnecessary: sh concatenates with ^, so the board OUTPUT is
+# BR-<pid>-<time> while the echoed COMMAND reads 'BR'^'-<pid>-<time>', which
+# does not contain it.  The wait can then match anywhere on a line.
+#
+printf "%s%s; echo 'BR'^'-%s'\n" "$PRE" "$1" "${TOK#BR-}" > "$CMD"
 
 n=0
 lim=`expr $WAIT / 10`
 while [ $n -le $lim ]; do
 	if LC_ALL=C tr -cd '\11\12\40-\176' < "$OUT" 2>/dev/null |
-	    grep -q "^$TOK"; then
+	    grep -q "$TOK"; then
 		LC_ALL=C tr -cd '\11\12\40-\176' < "$OUT" | grep -vE '^RCMD'
 		exit 0
 	fi
