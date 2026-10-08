@@ -116,6 +116,7 @@ enum
 	MacMFRA,
 	MacRELQ,
 	MacBNDS,
+	MacZDIV,
 	NMACRO
 };
 
@@ -337,6 +338,7 @@ static	void	macfram(void);
 static	void	macmfra(void);
 static	void	macrelq(void);
 static	void	macbounds(void);
+static	void	maczdiv(void);
 static	void	movmem(Inst*);
 static	void	mid(Inst*, int, int);
 static	void	mem(int, long, int, int);
@@ -365,6 +367,7 @@ static struct
 	{ MacMFRA,	macmfra,	"MFRA" },
 	{ MacRELQ,	macrelq,	"RELQ" },
 	{ MacBNDS,	macbounds,	"BNDS" },
+	{ MacZDIV,	maczdiv,	"ZDIV" },
 };
 
 /*
@@ -440,6 +443,12 @@ static void
 bounds(void)
 {
 	error(exBounds);
+}
+
+static void
+zdiv(void)
+{
+	error(exZdiv);
 }
 
 /*
@@ -970,6 +979,34 @@ punt(Inst *i, int m, void (*fn)(void))
 		mem(Ldw, O(REG, PC), RREG, RTA);
 		BR_REG(RTA);
 	}
+}
+
+/*
+ * zdivchk -- raise "zero divide" if register r (the divisor) is zero.
+ *
+ * AArch64 SDIV yields 0 for a zero divisor and does not trap, so unlike
+ * x86 (which gets this from SIGFPE) the check has to be explicit here;
+ * libinterp/xec.c does the same for the interpreted path.
+ *
+ * R.PC has to be stored before error() runs, or handler() cannot find
+ * the Limbo handler covering this instruction: it derives the offset
+ * from R.PC, so a stale value lands outside every [pc1, pc2) range and
+ * the exception escapes the enclosing `{} exception {}' block instead
+ * of being caught.  This is the same store punt() makes for WRTPC, and
+ * it sits on the faulting path only -- an ordinary division pays one
+ * CBNZ, not the four-instruction constant load.
+ */
+static void
+zdivchk(Inst *i, int r)
+{
+	u32int *nz;
+
+	nz = code;
+	CBNZ_X(r, 0);			/* patched below: skip the fault path */
+	con(RELPC(patch[i - mod->prog + 1]), RA0);
+	mem(Stw, O(REG, PC), RREG, RA0);
+	bramac(MacZDIV);		/* error(exZdiv); never returns */
+	PATCH_BCOND(nz);
 }
 
 /*
@@ -1612,12 +1649,14 @@ comp(Inst *i)
 	case IDIVW:
 		opwld(i, Ldw, RA1);
 		mid(i, Ldw, RA0);
+		zdivchk(i, RA1);
 		SDIV_REG(RA0, RA0, RA1);
 		opwst(i, Stw, RA0);
 		break;
 	case IMODW:
 		opwld(i, Ldw, RA1);
 		mid(i, Ldw, RA0);
+		zdivchk(i, RA1);
 		SDIV_REG(RA2, RA0, RA1);
 		MSUB_REG(RA0, RA1, RA2, RA0);
 		opwst(i, Stw, RA0);
@@ -1645,12 +1684,14 @@ comp(Inst *i)
 	case IDIVB:
 		opwld(i, Ldb, RA1);
 		mid(i, Ldb, RA0);
+		zdivchk(i, RA1);
 		SDIV_REG(RA0, RA0, RA1);
 		opwst(i, Stb, RA0);
 		break;
 	case IMODB:
 		opwld(i, Ldb, RA1);
 		mid(i, Ldb, RA0);
+		zdivchk(i, RA1);
 		SDIV_REG(RA2, RA0, RA1);
 		MSUB_REG(RA0, RA1, RA2, RA0);
 		opwst(i, Stb, RA0);
@@ -1678,12 +1719,14 @@ comp(Inst *i)
 	case IDIVL:
 		opwld(i, Ldw, RA1);
 		mid(i, Ldw, RA0);
+		zdivchk(i, RA1);
 		SDIV_REG(RA0, RA0, RA1);
 		opwst(i, Stw, RA0);
 		break;
 	case IMODL:
 		opwld(i, Ldw, RA1);
 		mid(i, Ldw, RA0);
+		zdivchk(i, RA1);
 		SDIV_REG(RA2, RA0, RA1);
 		MSUB_REG(RA0, RA1, RA2, RA0);
 		opwst(i, Stw, RA0);
@@ -2640,6 +2683,13 @@ static void
 macbounds(void)
 {
 	con((uvlong)bounds, RTA);
+	BLR_REG(RTA);
+}
+
+static void
+maczdiv(void)
+{
+	con((uvlong)zdiv, RTA);
 	BLR_REG(RTA);
 }
 
