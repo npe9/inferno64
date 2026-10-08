@@ -4,6 +4,7 @@ TARG=6l
 
 OFILES=\
 	asm.$O\
+	check.$O\
 	obj.$O\
 	optab.$O\
 	pass.$O\

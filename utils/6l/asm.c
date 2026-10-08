@@ -113,6 +113,7 @@ asmb(void)
 			pc = p->pc;
 		}
 		curp = p;
+		checkout(p);	/* refuse what cannot be right; check.c */
 		asmins(p);
 		a = (andptr - and);
 		if(cbc < a)

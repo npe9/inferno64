@@ -346,6 +346,7 @@ Prog*	appendp(Prog*);
 void	asmb(void);
 void	asmdyn(void);
 void	asmins(Prog*);
+void	checkout(Prog*);
 void	asmlc(void);
 void	asmsp(void);
 void	asmsym(void);

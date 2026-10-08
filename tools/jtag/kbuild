@@ -142,8 +142,30 @@ rc=$?
 # refusal below fire on a good build: loud and safe.  An anchor cannot
 # produce the dangerous direction, an over-count hiding a missing link.
 #
-links=`grep -c "^7l -o i$CONF" "$LOG"`
-echo "kbuild: mk exit $rc, 7l links $links, log $LOG"
+#
+# THE LOADER'S NAME COMES FROM THE BOARD, not from a constant.  This counted
+# "^7l -o i$CONF" whatever the board was, so on an amd64 board -- pc64, whose
+# loader is 6l -- it counted ZERO and refused a build that had linked
+# perfectly.  A false refusal, in the safe direction, but it meant kbuild only
+# ever worked for aarch64 and said nothing about that.
+#
+# Derived the same way tests/kencc-selfbranch.sh does it: OBJTYPE from the
+# board's own mkfile, then LD= from mkfiles/mkfile-Inferno-<objtype>.
+#
+LD=`grep -hoE '^OBJTYPE=[a-z0-9]+' "$D/mkfile" 2>/dev/null | head -1 |
+	cut -d= -f2 |
+	while read ot; do
+		grep -hE '^LD=' "$ROOT/mkfiles/mkfile-Inferno-$ot" 2>/dev/null |
+			head -1 | awk '{print $2}'
+	done`
+if [ -z "$LD" ]; then
+	echo "kbuild: cannot tell which loader $CONF uses (no OBJTYPE in" >&2
+	echo "kbuild: $D/mkfile, or no LD= for it in mkfiles/).  Not reporting" >&2
+	echo "kbuild: a link count it would have to guess at." >&2
+	exit 2
+fi
+links=`grep -c "^$LD -o i$CONF" "$LOG"`
+echo "kbuild: mk exit $rc, $LD links $links, log $LOG"
 [ -f "$LOG.prev" ] && echo "kbuild:   previous run kept at $LOG.prev (diff them for new warnings)"
 
 if [ "$rc" -ne 0 ]; then
@@ -168,7 +190,7 @@ fi
 # first time it could be.
 #
 if [ "$links" -lt 1 ]; then
-	echo "kbuild: REFUSING -- 7l linked $links times." >&2
+	echo "kbuild: REFUSING -- $LD linked $links times." >&2
 	echo "kbuild: mk exited 0 WITHOUT LINKING, which is the hazard this" >&2
 	echo "kbuild: tool exists for: a change under lib*/ recompiles and" >&2
 	echo "kbuild: re-archives, and the kernel target has no edge to the" >&2

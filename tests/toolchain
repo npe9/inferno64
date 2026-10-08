@@ -43,10 +43,13 @@
 #                     earlier versions of that survey each reported a clean
 #                     sweep over pages that had gaps.
 #
-#   7l-selfbranch-refused
-#                     the LOADER must REFUSE a conditional branch to itself,
-#                     not merely warn: utils/7l/check.c asserts it between
-#                     oplook and asmout.  Companion to kencc-selfbranch, which
+#   selfbranch-refused
+#                     a LOADER must REFUSE a conditional branch to itself, not
+#                     merely warn: utils/7l/check.c and utils/6l/check.c assert
+#                     it at the emit choke point.  BOTH loaders, and it reports
+#                     "checked 2 of 2" so a loader going missing is visible.
+#                     6l needed it most: the defect was real on amd64 too and
+#                     selfbranch.py cannot read ipc64's a.out at all.  Companion to kencc-selfbranch, which
 #                     scans a built kernel -- that only runs when someone runs
 #                     it and reads 3 of 17 images, while a refusal covers every
 #                     target every time.  Checks three things (nonzero exit,
@@ -76,7 +79,7 @@ cd "$ROOT" || exit 1
 
 TESTS="kencc-brloop.sh kencc-selfbranch.sh kencc-narrowcast.sh \
 	kencc-widencast.sh 7l-bigconst.sh troff-argorder.sh man-cmdtab.sh \
-	troff-ctlchars.sh 7l-selfbranch-refused.sh"
+	troff-ctlchars.sh selfbranch-refused.sh"
 
 pass=0
 broke=0
