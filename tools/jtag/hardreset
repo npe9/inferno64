@@ -2,7 +2,7 @@
 #
 # Force a REAL firmware reset over JTAG, so the board reboots from the card.
 #
-#	sh tools/jtag/hardreset
+#	tools/jtag/hardreset		(no arguments)
 #
 # THIS IS NOT A JTAG WARM RESTART and the difference is the whole point.
 # boot.sh replaces memory and jumps, which leaves every peripheral exactly as
@@ -66,6 +66,22 @@
 # looks like from the debugger's side.  So this cannot use openocd's status to
 # decide, and instead waits for the board to answer.
 #
+#
+# IT TAKES NO ARGUMENTS, and until now it did not LOOK at them either: it
+# reset unconditionally, so `hardreset --help' -- which is what a reader
+# reaches for before running a tool whose name is a verb -- rebooted the
+# board instead of printing anything.  I did that to myself while checking
+# that the tool was executable.  A tool whose whole job is a destructive
+# act must refuse an argument it does not understand, because an ignored
+# argument means the user asked for something OTHER than the act and got
+# the act.
+#
+if [ $# -ne 0 ]; then
+	echo "usage: hardreset        (no arguments; arms the PM watchdog NOW)" >&2
+	echo "hardreset: refusing to reset the board -- you passed: $*" >&2
+	exit 2
+fi
+
 set -u
 HERE=`cd \`dirname "$0"\` && pwd`
 ROOT=`cd "$HERE/../.." && pwd`

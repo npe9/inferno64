@@ -42,6 +42,21 @@
 # targets are built fresh -- see the guard below for why it is not "exactly
 # one".)
 #
+#
+# IT TAKES NO POSITIONAL ARGUMENTS -- the board comes from CONF= in the
+# environment -- and it used not to look at them, which is worse here than
+# a tool that merely ignores a flag: `kbuild raspi3b' would have built the
+# DEFAULT board, printed a clean build and been believed.  A wrong-board
+# build that reports success is exactly the kind of thing this directory
+# exists to refuse.
+#
+if [ $# -ne 0 ]; then
+	echo "usage: CONF=<board> kbuild        (the board is an ENVIRONMENT variable)" >&2
+	echo "kbuild: refusing to build -- you passed: $*" >&2
+	echo "kbuild: did you mean: CONF=$1 $0" >&2
+	exit 2
+fi
+
 set -u
 HERE=`cd \`dirname "$0"\` && pwd`
 ROOT=`cd "$HERE/../.." && pwd`

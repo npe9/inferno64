@@ -27,6 +27,18 @@
 # starting, keep stderr, look in it for the announce failure, and
 # finish with a real Styx handshake.
 #
+#
+# IT TAKES NO ARGUMENTS, and it used not to look at them: `styxd.sh stop'
+# or `styxd.sh restart' would have RESTARTED the server either way, taking
+# the board's mount down with it.  An ignored subcommand means the user
+# asked for one thing and got another.
+#
+if [ $# -ne 0 ]; then
+	echo "usage: styxd.sh        (no arguments; PORT=/EMU=/LOG= are environment)" >&2
+	echo "styxd.sh: refusing to touch the server -- you passed: $*" >&2
+	exit 2
+fi
+
 set -u
 ROOT=`cd \`dirname "$0"\`/../.. && pwd`
 #
