@@ -240,19 +240,33 @@ in that tree is the page for them. An unrecognised string gives
 .BR "unknown control request" .
 .PP
 .B sysctl
-is mode 0644, so writing it needs to be the file's owner. Note that
-unlike
+is mode 0644, so writing it needs to be the file's owner. Beyond that
+the two implementations differ, and the difference is worth knowing
+because this page describes both:
+.TP
+native kernel
+.B os/inferno/devcons.c
+checks explicitly \-
+.B "case Qsysctl: if(!iseve()) error(Eperm)"
+\- so only the privileged user may write, enforced by the device.
+.TP
+hosted emu
+.B emu/port/devcons.c
+has no such check in
+.IR sysconwrite ();
+the restriction is the ordinary permission check against the file's
+owner and nothing more. Note that
 .B user
 and
 .BR sysname ,
-which are the same mode and additionally verify the writer with
-.IR iseve (),
-the
-.B sysctl
-write path performs no such check of its own: the restriction is the
-ordinary permission check against the file's owner and nothing more.
-That is a documented inconsistency rather than a demonstrated hole \-
-no unprivileged write was shown to succeed here.
+the same mode in the same device, do call
+.IR iseve ().
+.PP
+That asymmetry is recorded as an inconsistency, not as a hole: no
+unprivileged write was shown to succeed under
+.IR emu ,
+and "performs no check" and "is exploitable" are different claims of
+which only the first is established here.
 .PP
 The
 .B sysname
