@@ -651,3 +651,187 @@ and
 the way
 .CW tests/kencc-selfbranch.sh
 already did, and exits 2 rather than guessing if it cannot tell.
+.NH 1
+Against clang: how big is the gap, and what would each closing step cost
+.LP
+Six functions of strictly portable C \(em a summing loop, a struct-plus-arith
+address computation, a byte-copy loop, a five-case switch, a shift/xor hash and
+a leaf multiply-add \(em compiled verbatim by both toolchains.
+.B "No GCC was available:"
+.CW gcc
+on this host is Apple clang, so this is a clang comparison and is labelled as
+one.
+.P1
+fn         7c   clang-O0   clang-O1   clang-O2    7c/O1
+sum        25         25         13         62     1.9x
+addr       13         16          6          6     2.2x
+blit       19         22          9         53     2.1x
+cls        27         43          6          6     4.5x
+hash       25         25         14         14     1.8x
+leaf       10         10          2          2     5.0x
+TOTAL     119        141         50        143     2.4x
+.P2
+.B "-O1 is the honest comparison and -O2 is not."
+At
+.CW -O2
+clang
+.I unrolls
+and
+.I vectorises :
+.CW sum
+goes from 13 instructions to 62 and
+.CW blit
+from 9 to 53.
+.B "More instructions, faster code"
+\(em so instruction count stops measuring quality there, and a kernel does not
+want that trade anyway.
+.B "Against -O1, kencc emits 2.4 times the instructions."
+.NH 2
+Where the 2.4x actually goes
+.LP
+.CW "int leaf(int a, int b) { return a*b + a; }"
+is the clearest case, 10 instructions against 2:
+.P1
+clang -O1          7c
+  madd w0,w0,w1,w0   MOVW  b+8(FP),R10     <- b comes off the STACK
+  ret                MOVW  R0,R9           <- a is already in R0
+                     MOVW  R9,R4              and is copied three times
+                     MOVW  R10,R3
+                     MULW  R3,R4
+                     MOVW  R9,R5
+                     ADDW  R5,R4           <- MUL then ADD, not MADD
+                     MOVW  R4,R0
+                     RETURN ,
+                     RETURN ,              <- emitted twice
+.P2
+.B "That one function contains four INDEPENDENT causes,"
+and they have wildly different prices.  The whole argument of this section is
+that they must be priced separately rather than as "kencc is 2.4x worse".
+.NH 2
+The price of each, cheapest first
+.IP 1.
+.B "The duplicate RETURN. 76 pairs across 135 functions, 0.29 per cent."
+A two-instruction window: a
+.CW RETURN
+immediately after a
+.CW RETURN
+is unreachable.
+.B "About five lines in the existing peep loop, no new state, no analysis."
+Nothing argues against it.
+.IP 2.
+.B "MUL followed by ADD is MADD."
+AArch64 has a fused multiply-add and 7c never emits it.  A fixed two-instruction
+window with a register-liveness question kencc can already answer:
+.B "roughly twenty lines."
+.B Against :
+it needs the multiply's destination to be dead after the add, and getting that
+wrong is a silent miscompile in the family that has already produced two here.
+.IP 3.
+.B "The copy chains."
+.CW copyprop
+and
+.CW subprop
+exist in
+.CW peep.c
+and
+.B "deliberately exclude AMOVW and AMOVWU,"
+with the reason in an inline comment: an int -1 became 0xffffffff downstream.
+So this is a KNOWN defect being worked around, not a missing optimisation.
+.B "Moderate:"
+the fix is to make the propagation width-aware rather than to relax the
+exclusion.
+.B Against :
+it is the exact code path of this tree's two silent miscompiles.
+.IP 4.
+.B "Branchless select."
+.CW peep.c
+already has
+.CW predicate() .
+Whether it fires on these shapes was not measured here and should be before
+anything is written.
+.IP 5.
+.B "The switch compiled to arithmetic."
+clang noticed every arm of
+.CW cls
+is affine in the selector and emitted
+.CW "add/lsl/cmp/csel"
+with no branches at all.
+.B "That is whole-function value analysis, not a peephole,"
+and needs an IR carrying value ranges.
+.B "Expensive, and the honest answer is not to."
+.IP 6.
+.B "Arguments on the stack."
+.CW leaf
+loads
+.CW b
+from
+.CW b+8(FP)
+while
+.CW a
+arrives in
+.CW R0 .
+.B "This is the Plan 9 ABI, not an optimisation gap."
+No pass can remove it; changing it means changing every hand-written
+.CW .s
+in the tree and the Dis JIT's assumptions about frames.
+.B "Enormous, and it is a large part of the remaining 2.4x."
+.IP 7.
+.B "Unrolling and vectorising."
+Large, and
+.I "not wanted"
+\(em it is where clang's instruction count triples, and a kernel pays for code
+size.
+.NH 2
+The compile-time budget, which is the surprising part
+.P1
+7c          6.3 ms per compile
+clang -O0  34.2 ms
+clang -O1  31.5 ms
+clang -O2  35.1 ms
+.P2
+.B "clang is five times slower than 7c with its optimiser switched OFF,"
+and the whole distance from
+.CW -O0
+to
+.CW -O2
+is under a millisecond \(em about 3 per cent of its own compile time.
+.LP
+.B "So the expensive thing is not the optimisations.  It is the infrastructure"
+.B "they are built on"
+\(em a full IR, SSA construction, generalised pass management.  That inverts the
+usual framing of this tradeoff and it is what makes "best quality, near
+instantly" a coherent goal rather than a contradiction:
+.B "an optimisation costs kencc almost nothing if it fits the data structures kencc already has."
+.NH 2
+What kencc already has, which decides what is affordable
+.LP
+.CW utils/7c/reg.c
+is not just a register allocator.  It builds a flow graph and computes
+.CW loopit()
+for loop nesting,
+.CW prop()
+for dataflow propagation,
+.CW synch()
+for register/variable synchrony, and bit-vector liveness used throughout.
+.B "So liveness and loop structure are NOT missing"
+\(em they are already paid for, because the allocator needs them, and
+.CW peep.c 's
+.CW copyprop
+and
+.CW subprop
+already use them.
+.LP
+That gives three honest tiers:
+.P1
+tier                     infrastructure   verdict
+fixed-window peephole    none needed      DO: MADD, duplicate RETURN,
+                                          the extension pair already fixed
+uses the existing flow   already built    MAYBE: width-aware copyprop,
+graph and liveness                        if-conversion via predicate()
+needs SSA or value       does not exist   DO NOT: switch-to-arithmetic,
+ranges                                    loop strength reduction
+.P2
+.B "The remaining gap after tier one is mostly tiers two and three plus the ABI,"
+and the ABI is not an optimisation at all.  So the reachable target is not
+clang's 2.4x; it is the part of it that lives in tier one and the cheaper half
+of tier two, bought at a few tens of lines and no measurable compile time.
