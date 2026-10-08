@@ -684,8 +684,30 @@ poolfree(Pool *p, void *v)
 	 * only when something else later stumbles onto the damage.  See
 	 * doc/inferno-ports.ms.
 	 */
+	/*
+	 * AND A SIZE THAT IS SIMPLY TOO LARGE, which the first three tests let
+	 * through.  A peer's check (multicore), taken because the gap is here
+	 * too: magic, size <= 0 and misalignment all reject an obviously
+	 * damaged header, but a size that is POSITIVE, quanta-aligned and
+	 * bigger than every arena the pool ever got passes all three.
+	 *
+	 * That is the shape that matters, because the joins below do
+	 * B2NB(b) -- b + b->size -- and read c->magic there.  With a size past
+	 * the end of the arena that read is outside it, so the forward join
+	 * decides whether to merge on a word belonging to nobody.
+	 *
+	 * arenasize is the sum of everything brk has ever given this pool
+	 * (alloc.c:548), so no single block can exceed it; a block that claims
+	 * to is not a block.  Fatal rather than counted, which is a deliberate
+	 * departure from the collector's arena bound: there the cursor can be
+	 * discarded and the sweep restarted, so a count and a recovery are
+	 * better than a panic.  Here poolfree has already been handed a
+	 * corrupt header by its caller and there is nothing safe to do with
+	 * it, so it joins the three tests that were already fatal.
+	 */
 	if((b->magic != MAGIC_A && b->magic != MAGIC_I) ||
-	   b->size <= 0 || (b->size & p->quanta))
+	   b->size <= 0 || (b->size & p->quanta) ||
+	   (uintptr)b->size > p->arenasize)
 		poolfault(v, "poolfree:badhdr", getcallerpc(&p));
 
 	notefree(v, getcallerpc(&p));

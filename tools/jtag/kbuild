@@ -175,10 +175,23 @@ done
 # Which is why the per-file breakdown matters more than the total: the question
 # is whether any diagnostic names a file this change touched.
 #
+#
+# DISTINCT AS WELL AS RAW, because the raw count is EMISSIONS and mk compiles
+# some files more than once in a run.  ../port/alloc.c is compiled twice here,
+# so its nine warnings count as eighteen -- which read as "my change added
+# nine" when it had added none, and which is also why this line said 145 on
+# one full rebuild and 146 on the next with identical sources: the two runs
+# compiled some file a different number of times.
+#
+# A count of emissions is the wrong dimension for "did I add a warning", and
+# the distinct count is the right one.  Both are printed, because the raw
+# number is still what the per-file table below adds up to.
+#
 nd=`grep -ciE 'warning|not declared|undefined' "$LOG"`
+ndu=`grep -iE 'warning|not declared|undefined' "$LOG" | sort -u | wc -l | tr -d ' '`
 nf=`grep -iE 'warning|not declared|undefined' "$LOG" |
 	sed 's/^warning: //;s/:.*//' | sort -u | wc -l | tr -d ' '`
-echo "kbuild: diagnostics in the log: $nd, in $nf file(s)"
+echo "kbuild: diagnostics in the log: $nd emission(s), $ndu distinct, in $nf file(s)"
 echo "kbuild:   (over what THIS run recompiled -- a zero is not a clean tree)"
 [ "$nd" -gt 0 ] && grep -iE 'warning|not declared|undefined' "$LOG" |
 	sed 's/^warning: //;s/:.*//' | sort | uniq -c | sort -rn | head -12
