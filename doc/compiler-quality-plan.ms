@@ -899,7 +899,7 @@ duplicate RETURN       77   0.57       1  none    HIGH   NO, see below
 shift fold (shiftprop)164   1.21     ~30  flow    med    DONE, ported
 branch to next instr  153   1.13      ~8  none    low    LISTING only
 adjacent spill/reload  69   0.51      ~8  none    low    marginal
-width-aware copyprop <=38886 <=58.6  ~40  flow    HIGH   OPEN, 44% bound
+width-aware copyprop   7273   32.3     ~50  flow    HIGH   OPEN, candidates
 MUL+ADD -> MADD        18   0.13     ~20  flow    med    NO -- too rare
 extension pair         14   0.10       1  none    med    DONE (see below)
 switch -> arithmetic    -      -    ~300  SSA     high   NO
@@ -1082,6 +1082,108 @@ touched is named and is the one with a recorded miscompile, and the bound is
 .B "The forty lines are not written here,"
 because the measurement that would justify them is basic-block-aware and that
 is the same work as the pass.
+.NH 2
+The flow-aware count, and why 7273 is not 7273 instructions
+.LP
+The listing survey above gave 44.3 per cent and said so as an upper bound,
+because it recorded the last writer of a register in source order with no
+basic blocks.
+.B "Doing it inside the compiler, where reg.c's flow graph is already paid for,"
+.B "lowers it \(em as predicted."
+A single extra pass, 50 lines, no transformation: for each surviving 32-bit
+register-to-register move, walk back through
+.CW uniqp()
+only, so a basic-block boundary is crossed exactly when that block has one
+predecessor, and stop at a merge.
+.P1
+total surviving 32-bit reg-to-reg moves   22493
+  same register (pure conversion)           2937   13.1%  never removable
+  producer at a MERGE (unknown)             5887   26.2%  conservatively not
+  producer is a CALL return (W0 zero-ext)   2904   12.9%  NOT redundant
+  W-form producer (zero-extends)            2030    9.0%  THE MISCOMPILE CLASS
+  IDEMPOTENT (MOVW/MOVW, MOVWU/MOVWU)       7273   32.3%  pure copy, CANDIDATE
+  narrower zero-extending load                87    0.4%  also a no-op
+  other (64-bit MOV, cross-kind)            1375    6.1%  NOT redundant
+.P2
+.LP
+As a share of the different-source moves that is 7273 of 19556, or
+.B "37.2 per cent against the listing survey's 44.3,"
+and the direction is the one the caveat predicted: the awk credited producers
+that sit on the other side of a branch.
+.LP
+.B "TWO CROSS-CHECKS MADE THIS INSTRUMENT TRUSTWORTHY, and it failed both"
+.B "before it passed them."
+.IP 1.
+.B "Placed before loop1 it counted 338 moves in chan.c where 287 reach the"
+.B "listing."
+The 51 difference is moves that
+.CW copyprop
+and its neighbours remove anyway, and a survey that counts those overstates
+what a new pass could win.  Moved to the end of
+.CW peep() ,
+after every existing pass, it counts 287 \(em
+.B "exactly the independent listing count,"
+which is the check that makes the number usable at all.
+.IP 2.
+Run twice it gives the same figure, which is what says the fixed-point loop is
+no longer being counted.
+.LP
+.B "AND 7273 IS NOT 7273 INSTRUCTIONS SAVED.  This is the reading to refuse."
+An idempotent
+.CW "MOVW Rx,Ry"
+with
+.CW Rx
+already sign-extended is still a
+.I copy :
+the value has to reach
+.CW Ry .
+Nothing about knowing the source is already extended deletes it.
+.B "What the knowledge buys is permission to PROPAGATE it,"
+which
+.CW copyprop
+currently refuses outright for
+.CW AMOVW
+and
+.CW AMOVWU ,
+and only after propagation succeeds does the copy become dead and get excised.
+So 7273 is a count of
+.I candidates ,
+and the fraction of candidates whose uses copyprop can actually rewrite is a
+further unknown that this measurement does not touch.
+.LP
+.B "What it does settle is the shape of the pass."
+The condition is
+.B "\(lqwas the source extended the SAME WAY\(rq,"
+not \(lqis the source 32 bits\(rq:
+.P1
+MOVW  after MOVW   idempotent SXTW        propagate
+MOVWU after MOVWU  idempotent UXTW        propagate
+MOVWU after MOVW   sign- then zero-ext    DO NOT: differs when bit 31 is set
+MOVW  after MOVWU  zero- then sign-ext    DO NOT: same
+MOVW  after ADDW   W-form ZERO-extends    DO NOT: this is the recorded bug
+MOVW  after a call  W0 ZERO-extends       DO NOT: same, and 2904 of them
+.P2
+.LP
+The two
+.CW "DO NOT"
+rows that matter are worth 4934 sites between them \(em W-form producers and
+call returns \(em and both are the
+.CW "int -1 -> 0xffffffff"
+miscompile recorded in
+.CW peep.c 's
+own comment.
+.B "A pass keyed on width rather than on signedness reintroduces it in 4934"
+.B "places,"
+which is why the exclusion that exists today is the right conservative default
+and why relaxing it needs the producer's extension kind and not its size.
+.LP
+.B "The remaining 5887 merges are the measurable headroom beyond this."
+They are unknown only because the survey stops at a merge;
+.CW reg.c
+already computes bit-vector liveness and
+.CW prop() ,
+so a real pass could resolve some fraction of them.  That makes the candidate
+range 7273 to 13160, and narrowing it is the same work as writing the pass.
 .NH 2
 The shiftprop kernel on silicon
 .LP
