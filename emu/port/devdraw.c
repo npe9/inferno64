@@ -2719,10 +2719,29 @@ d3fillpolyz(Client *cl, Memimage *dst, Point *pp, int nw,
 	Memimage *ones;
 
 	if(!cl->d3zenable || cl->d3zbuf == nil){
-		memfillpoly(dst, pp, nw+1, ~0, src, pp[0], op);
+		/*
+		 * pp[0] through a named local, not passed straight from the
+		 * array. 7c materialises a struct value taken from an
+		 * indexed expression in `nodrat', a STATIC scratch area, and
+		 * warns "non-interruptable temporary" because an interrupt
+		 * handler doing the same would clobber it -- which matters
+		 * in the kernel copy of this file and is harmless hosted.
+		 * A named local is a stack slot, so neither copy needs the
+		 * scratch and the two stay the same text.
+		 */
+		p = pp[0];
+		memfillpoly(dst, pp, nw+1, ~0, src, p, op);
 		return;
 	}
-	bbox.min = bbox.max = pp[0];
+	/*
+	 * Split, not chained: `a = b = pp[0]' makes the inner assignment's
+	 * value feed the outer one, which 7c materialises in its static
+	 * scratch and warns about for the same reason as above. Two plain
+	 * assignments from a local need no temporary at all.
+	 */
+	p = pp[0];
+	bbox.min = p;
+	bbox.max = p;
 	for(k = 1; k < nw; k++){
 		if(pp[k].x < bbox.min.x) bbox.min.x = pp[k].x;
 		if(pp[k].y < bbox.min.y) bbox.min.y = pp[k].y;
@@ -4021,7 +4040,9 @@ drawmesg(Client *client, void *av, int n)
 				/* flush bbox of projected verts */
 				r = dst->clipr;
 				if(nw > 0){
-					r.min = r.max = pp[0];
+					p = pp[0];
+					r.min = p;
+					r.max = p;
 					for(j = 1; j < nw; j++){
 						if(pp[j].x < r.min.x) r.min.x = pp[j].x;
 						if(pp[j].y < r.min.y) r.min.y = pp[j].y;
@@ -4242,7 +4263,9 @@ drawmesg(Client *client, void *av, int n)
 					if(ltmp)
 						freememimage(ltmp);
 					r = dst->clipr;
-					r.min = r.max = pp2[0];
+					p = pp2[0];
+					r.min = p;
+					r.max = p;
 					for(j = 1; j < nw; j++){
 						if(pp2[j].x < r.min.x) r.min.x = pp2[j].x;
 						if(pp2[j].y < r.min.y) r.min.y = pp2[j].y;

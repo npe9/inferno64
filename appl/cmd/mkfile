@@ -80,6 +80,7 @@ TARG=\
 	disdump.dis\
 	disrepl.dis\
 	limborepl.dis\
+	draw3dkerntest.dis\
 	draw3dbench.dis\
 	draw3dsafetest.dis\
 	tkbench.dis\
