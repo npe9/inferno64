@@ -48,9 +48,11 @@ for name, b in ends:
     #
     # "scrollback 0" discards the buffer and the second call puts it
     # back, which is the only way screen offers to empty it.
-    subprocess.run(["screen", "-S", b.sess, "-X", "scrollback", "0"])
-    subprocess.run(["screen", "-S", b.sess, "-X", "clear"])
-    subprocess.run(["screen", "-S", b.sess, "-X", "scrollback", "10000"])
+    # A clear that PROVES it cleared -- see Board.clear().  Issued as
+    # three bare "screen -X" commands with no delay this silently did
+    # nothing, and two runs in a row were then read out of the previous
+    # session's text.
+    b.clear()
     b.reset()
     time.sleep(6 if name == "sat" else 1)
 time.sleep(10)
@@ -61,7 +63,7 @@ KEY = re.compile(
     # The received RSSI, which is what calibrates a transmit-power sweep:
     # without it ramptrial(1) reports the link budget it SET and not the
     # one the far end actually heard.
-    r"|rssi -?\d+ offset"
+    r"|rssi -?\d+ offset|styx: core |pool (main|heap|image): live|chunks \d+ span "
     r"|no procs|smalloc|no free Blocks|panic|exceeded"
     # AND THE WORDS THE BOARD ACTUALLY USES WHEN IT RUNS OUT.  The ssl
     # arm was read for an afternoon as a kernel wedge because the one

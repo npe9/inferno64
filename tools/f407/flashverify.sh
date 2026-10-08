@@ -199,6 +199,72 @@ if [ -n "$INIT" ] && [ "$CARRIES" != "from ../init/$INIT.dis" ]; then
 fi
 echo "flashverify: built, kerndate $STAMP"
 
+# AND IT BOOTS THE IMAGE UNDER QEMU BEFORE PUTTING IT ON A BOARD.
+#
+# Every check above asks whether the right FILES went into the image.
+# None of them asks whether the image runs, and the gap is wide enough
+# to drive a whole session into: os/inferno/init/<init>.dis must be
+# built with DISWORD=4 for this 32 bit kernel -- the kernel mkfile does
+# that, with "cd ../init; mk 'DISWORD='$DISWORD $INIT.dis" -- and a
+# <init>.dis built BY HAND in that directory picks up mkconfig's
+# default of 8 instead.  mk then sees a newer .dis and embeds it, so a
+# 64 bit word module goes into a 32 bit kernel.  It flashes, the banner
+# prints, the kerndate matches, nproc matches, prog.s names the right
+# init, and the module cannot load: the interpreter walks the type
+# descriptor map, finds 2 where a pointer belongs, and takes a bus
+# fault in D2H() before init() runs a single line.
+#
+# Two boards were flashed with exactly that and read as working runs,
+# because what was being read was the PREVIOUS session's scrollback.
+# The failure is instant, deterministic and free to provoke: the board
+# this kernel is built for is modelled by qemu-system-arm's
+# netduinoplus2, and the whole fault happens before any device is
+# touched.  Forty seconds here against an hour of measurements taken
+# against a kernel that panicked at startup.
+#
+# A missing qemu says so and does not pass quietly -- a check that
+# cannot fail is how the stale XIP blob got as far as the flash limit.
+QEMU=${QEMU:-/Users/npe/src/qemu-v10.1.3/build-arm/qemu-system-arm}
+if [ ! -x "$QEMU" ]; then
+	echo "flashverify: NO SMOKE TEST -- no qemu at $QEMU, so whether this"
+	echo "image can load its own init module is unknown.  Set QEMU= to"
+	echo "a build that has -M netduinoplus2."
+else
+	SMOKE=/tmp/fv-smoke-$$.log
+	timeout -s KILL 40 "$QEMU" -M netduinoplus2,radio=on -nographic \
+	    -serial null -serial mon:stdio \
+	    -kernel os/inferno/stm32f407/i$CONF < /dev/null > $SMOKE 2>&1
+	if grep -qE "fault pc|panic:" $SMOKE; then
+		echo "FLASHVERIFY-FAILED the image faults under qemu before it"
+		echo "gets anywhere, so flashing it would only move the fault"
+		echo "onto a board:"
+		grep -nE "Initial Dis|fault pc|cfsr|panic:" $SMOKE | head -5
+		echo "If the fault is in D2H/interp right after \"Initial Dis\","
+		echo "the init module was built with the wrong DISWORD.  Remove"
+		echo "os/inferno/init/$INIT.dis and let the kernel mkfile build"
+		echo "it, or pass DISWORD=4 by hand."
+		exit 1
+	fi
+	# And it has to get PAST the loader, not merely avoid faulting:
+	# a kernel that stops silently at "Initial Dis" passes a check
+	# for the absence of a panic.
+	if ! grep -q "Initial Dis" $SMOKE; then
+		echo "FLASHVERIFY-FAILED the image never reached Initial Dis"
+		echo "under qemu; it is not a working kernel."
+		exit 1
+	fi
+	AFTER=$(awk '/Initial Dis/{seen=1; next} seen && NF' $SMOKE |
+	        grep -c .)
+	if [ "$AFTER" -eq 0 ]; then
+		echo "FLASHVERIFY-FAILED the image loaded nothing after"
+		echo "Initial Dis under qemu -- the init module printed not one"
+		echo "line, which is what a module that cannot load looks like"
+		echo "when the fault handler stays quiet."
+		exit 1
+	fi
+	echo "flashverify: boots under qemu, $AFTER lines past Initial Dis"
+fi
+
 SESS=$(python3 - "$PORT" <<'PY'
 import re, subprocess, sys
 pids = subprocess.run(["lsof", "-t", sys.argv[1]],

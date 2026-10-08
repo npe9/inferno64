@@ -145,6 +145,41 @@ class Board:
         with open(self.hc, "rb") as f:
             return f.read().decode("utf-8", "replace")
 
+    def clear(self, tries=4):
+        """Empty the TERMINAL's scrollback, and prove it is empty.
+
+        Resetting the board does not clear the terminal, and a reader
+        that greps the scrollback will happily answer from the previous
+        session.  The sequence is screen's only way to empty the buffer
+        -- "scrollback 0" discards it and a second call puts it back --
+        but the three "screen -X" commands are QUEUED to the session and
+        their effects are not serialised with respect to each other.
+        Issued back to back with no delay, "scrollback 10000" lands
+        before "clear", and clear then pushes the whole display into a
+        buffer that is live again: nothing is discarded.
+
+        That is not a theoretical race.  Run back to back it left three
+        boot sessions in the buffer and two consecutive measurements
+        were read out of the OLDEST one -- including a kernel that had
+        usage-faulted at startup, which read as a clean run because the
+        clean run's text was still there.  The tell was two readings
+        agreeing to the byte, and it was explained away once.
+
+        So: delays between the commands, and then a hardcopy that has
+        to come back blank before this returns.  A clear that cannot
+        report failure is how the stale text got read as a result.
+        """
+        for i in range(tries):
+            for cmd in (["scrollback", "0"], ["clear"],
+                        ["scrollback", "10000"]):
+                subprocess.run(["screen", "-S", self.sess, "-X"] + cmd)
+                time.sleep(0.4)
+            if not [l for l in self.text().splitlines() if l.strip()]:
+                return
+        raise Dead("%s: scrollback will not clear after %d tries; "
+                   "every reading from it would be the previous session"
+                   % (self.sess, tries))
+
 
     def reset(self):
         """^R twice running, which devuart handles in its receive interrupt.
