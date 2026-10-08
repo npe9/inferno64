@@ -30,6 +30,13 @@
 #include "fns.h"
 #include "io.h"
 
+/*
+ * Declared, not left implicit: systmrusec() returns a uvlong and 7c
+ * assumes int for an undeclared function, which would truncate the
+ * timestamps the mailbox wait below is computed from.
+ */
+extern	uvlong	systmrusec(void);
+
 enum {
 	Read	= 0x00/4,		/* MBOX0 read (GPU -> ARM) */
 	Status	= 0x18/4,		/* MBOX0 status */
@@ -42,7 +49,27 @@ enum {
 	Busalias = 0xC0000000,		/* GPU-uncached view of ARM RAM */
 
 	Respok	= 0x80000000,		/* message code: request succeeded */
-	Spins	= 10*1000*1000,	/* bound on a mailbox wait: uncached reads, so about a second */
+	/*
+	 * A SPIN COUNT CANNOT DISTINGUISH "BUSY" FROM "NEVER GOING TO
+	 * REPLY", and that cost a wrong conclusion. This was the only
+	 * bound, ten million uncached reads, and the comment said "about
+	 * a second" -- so a request the GPU never answered took 1.0509s
+	 * to give up, reproducibly to four decimal places, and that
+	 * duration was read as the firmware DOING something for a
+	 * second. It was this loop, measured. Sweeping a request argument
+	 * 500x moved it 43us because nothing about it depends on the
+	 * request at all.
+	 *
+	 * So the bound is a TIME now, and the spin count stays only as a
+	 * backstop for a dead counter: systmrread() reads the hardware
+	 * counter with no init, but if that counter is not running
+	 * (SYSTMR-NONE) a purely time-based loop would never exit and
+	 * would hang the boot. Which bound fired is reported, because
+	 * "the GPU did not answer in time" and "this board has no usable
+	 * clock" are different facts.
+	 */
+	Waitus	= 1000*1000,	/* default: a second, as the spin count was */
+	Spins	= 200*1000*1000,	/* backstop only: far beyond Waitus */
 };
 
 static u32*
@@ -74,30 +101,49 @@ mboxwrite(int chan, u32 data)
 
 /*
  * Bounded, because every one of these runs during boot and a wait
- * without a bound is a board that says nothing at all.  The firmware
- * answers every message on the property channel, including one whose
- * tag it does not know, so a timeout here is not an unsupported tag:
- * it is a mailbox that is not working, and the caller reporting that
- * is worth more than a kernel stopped in a while loop before it has
- * printed anything.  Returns 0 and the value, or -1.
+ * without a bound is a board that says nothing at all.
+ *
+ * THIS COMMENT USED TO SAY the firmware answers every message on the
+ * property channel, including one whose tag it does not know, so a
+ * timeout here could only mean a mailbox that is not working. That is
+ * FALSE on this board. EXECUTE_QPU (0x00030011) gets no reply at all
+ * -- buf[1] and buf[4] both come back as the driver left them and
+ * buf[5..8] as the request verbatim -- seconds after GET_CLOCK_RATE and
+ * SET_ENABLE_QPU were both answered on the same channel. So a timeout
+ * here means "this tag was not answered", and that is a thing one tag
+ * can do while its neighbours do not.
+ *
+ * Returns 0 and the value, -1 if the time ran out, -2 if the spin
+ * backstop ran out first, which means the counter is not advancing.
  */
 static int
-mboxread(int chan, u32 *val)
+mboxreadto(int chan, u32 *val, uvlong usec)
 {
 	u32 *r = mbox();
 	u32 v;
+	uvlong t0;
 	int i;
 
+	t0 = systmrusec();
 	for(i = 0; i < Spins; i++){
-		if(r[Status] & Empty)
+		if(r[Status] & Empty){
+			if(systmrusec() - t0 >= usec)
+				return -1;
 			continue;
+		}
 		v = r[Read];
 		if((int)(v & 0xf) == chan){
 			*val = v & ~0xfU;
 			return 0;
 		}
 	}
-	return -1;
+	return -2;
+}
+
+static int
+mboxread(int chan, u32 *val)
+{
+	return mboxreadto(chan, val, Waitus);
 }
 
 /*
@@ -107,7 +153,7 @@ mboxread(int chan, u32 *val)
  * The response is written back into buf in place.
  */
 int
-mboxprop(u32 *buf)
+mboxpropto(u32 *buf, uvlong usec)
 {
 	uintptr pa = (uintptr)buf;	/* RAM is identity-mapped */
 	usize reqlen;
@@ -126,7 +172,7 @@ mboxprop(u32 *buf)
 	cacheflush(buf, reqlen);
 	if(mboxwrite(Chanprop, (u32)(pa | Busalias)) < 0)
 		return -1;
-	if(mboxread(Chanprop, &resp) < 0)
+	if(mboxreadto(Chanprop, &resp, usec) < 0)
 		return -1;
 	USED(resp);
 	/*
@@ -138,6 +184,12 @@ mboxprop(u32 *buf)
 	 */
 	cacheinval(buf, reqlen);
 	return buf[1] == Respok ? 0 : -1;
+}
+
+int
+mboxprop(u32 *buf)
+{
+	return mboxpropto(buf, Waitus);
 }
 
 /*

@@ -82,74 +82,54 @@
  * SILICON, 2026-10-08: the nonsense tag is REFUSED, SET_ENABLE_QPU is
  * accepted and the block is clocked at 250 MHz.
  *
- * AND EXECUTE_QPU DOES SOMETHING REAL. Nine bytes of garbage:
+ * AND EXECUTE_QPU IS NOT ANSWERED ON THIS BOARD AT ALL. Nine bytes of
+ * garbage, JTAG-booted so the card kept its own kernel:
  *
- *	QEMU     elapsed      16 us
- *	silicon  elapsed 1050951 us
+ *	exec refused code 0x0 tag 0x0 UNTOUCHED wrote 0 bytes 1050949 us
+ *	value 0xdeadbeef 0xc0332240 0x1 0x3e8
  *
- * 65000x. THAT IS THE ONLY PART OF THE ORIGINAL READING THAT SURVIVED,
- * and it survived because it is a clock: everything else in the first
- * version of this block was wrong, in three different ways, and all
- * three were found by the raspi3b-port session running it on silicon.
+ * buf[1] and buf[4] are what this driver initialised them to and
+ * buf[5..8] are the request verbatim. The GPU did not write the
+ * response buffer. There was no reply to read -- seconds after
+ * GET_CLOCK_RATE and SET_ENABLE_QPU were both answered on the same
+ * channel.
  *
- * ONE: `resp' WAS THIS DRIVER'S OWN INPUT, ECHOED. lastresp was
- * buf[5] read unconditionally, while the control-list address is
- * written to buf[5+ctlidx] -- so at ctlidx 0 the "response" was the
- * address written one line earlier and otherwise it was w0. Every
- * `resp 0x1' printed here, in the QEMU table and the silicon table
- * alike, was w0 == 1 coming back. The control: send 0xdeadbeef, read
- * 0xdeadbeef; send 0x5a5a5a5a, read 0x5a5a5a5a. So a reading rule this
- * file used to state -- "elapsed ~= 0, resp 0 -> the firmware did
- * nothing" -- could never have fired, because resp is never 0 unless
- * w0 is.
+ * AND THE 1.0509s WAS THIS KERNEL'S OWN SPIN LOOP. mailbox.c bounded a
+ * mailbox wait with a COUNT of ten million uncached reads, whose own
+ * comment said "about a second". So 1.0509s is how long it takes to
+ * give up, which is why it was reproducible to four decimal places,
+ * why sweeping a request word 500x moved it 43us, and why no argument
+ * moves it: nothing about that duration depends on the request. It was
+ * never the firmware doing something for a second. mboxread is bounded
+ * by TIME now, with the spin count demoted to a backstop for a dead
+ * counter, so "not answered yet" and "never going to answer" are at
+ * least separable.
  *
- * The firmware's verdict was in two words this driver discarded, and
- * the status now prints them. buf[1] is the mailbox code; buf[4] is
- * the TAG's response -- bit 31 set means the tag was processed, the low
- * bits are the byte count written. **buf[4] == 0 means EXECUTE_QPU was
- * never touched**, which is the single question this instrument exists
- * to answer and was the one thing it was not reading.
+ * WHICH INVERTS THE 65000x THIS FILE WAS BUILT ON.
  *
- * And the byte count is as important as the bit, which the first fix
- * nearly missed. QEMU now reads:
+ *	QEMU     code 0x80000000 tag 0x80000000 PROCESSED, 15 us
+ *	silicon  code 0x0        tag 0x0        UNTOUCHED, spin-out
  *
- *	exec accepted code 0x80000000 tag 0x80000000 PROCESSED
- *	     wrote 0 bytes 17 us
- *	value 0x1 0xc0310970 0x3e8 0x0
+ * The emulator is the one that PROCESSES the tag and answers at once;
+ * the board is the one that does not answer. Earlier versions of this
+ * comment said the opposite in capitals, and what they were reading
+ * was the spin-out duration.
  *
- * Processed, and wrote NOTHING, with the value buffer still holding
- * exactly what was sent. That is the stub's signature stated properly,
- * where before it was hidden behind an echoed `resp 0x1' that looked
- * like an answer. On silicon a real EXECUTE_QPU should set the bit AND
- * a nonzero length, and value[0] should then be the firmware's own
- * return rather than w0.
+ * So the open question is no longer what the argument layout is. It is
+ * why this one tag is not answered when its neighbours are. A layout
+ * search would have been fitting parameters to a request nobody
+ * replies to.
  *
- * TWO: ~1.05s IS NOT A FIXED COST. This block asserted it was. Three
- * levels have now been seen for the same command shape across kernel
- * builds: 1.0509s, ~0.83s and ~1.14s (n=13). The level moves between
- * builds, so "a fixed cost in the firmware's EXECUTE_QPU path" is not
- * supported, and the 0.83s is unattributed -- not ctlidx, not w3, not
- * thermal.
+ * Three elapsed levels have been seen for the same command shape
+ * across builds -- 1.0509s, ~1.14s (n=13), ~0.83s -- and no mechanism
+ * is offered for why a device-code change would move a fixed spin
+ * count. On the record, unexplained, and a further reason to read
+ * nothing into the absolute number.
  *
- * THREE: the four-word sweep that appeared here is WITHDRAWN. Its
- * driver built the command with an Inferno sh list subscript, which
- * does not exist, so every row ran at ctlidx 0 and three of the four
- * words were never varied at all. Done properly and interleaved,
- * ctlidx does not move the elapsed time either: 1127699..1163585 us
- * across all four indices, ranges overlapping, 3.1% spread.
- *
- * SO THE LAYOUT IS STILL UNKNOWN, and the honest state is narrower
- * than this file once claimed: a garbage program takes ~1s of
- * something on silicon and microseconds under emulation, and nothing
- * yet identifies which argument word is which. The next run should
- * read buf[4] first -- if the tag was never processed, every elapsed
- * time measured so far is the cost of a rejected request and not of
- * anything executing.
- *
- * (Silicon numbers measured by the raspi3b-port session on the board,
- * against this device as of b54afb448, which was on the card after the
- * tree copy had been reverted -- reverting a tree and reverting a card
- * are two acts.)
+ * (Measured by the raspi3b-port session on the board, against this
+ * device at 47931de65, JTAG-booted. Reverting a tree and reverting a
+ * card are two acts and earlier numbers came from a card still running
+ * a device the tree no longer had.)
  *
  * So on silicon, with garbage code:
  *	elapsed ~= the timeout	the QPUs really ran it and never ended
