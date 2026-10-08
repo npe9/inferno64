@@ -56,6 +56,46 @@ this test failed at its first case.
 .IR zdivtest (1),
 .IR emu (1)
 .SH BUGS
+.B "On a native kernel four cases fail, and that is a real defect, not a"
+.B "test bug."
+.B bflag
+gates whether the JIT emits an array bounds check at all.
+.B emu/port/main.c
+initialises it to 1;
+.B os/inferno/port/dis.c
+declares it
+.RB ( "int bflag;" )
+and nothing ever sets it, so on every native kernel it is zero and the
+compiled path indexes arrays unchecked \- an out-of-range store is
+accepted and writes wherever the index points.
+Measured on a Pi 3B kernel under QEMU with
+.BR "cflag=1" :
+.B "BNDSTEST 7 ok, 4 fail"
+with
+.B "no exception, store accepted"
+for the three in-range-of-nothing cases.
+.PP
+.I "Emu -B"
+suppresses the same checks and reproduces it exactly, message for
+message, which is how this was attributed without touching the kernel
+tree:
+.IP
+.EX
+emu -B -c1 /dis/sh.dis -c bndstest
+.EE
+.PP
+Under
+.B -c0
+it is 11/11 even with
+.BR -B ,
+because the interpreter's
+.B ind
+instructions check unconditionally. So this is a JIT-only hole, and a
+kernel whose code generator is a stub is unaffected.
+Setting
+.B bflag
+is a one-line change in the kernel tree and is not made here.
+.PP
 Two cases accept either
 .B "array bounds error"
 or
