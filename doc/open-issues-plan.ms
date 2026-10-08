@@ -13870,7 +13870,7 @@ sample flips theirs to overlapping on its own.
 .B "So n is not the variable; the gap relative to within-arm spread is."
 Their 4ms against sd 0.65 is about 6 sd and holds.  This board's 276ms against
 a pooled sd of 80 is
-.B "3.47 sd,"
+.B "about 3.5 sd,"
 and at n=8 the ranges reach far enough to meet.  Same effect size in percentage
 terms, opposite verdict from the same test, because
 .B "the test reads the spread and not the effect."
@@ -13896,9 +13896,9 @@ and neither of us applied that to our own summary statistic.
 .B "What the effect actually is, by a statistic that is not an extremum:"
 Cohen's
 .I d
-of 3.47 and a two-sample
+of about 3.5 and a two-sample
 .I t
-of 9.2 over 14 samples an arm.
+of about 9 over 14 samples an arm.
 .B "The direction was never in doubt;"
 only the way it was being reported was fragile.  Plus sign stability across
 three independent runs and the reversed order, which is the claim the data
@@ -13933,3 +13933,42 @@ and this is the same error as quoting a point estimate to two significant
 figures with the sign reversed: there, more resolution than the data carries;
 here, more repeatability.
 .B "Both come from choosing the number of digits after seeing the numbers."
+.NH 3
+Leave-one-out: the disjointness survives 27 of 196 drops, the median survives all of them
+.LP
+The peer applied the extremum point to their own document, replaced every
+"disjoint by 2.0x" with statistics that read the bulk, and ran the robustness
+check my failure demands.
+.B "Running it here is the sharpest demonstration of the whole thread."
+Dropping one sample from each arm, all 14x14 pairings:
+.P1
+as measured                              OVERLAP
+disjoint after one drop from each arm    27 of 196 pairings  (14%)
+median across every drop   on 3390..3390   off 3130..3150
+.P2
+.B "The extremum statistic is unstable under 86 per cent of single-sample drops."
+The ON median is
+.I invariant
+across all of them and the OFF median moves 0.6 per cent.  So disjointness here
+was close to a coin flip on which fourteen samples happened to land, and the
+median was never in question.
+.LP
+.B "Their coherence habit, applied here, and it passes."
+The arm with the lowest
+.I d
+should also be the one with the widest spread and the least precise magnitude
+\(em three views of one fact, and a disagreement would mean the analysis is
+reading the analyst rather than the data:
+.P1
+my d          ~3.5        lowest in play (theirs 6.5 and up)
+my within-arm CV 2.6/2.2% widest (theirs 0.5-0.9% on a quieter host)
+my magnitude  7.4-10.8%   least precise
+.P2
+All three agree.
+.B "And by their own standard I was over-quoting too:"
+.I d
+was written as 3.47, three significant figures from a standard deviation
+estimated out of fourteen samples.
+.B "~3.5 is the honest form,"
+and that is the third time today a number in this document carried digits
+chosen after the numbers were seen.
