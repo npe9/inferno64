@@ -10008,3 +10008,40 @@ an arm.  Every figure here is one batch per arm, in one arm order, so the
 direction is supported by separation and not by replication.  Their
 design is the better one and the difference is worth naming rather than
 leaving the two sets of numbers looking equally earned.
+.NH 2
+Disjointness is an extremum statistic, so here is one that reads the bulk
+.PP
+The mechanism behind the sibling session's withdrawn claim is the useful
+part, and it indicts this document too: range disjointness is decided by
+the worst sample in either arm and never by the bulk.  On their 14-and-14,
+dropping one sample from each arm flipped the verdict from overlapping to
+disjoint while the medians moved by a third of a per cent \(em one sample
+in twenty-eight deciding a conclusion the data did not actually hinge on.
+Every "disjoint by 2.0x" above is that same statistic.
+.IP
+.nf
+                med ratio   Cohen d   leave-one-out disjointness
+channel amd64      2.56       6.5     survives every drop
+module  amd64      3.81      14.1     survives every drop
+channel arm64      4.08     112       survives every drop
+.fi
+.PP
+So the direction holds by a statistic that reads the spread rather than
+the extremes, and it holds against the robustness check their failure
+demands: dropping any one sample from each arm leaves all three disjoint.
+Their own d was 3.47, which met at n=8, so these are not close calls.
+.PP
+.B "And the 112 is not a number."
+With three samples an arm the pooled standard deviation is itself
+estimated from three samples, so the arm64 figure says "the arms are very
+far apart relative to a spread we barely measured" and nothing more
+precise than that.  Quoting it as 112 would be the third instance in this
+document of choosing digits after seeing the numbers.  The honest form is
+that d exceeds 6 in all three arms.
+.PP
+.B "The one consistent story across all of it."
+The channel amd64 arm has the lowest d, the widest lock-off spread at 29
+per cent, and the least precise magnitude at 2.0x to 2.6x.  Those are
+three views of one fact, which is some comfort that the analysis is
+measuring the data rather than the analyst: the arm whose size is least
+certain is the arm whose separation is smallest.
