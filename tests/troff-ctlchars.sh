@@ -60,17 +60,39 @@ scan() {
 # "I found something" (exit 1) and "clean" (exit 0).
 t=$(mktemp)
 trap 'rm -f "$t"' EXIT 0
-printf '.B plot \014Iid\014R\n' > "$t"
-if scan "$t" >/dev/null 2>&1; then
-	echo "troff-ctlchars: SELF-TEST FAILED -- scanner did not find a planted 0x0C" >&2
+# Two plants on known, DIFFERENT lines. Asserting their positions rather
+# than a count makes the fixture verify its own plants as a side effect
+# and say WHICH one went missing: a count of 2 is also what one working
+# plant plus one double-counted hit looks like.
+printf '.B plot \014Iid\014R\nplain line\n.B \014Bx\014P\n' > "$t"
+got=$(scan "$t" 2>/dev/null | sed "s|^$t:||" | cut -d: -f1 | tr '\n' ' ')
+if [ "$got" != "1 1 3 3 " ]; then
+	echo "troff-ctlchars: SELF-TEST FAILED -- planted 0x0C on lines 1,1,3,3; scanner reported [$got]" >&2
+	echo "troff-ctlchars: either the scanner is broken or the plant did not land; nothing below is trustworthy" >&2
 	exit 2
 fi
 
 # Tabs (0x09) are excluded: troff source uses them legitimately.
 # Only text is scanned; .pdf and .gif under doc/ are binary by nature.
+# Run from outside the tree, `find man doc' fails and set -e killed the
+# script at this assignment with status 1 and NO diagnostic -- 1 means
+# "I found something", so the one code a caller must not misread was the
+# one it returned. Being unable to look is exit 2.
+for d in man doc; do
+	if [ ! -d "$d" ]; then
+		echo "troff-ctlchars: no $d/ directory in $(pwd) -- not a tree I can scan" >&2
+		exit 2
+	fi
+done
+
 files=$(find man doc -type f \
 	! -name '*.pdf' ! -name '*.gif' ! -name '*.jpg' ! -name '*.png' \
 	! -name '*.ps' ! -name '*.gz' 2>/dev/null)
+
+if [ -z "$files" ]; then
+	echo "troff-ctlchars: man/ and doc/ exist but matched no files -- refusing to report clean" >&2
+	exit 2
+fi
 
 if scan $files; then
 	echo "troff-ctlchars: clean"
