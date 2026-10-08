@@ -57,6 +57,13 @@
 #                     negative control: for(;;) is an UNCONDITIONAL self-branch
 #                     and must still link.
 #
+#   troff-p1          a document that USES .P1 must DEFINE it.  .P1/.P2 are
+#                     Plan 9 troff additions; groff -ms lacks them and does NOT
+#                     complain, so the display is silently FILLED and an aligned
+#                     table comes out as run-together prose.  471 blocks across
+#                     14 of our documents were rendering wrong, and neither
+#                     troff-argorder nor troff-ctlchars could see it.
+#
 #   troff-ctlchars    a C0 control character in a troff source, which is the
 #                     generated-document failure: \f(CW written from a non-raw
 #                     string becomes a FORM FEED and the font escape is lost,
@@ -79,7 +86,7 @@ cd "$ROOT" || exit 1
 
 TESTS="kencc-brloop.sh kencc-selfbranch.sh kencc-narrowcast.sh \
 	kencc-widencast.sh 7l-bigconst.sh troff-argorder.sh man-cmdtab.sh \
-	troff-ctlchars.sh selfbranch-refused.sh"
+	troff-ctlchars.sh selfbranch-refused.sh troff-p1.sh"
 
 pass=0
 broke=0

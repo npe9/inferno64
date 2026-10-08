@@ -7,6 +7,16 @@ branches that share them.  Written after a day in which five real bugs
 were fixed, four attempted fixes were measured worse and reverted, and
 five confident conclusions had to be withdrawn \(em so the method comes
 first, because it is what the rest depends on.
+." P1/P2 are Plan 9 troff additions and groff -ms does not define
+." them: without this every .P1 block renders as FILLED PROSE, which
+." is not an error so no lint catches it.  Checked by
+." tests/troff-p1.sh.
+.de P1
+.DS L
+..
+.de P2
+.DE
+..
 .NH 1
 The rules, which were paid for
 .PP

@@ -16,6 +16,16 @@ and what is merely
 because this tree has withdrawn five claims in two days and the difference is
 the only thing that stops that happening again.  An item with no verification
 step is not ready to be worked on.
+." P1/P2 are Plan 9 troff additions and groff -ms does not define
+." them: without this every .P1 block renders as FILLED PROSE, which
+." is not an error so no lint catches it.  Checked by
+." tests/troff-p1.sh.
+.de P1
+.DS L
+..
+.de P2
+.DE
+..
 .NH 1
 Order, and why
 .LP

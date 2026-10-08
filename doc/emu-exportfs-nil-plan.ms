@@ -1,6 +1,16 @@
 .TL
 Diagnosing the exportfs worker nil dereference
 .AU
+." P1/P2 are Plan 9 troff additions and groff -ms does not define
+." them: without this every .P1 block renders as FILLED PROSE, which
+." is not an error so no lint catches it.  Checked by
+." tests/troff-p1.sh.
+.de P1
+.DS L
+..
+.de P2
+.DE
+..
 .NH 1
 What is known
 .PP

@@ -10,6 +10,16 @@ read the QEMU device model to pin register semantics, write the driver,
 test it against a booted kernel where QEMU models the device, and per
 AGENTS.md implement what the real board needs (power domains, cache,
 flow control) even where the emulator is lenient -- noting each such gap.
+." P1/P2 are Plan 9 troff additions and groff -ms does not define
+." them: without this every .P1 block renders as FILLED PROSE, which
+." is not an error so no lint catches it.  Checked by
+." tests/troff-p1.sh.
+.de P1
+.DS L
+..
+.de P2
+.DE
+..
 .NH 1
 Phase 0: hardware-correctness debt (do first, cheap) -- DONE
 .PP

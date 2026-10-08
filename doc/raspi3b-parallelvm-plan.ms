@@ -10,6 +10,16 @@ where processes now run on all four processors but Dis still does not.  It
 exists because the first scoping of this work, written into
 .CW doc/raspi3b-completion-plan.ms ,
 was wrong in two ways that would have cost a session each.
+." P1/P2 are Plan 9 troff additions and groff -ms does not define
+." them: without this every .P1 block renders as FILLED PROSE, which
+." is not an error so no lint catches it.  Checked by
+." tests/troff-p1.sh.
+.de P1
+.DS L
+..
+.de P2
+.DE
+..
 .NH 1
 What the first scoping got wrong
 .PP

@@ -21,6 +21,16 @@ require.  Nothing here is to be left at "probably fine" \(em the one
 reference-counting bug between this and shipping is worth however long
 it takes, because what is behind it is a server that answers in
 milliseconds instead of a minute.
+." P1/P2 are Plan 9 troff additions and groff -ms does not define
+." them: without this every .P1 block renders as FILLED PROSE, which
+." is not an error so no lint catches it.  Checked by
+." tests/troff-p1.sh.
+.de P1
+.DS L
+..
+.de P2
+.DE
+..
 .NH 1
 The measurement that motivates this
 .PP

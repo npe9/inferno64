@@ -17,6 +17,16 @@ under concurrency and would be
 .I slow ,
 and the unsafe parts are not in the allocator at all \(em they are the write
 barrier, one JIT backend, and the two unlanded phases of the parallel VM.
+." P1/P2 are Plan 9 troff additions and groff -ms does not define
+." them: without this every .P1 block renders as FILLED PROSE, which
+." is not an error so no lint catches it.  Checked by
+." tests/troff-p1.sh.
+.de P1
+.DS L
+..
+.de P2
+.DE
+..
 .NH 1
 What exists today
 .NH 2

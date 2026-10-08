@@ -11,6 +11,16 @@ says which piece is one portable file shared by every board and which
 is per board, and treats the display the way the tree already treats
 3-D drawing: a portable capability with interchangeable backends, not
 a driver bound to one machine.
+." P1/P2 are Plan 9 troff additions and groff -ms does not define
+." them: without this every .P1 block renders as FILLED PROSE, which
+." is not an error so no lint catches it.  Checked by
+." tests/troff-p1.sh.
+.de P1
+.DS L
+..
+.de P2
+.DE
+..
 .NH 1
 What each board still needs, in one place
 .PP

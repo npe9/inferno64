@@ -10,6 +10,16 @@ worked on from a machine that has to be rescued by hand every half hour,
 and because most of what was believed about these hangs turned out to be
 wrong when it was finally measured.  Everything below that states a fact
 was measured on the board on 19 or 20 September 2026 and says how.
+." P1/P2 are Plan 9 troff additions and groff -ms does not define
+." them: without this every .P1 block renders as FILLED PROSE, which
+." is not an error so no lint catches it.  Checked by
+." tests/troff-p1.sh.
+.de P1
+.DS L
+..
+.de P2
+.DE
+..
 .NH 1
 What the hang is not
 .PP

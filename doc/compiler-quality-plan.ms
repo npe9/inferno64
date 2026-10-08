@@ -2,6 +2,16 @@
 Improving kencc's code quality without making it bigger
 .AU
 raspi3b-port
+." P1/P2 are Plan 9 troff additions and groff -ms does not define
+." them: without this every .P1 block renders as FILLED PROSE, which
+." is not an error so no lint catches it.  Checked by
+." tests/troff-p1.sh.
+.de P1
+.DS L
+..
+.de P2
+.DE
+..
 .NH 1
 What this is for, and what it refuses to do
 .LP
@@ -835,3 +845,183 @@ ranges                                    loop strength reduction
 and the ABI is not an optimisation at all.  So the reachable target is not
 clang's 2.4x; it is the part of it that lives in tier one and the cheaper half
 of tier two, bought at a few tens of lines and no measurable compile time.
+.NH 1
+The tradespace, and what is appropriate for kencc
+.LP
+Measured on
+.B "135333 instructions over 1938 functions"
+\(em
+.CW libmemdraw ,
+.CW libmemlayer ,
+.CW libdraw
+and
+.CW libinterp ,
+136 files compiled, 4 failed.  Every pattern below was validated by printing its
+actual matches, because an unvalidated count is the thing this document keeps
+being about.
+.NH 2
+What kencc already does
+.LP
+Reading
+.CW peep.c
+and
+.CW reg.c
+rather than guessing:
+.CW copyprop ,
+.CW subprop ,
+.CW constprop ,
+.CW xtramodes
+(folding indexed and pre/post-increment addressing),
+.CW "EOR -1 -> MVN" ,
+.CW CMP /branch
+fusion, zero-register substitution,
+.CW predicate()
+for conditional execution, and
+.CW shiftprop
+\(em which is
+.B DISABLED
+with
+.CW "if(0 && shiftprop(r))"
+and no comment saying why.
+.CW reg.c
+additionally builds a flow graph and computes
+.CW loopit() ,
+.CW prop() ,
+.CW synch()
+and bit-vector liveness.
+.B "So the infrastructure for anything short of SSA is already paid for,"
+because the register allocator needs it.
+.NH 2
+The tradespace
+.P1
+                    sites  /1000   lines  infra   risk   VERDICT
+duplicate RETURN      456   3.37      ~8  flow    low    YES, first
+shift fold (shiftprop)345   2.55       0  flow    HIGH   investigate only
+branch to next instr  153   1.13      ~5  none    low    YES
+adjacent spill/reload  69   0.51      ~8  none    low    marginal
+width-aware copyprop    ?      ?     ~40  flow    HIGH   only with a test
+MUL+ADD -> MADD        18   0.13     ~20  flow    med    NO -- too rare
+extension pair         14   0.10       1  none    med    DONE (see below)
+switch -> arithmetic    -      -    ~300  SSA     high   NO
+loop strength reduction -      -    ~400  SSA     high   NO
+unroll / vectorise      -      -   ~1000+ SSA     high   NO, and unwanted
+register-arg ABI        -      -   huge   n/a     huge   NO, not an optzn
+.P2
+The "extension pair" row is done: its 14 residual sites are the
+.CW D_CONST
+case the allow-list correctly excludes, and the validated example is
+.CW "MOVW $0,R2"
+followed by
+.CW "MOVW R2,R2"
+\(em exactly the one a constant materialisation makes unsafe.
+.LP
+.B "MADD is the item this measurement killed."
+The
+.CW leaf
+example made it look like the obvious win \(em clang does
+.CW "a*b+a"
+in one instruction where 7c takes nine \(em but across 135333 real instructions
+there are
+.B "eighteen"
+sites where a multiply is immediately followed by an add consuming its product.
+0.013 per cent for about twenty lines in the family that has already produced
+two silent miscompiles here.
+.B "One unrepresentative function is not a workload,"
+and I recommended this before measuring it.
+.NH 2
+And the cheapest item is not free either
+.LP
+"Delete the second of two consecutive RETURNs" sounds like it needs no analysis.
+.B "It does: 7 of 403 duplicate RETURNs are the target of a branch."
+Removing those breaks the program.  The check must ask whether anything jumps to
+the instruction \(em which
+.CW reg.c 's
+flow graph can answer, so the cost is eight lines using infrastructure that
+exists rather than five lines using none.
+.LP
+.B "That is the shape of nearly every entry in the table:"
+the optimisation is trivial and the precondition is where the work is.  A
+tradespace that prices the transformation and not its precondition is the same
+error as quoting a point estimate.
+.NH 2
+What is appropriate for kencc, as a rubric
+.LP
+Not taste \(em six criteria, each derived from something measured in this
+document:
+.IP 1.
+.B "Does it fit the data structures that already exist?"
+A fixed window over the
+.CW Prog
+list costs nothing.  The flow graph and liveness are already built.
+.B "SSA and value ranges are not,"
+and building them is larger than every pass in
+.CW peep.c
+put together.
+.IP 2.
+.B "Is the compile time still invisible?"
+7c compiles at 6.3ms against clang's 34.2 at
+.CW -O0 .
+.B "clang's whole optimiser costs about 3 per cent of clang's own compile time"
+\(em so optimisation is not what makes a compiler slow, infrastructure is.  An
+O(n) pass over an existing list stays invisible; a pass that needs its own IR
+does not.
+.IP 3.
+.B "Does it have to be written eleven times?"
+There are eleven
+.CW peep.c
+files.  An arch-specific peephole is eleven copies or one copy helping one
+architecture, and that multiplies both the lines and the chances of getting one
+of them wrong.
+.IP 4.
+.B "Can it be silently wrong?"
+.B "Every kencc defect this tree has found was a silent miscompile"
+\(em eleven of them, exit status 0 and a wrong program.  The width and extension
+family has produced two on its own.  So an optimisation there is appropriate
+ONLY with a test that has been seen to fail, and
+.CW shiftprop
+being disabled with
+.CW "if(0 &&"
+and no explanation is the warning sign, not an invitation.
+.IP 5.
+.B "Does it trade size for speed?"
+This is a kernel.  clang at
+.CW -O2
+takes a 13-instruction loop to 62 by unrolling and vectorising.  Faster, and
+the wrong trade here.
+.IP 6.
+.B "Is the win bigger than the noise?"
+The board's within-arm coefficient of variation is 2.2 to 2.6 per cent.
+.B "Nothing in the table above is individually measurable on hardware."
+They are code-size and instruction-count wins, and saying so is more useful
+than a speed claim that cannot be supported.
+.NH 2
+The honest summary
+.LP
+.B "Appropriate, together worth about 0.5 per cent of instructions:"
+duplicate RETURN, branch-to-next, and the extension pair already done.  Tens of
+lines, no new infrastructure, no measurable compile time, each with a test that
+can be made to fail.
+.LP
+.B "Appropriate to INVESTIGATE, not to enable:"
+.CW shiftprop ,
+because 345 sites is the largest number in the table and the code already
+exists \(em but it is switched off with no comment, which in this tree has
+meant "it was wrong" more often than "nobody got round to it".
+.B "Finding out why it is off is the task, not turning it on."
+.LP
+.B "Not appropriate, and the reason differs:"
+MADD and spill/reload are too rare to pay for their risk; width-aware copyprop
+is the right fix for a known defect but belongs behind a test first;
+switch-to-arithmetic and the loop transforms need infrastructure larger than the
+compiler; and the register-argument ABI is not an optimisation at all \(em it is
+a large part of the 2.4x and no pass can touch it.
+.LP
+.B "What that means for ""best quality, near instantly""."
+The reachable target is not clang's 2.4x.  It is the tier-one half of one per
+cent, bought for nothing, plus a correctness story that is already better than
+clang's for this tree's purposes \(em because
+.CW tests/toolchain
+and the loaders' own refusals now catch defect classes that clang's optimiser
+would simply not have.
+.B "kencc's advantage was never its code quality; it is that you can read it,"
+and every entry in the "no" column above is there to keep that true.
