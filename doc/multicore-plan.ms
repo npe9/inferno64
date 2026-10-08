@@ -9592,3 +9592,48 @@ does not start a line is invisible to it.  Re-counted unanchored across
 every batch: exactly one log differs, this one, and the earlier figures
 \(em 2 of 21 against 0 of 9 \(em are unchanged.  The anchored pattern
 was wrong for four weeks and cost one observation.
+.NH 2
+How many instances the fault needs, which I should have worked out first
+.PP
+The raspi3b-port session did the arithmetic I had skipped.  At the
+2-in-21 rate the general protection violation was seen at, the chance of
+a clean arm is:
+.IP
+.nf
+n=8    0.449
+n=21   0.122
+n=30   0.050
+n=45   0.011
+.fi
+.PP
+So eight instances were 45 per cent likely to come up clean whether or
+not the collector is in the loop, and so was the control.  Thirty an arm
+is where it begins to say something.  Sixteen instances were spent
+finding that out, and one line of arithmetic beforehand would have said
+it for nothing.
+.PP
+Worth recording with the number: it is the same thirty their own
+filesystem batch uses, arrived at independently, which is some evidence
+it is not a figure chosen to suit a wanted answer.
+.NH 2
+And the new panic is a different panic
+.PP
+Their third caveat on the
+.CW poolalloc
+chain mismatch is the one I had stated too weakly: it is not the fault
+under investigation.  That one is a general protection violation with
+.CW poolfree
+on the stack; this is a chain-size invariant in
+.CW poolalloc .
+Treating them as one because both say "pool" is counting sightings
+rather than mechanisms, and this document has already made that mistake
+once today with two relayed copies of a single measurement.
+.PP
+What the new panic does buy is a reason to instrument the allocator on
+its own terms instead of reaching for a fourth collector hypothesis.
+The mismatch has a printable invariant \(em the chain key equals every
+member's size \(em so a walk at
+.CW poolalloc
+entry would catch the first corruption rather than the first use, and
+would separate "a bad size was written" from "a correct block is on the
+wrong chain".  One sample cannot.
