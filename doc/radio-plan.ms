@@ -620,7 +620,11 @@ deriving one over the link, which wants a certificate per board under
 .B /keys
 and this root has none.  So the bytes are not in the clear and the
 record layer survives the chopping; neither end knows who the other is.
-.B "That is step 5 and the identity half of it is still open."
+.B "That is step 5, and its identity half is now answered: no, on this part."
+Auth runs on the core \- 13.9 seconds in its own image \- and peaks
+41408 bytes above its baseline, against 17184 bytes free at the most
+favourable moment in the station.  The last section of this document has
+the measurement.
 .PP
 .IR Devssl 's
 memory was the thing to check on a part with two SRAM regions of 65536
@@ -9232,3 +9236,45 @@ And the before/after pool table above is from the
 .CW armv7mauth
 image, where auth ran alone; it is auth's cost, not auth's cost
 alongside a running station, which would only be higher.
+.NH 2
+And the mount on the keyring arm, which was the outstanding gap
+.PP
+The section before last ends "the mount was not observed in the ssl-off
+keyring arm, because the ground was reflashed mid-run".  It is observed
+now, in the same run that took the link-up pool reading above:
+.DS
+.CW "sat | styx: pools at link-up"
+.CW "sat | ARMV7M-STYX-NOSSL-BYCHOICE"
+.CW "sat | ARMV7M-STYX-EXPORTING"
+.CW "gnd | ARMV7M-STYX-NOSSL-BYCHOICE"
+.CW "gnd | ARMV7M-STYX-MOUNTED"
+.DE
+.PP
+.B "Why that is this run and not a replay,"
+which has to be said because two readings in this session were the
+previous session's text read out of a frozen hardcopy file:
+.IR twostyx 's
+clear now empties the terminal and requires a hardcopy back before it
+proceeds, so the buffer was provably empty at the start; the satellite
+printed
+.CW "styx: pools at link-up" ,
+a line that exists only in the image flashed minutes earlier; and
+.IR twostyx 's
+filter now keeps the boot banner, so a log carries the kerndate of the
+kernel that wrote it \- the next run's ground read
+.CW "conf stm32f407auth (1791493080)" ,
+which is exactly what
+.I flashverify
+reported writing.
+.PP
+So a station whose kernel REGISTERS $Keyring still exports, and a ground
+still mounts it, over the air, with ssl off.  The link then died at 49
+seconds with
+.CW "ax25: no answer" ,
+which is item 9 and not new.
+.PP
+.B "What is NOT claimed:"
+nothing about ssl ON with the keyring conf \- that arm was not run.  And
+board 2 stopped answering a software reset immediately afterwards, six
+attempts, console silent, so it wants a power cycle before the next
+reading.

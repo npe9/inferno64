@@ -62,7 +62,14 @@ for name, b in ends:
 time.sleep(10)
 seen = {k: set() for k, _ in ends}
 KEY = re.compile(
-    r"ARMV7M-STYX|styx:|rxpartial|fifoerr|rxoverflow|crcerr|status \d+ crcbad"
+    # The BOOT BANNER, so the log says which kernel produced it.  Every
+    # line below describes a run and none of them identified the image:
+    # a whole afternoon of readings could not be tied to a kerndate
+    # after the fact, and two of them turned out to be a previous
+    # session's text.  "conf <name> (<kerndate>)" is the one line that
+    # makes a log self-certifying against what flashverify reported.
+    r"conf stm32\w* \(\d+\)|Inferno Fourth Edition"
+    r"|ARMV7M-STYX|styx:|rxpartial|fifoerr|rxoverflow|crcerr|status \d+ crcbad"
     r"|sent \d+ recv|state 0x|fifo rx \d+|intr high \d+|notidle \d+|idlepoll|said 0x|txskip \d+|rxkilled \d+ pendat|styx: far"
     # The received RSSI, which is what calibrates a transmit-power sweep:
     # without it ramptrial(1) reports the link budget it SET and not the
