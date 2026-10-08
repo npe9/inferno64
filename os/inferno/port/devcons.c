@@ -286,6 +286,18 @@ static Cmdtab sysctlcmd[] =
 	 * code or whether a cached module was reused -- which would make any
 	 * A/B taken with this knob meaningless.  Check it before trusting a
 	 * number from here.
+	 *
+	 * IT IS A MEASUREMENT FACILITY, NOT A TUNING KNOB.  `bflag 0' turns
+	 * bounds checks off for every module compiled afterwards, by any
+	 * process, and bflag=0 is demonstrably the arm that can leave the
+	 * board wedged in exit() -- one bndstest run did, and the next did
+	 * not.  Three things bound it: a reboot restores the compiled-in
+	 * bflag = 1, so nothing here persists; it exists because measuring
+	 * the price otherwise costs two kernels and two card installs; and
+	 * it grants nothing new, because /dev/sysctl is mode 0644 and
+	 * reboot, halt, panic and broken sit behind this same write, so
+	 * anyone who can set bflag could already halt the machine.
+	 * /dev/sysctl is a privileged control file and was before this.
 	 */
 	CMbflag,	"bflag",	2,	/* 2 = "bflag" plus its argument, not 1 argument */
 };
