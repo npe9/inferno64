@@ -106,22 +106,56 @@ those joined a tree. Over
 .R
 .DE
 .LP
-Thirteen join.
+.B "DONE, and the population above was two types short."
+.CW panel
+and
+.CW choicebutton
+never appeared in it at all, so the test had no opinion on two of the
+seventeen; both are now cases, and the reading is
+.CW "panel 1 0"
+and
+.CW "choicebutton 1 1" .
 .CW separator
-does not, which is what the walk's invariants already said \(em
-.CW frame.c
-draws it. So the shared walk is very nearly all node-capable, and the
-direct painter that breaks it is one widget.
+joined nothing because the gate in
+.CW tkdrawframe()
+named
+.CW TKframe
+alone \(em a separator
+.I is
+drawn by that function, so widening the condition was the first half of
+the fix. The second half is the interesting one: a separator also draws
+two one\-pixel rules with direct
+.CW draw()
+calls, and once the fill was a node those ran first and the flush
+painted over them. 498 bytes differed in the posted menu, which is the
+whole of a separator's ink. Emitting the rules as nodes too makes a
+separator entirely a scene. It now reads
+.CW "separator 2 2"
+with the menu byte\-identical between the paths, 101 ok 0 fail under
+both execution paths.
 .PP
 .B "Confirmed in the kernel,"
-which is where this has to be true: the same test under QEMU on the Pi
-3B kernel gives
+which is where this has to be true. Before the fix the same test under
+QEMU on the Pi 3B kernel gave
 .CW "separator 2 0"
 and
 .CW "canvas 4 0"
-with every other type joining, 91 ok 0 fail 2 skipped. The frame and
-label counts differ (34 and 10 against 36 and 12) only because two
-cases skip there.
+with every other type joining, 91 ok 0 fail 2 skipped. After it, with
+the kernel relinked and the image rebuilt:
+.IP
+.EX
+separator 2 2    canvas 4 0    panel 1 0    choicebutton 1 1
+tkscenetest: 95 ok, 0 fail, 2 skipped
+.EE
+.LP
+All seventeen types in the population on the board's own kernel, not
+only hosted. The two skips are the kernel root having no
+.CW /fonts/pelm/latin1.9.font
+and no
+.CW audio.bit ,
+which is a root contents question and not a renderer one. The frame and
+label counts differ from the hosted run (36 and 10 against 38 and 12)
+only because those two cases skip here.
 .PP
 .B "But canvas is the finding, and it is not a direct painter."
 .CW tkdrawcanv()
@@ -222,14 +256,30 @@ Render a tree at a scale, which pixels cannot do. Framebuffer
 compatible, and the one capability a description genuinely has over a
 raster on this hardware.
 .IP \(bu
-.B "Finish the breadth."
+.B "Finish the breadth. DONE for separator; the other two are by design."
 .CW separator
-is the one type that does not emit, and
+now emits. The two that still join nothing are not omissions:
 .CW canvas
-is an island with its own tree. Closing those two makes emission total.
-Cheap, and worth nothing on its own until a consumer exists.
+builds its own scene per draw and frees it, and
+.CW panel
+is the one widget whose content is the application's own live image via
+.CW putimage ,
+which
+.CW TkNtexture
+cannot name because it holds a
+.I file
+\(em the very property that lets a tree outlive the repaint that built
+it. A panel cannot enter a serialisable tree without giving that up. A
+GPU backend would want a texture
+.I handle
+here rather than a path, and that is the one place the node vocabulary
+needs extending for the 3D story rather than for Tk.
 .PP
-Nothing here is started. Item 1 is at a decision, and the next
+Item 1's breadth half is now done and its finding recorded above. What
+remains in item 1 is a decision, not a step: exposing the tree so
+consumers live outside
+.I libtk ,
+and resolution independence. The next
 .I work
 in this plan is item 2.
 .PP
