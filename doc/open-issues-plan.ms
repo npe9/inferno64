@@ -12913,7 +12913,7 @@ parallelvm=0   0 of 8 boots bad      "vmachine: error with no current prog"
 .P2
 against their own 2 of 21 fixup-on instances versus 0 of 9 controls, stack
 through
-.CW poolfree+0x16b / poolalloc+0x13d / smalloc+0xbd .
+.CW "poolfree+0x16b / poolalloc+0x13d / smalloc+0xbd" .
 .B "Three mechanisms now have detectors that can see them and all three read zero:"
 the cross-arena cursor, a chain broken at the resume, and a block size larger
 than the pool.  So the fault is characterised and unexplained, and the next
