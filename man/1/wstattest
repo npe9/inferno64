@@ -55,7 +55,11 @@ It covers the mode, which is the field every device's
 applies.  The times and the owner are not exercised.
 .PP
 .B emu
-exits 0 whether a Limbo command raises or not, so a caller must read the
-output rather than the status;
+exits 0 whether a Limbo command raises or not \(em and prints nothing
+for an uncaught raise, measured with a program whose whole body is one
+\(em so a caller must read the output rather than the status;
 .B scripts/check-wstat.sh
 does.
+.PP
+The compiler warning that found the underlying defect is not portable
+evidence: another session's clang emitted nothing for the same line.

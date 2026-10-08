@@ -9,10 +9,22 @@
 # correct, because kencc's long is 32 bits, which is why the kernel
 # never showed it and emu did.
 #
-# THE OUTPUT IS READ, NOT THE EXIT STATUS.  Measured: emu exits 0
-# whether the Limbo command raises or not, so a check that trusted $?
-# here would pass a failing test -- the mirror of this tree's recorded
-# "prints success, exits nonzero" trap.
+# THE OUTPUT IS READ, NOT THE EXIT STATUS.  Measured, and worse than it
+# first looked: a Limbo program whose whole body is
+# `raise "fail:deliberate"' runs under emu and produces NO output and
+# exit 0.  So an uncaught raise -- the only failure signal most of these
+# tests have besides their printed count -- is invisible both ways, and
+# a check that trusted $? would call it a pass.  It is the mirror of
+# this tree's mk trap, where the status is right and grepping the output
+# is what hides the failure, so the rule is per tool: for mk read the
+# status and do not grep, for emu running a test read the output and
+# ignore the status.  Every check in scripts/ reads output today; this
+# comment is here so the next one does too.
+#
+# The clang warning that found the defect (-Wtautological-constant-out-
+# of-range-compare) is NOT portable evidence: another session's compiler
+# emitted nothing for the same line, by hand and through mk.  Measure,
+# do not rely on the diagnostic.
 #
 # usage: scripts/check-wstat.sh
 set -e
