@@ -84,7 +84,7 @@ is set on
 On branches whose code generator is the stub
 .B comp-aarch64.c
 it is still zero and still unreachable, because nothing compiles.
-The cost of having the checks is about 6.5 per cent on
+The cost of having the checks is a few per cent on
 .BR array ,
 the most index-heavy test in
 .IR disbench (1),
@@ -92,6 +92,25 @@ and nothing measurable on
 .B int
 \- which does not index an array and is the control that makes the first
 number mean anything.
+.PP
+.B "The cost is a range, not a point."
+Hosted, three runs of four to six pairs each span 5.7 to 6.7 per cent
+(6.4 pooled over thirteen pairs); on a Pi 3B two runs of the same
+six-sample design gave 7.4 and 10.8 per cent, about 9 pooled. So: single
+figures, a few per cent, board costlier than hosted, and no more
+precision than that is supported.
+.PP
+Non-overlapping ranges licence the
+.BR direction ,
+not the magnitude, and treating them as licence for a point estimate is
+how both of the figures above were first quoted too tightly. One
+contaminated sample makes the case: a single
+.B off
+reading of 99 ms, higher than every
+.B on
+sample in any run, dragged a six-pair estimate from 6.7 to 4.0 per cent
+\- 2.7 points from one measurement in twelve, on a machine that was also
+building and booting kernels at the time.
 .PP
 .I "Emu -B"
 suppresses the same checks and reproduces it exactly, message for
