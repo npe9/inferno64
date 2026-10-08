@@ -215,15 +215,70 @@ is keyed on a register because the type is untrustworthy \(em goes away.
 .B "Correctness and simplicity point the same way here,"
 which is rare enough to spend the effort on first.
 .NH 2
-3. Delete C_VCON
+3. WITHDRAWN: do not delete C_VCON
 .LP
-Three lines out: the enum value, the
-.CW cmp()
-case, and the stale half of the comment.
-.B "Not because it is unused, but because it is MISLEADING:"
-it is the reason defect 3 went unnoticed, since the obvious reading of
-.CW optab.c
-is that constant width is classified.
+.B "This item was wrong, and reading the code to execute it is what showed that."
+It is left in the plan rather than quietly removed, because the error is the
+same one the plan accuses kencc of \(em a conclusion drawn from the wrong
+property.
+.LP
+.CW C_VCON
+is never returned by
+.CW aclass() ,
+which is what the old comment in
+.CW l.h
+said, and I read that as dead code.
+.B "It is an OPTAB-SIDE class and it is load-bearing."
+.CW optab.c 's
+only
+.CW ADWORD
+row is
+.CW "{ ADWORD, C_NONE, C_NONE, C_VCON, 11, 8, 0 }" ,
+and the matcher is
+.I asymmetric :
+.CW span.c
+builds
+.CW "xcmp[i][n] = cmp(n, i)"
+and
+.CW oplook
+indexes
+.CW xcmp[actual][optab] ,
+so
+.CW cmp() 's
+.B first
+argument is the
+.I "optab's"
+class.
+.B "So cmp(C_VCON, C_LCON) runs on every ADWORD,"
+hits
+.CW "case C_VCON: return cmp(C_LCON, b)" ,
+and returns 1 \(em which is the only reason an 8-byte literal ever matches an
+operand
+.CW aclass()
+called a
+.CW C_LCON .
+.LP
+.B "Deleting it would have broken the 64-bit literal pool fixed earlier today."
+Proof rather than argument:
+.CW tests/7l-bigconst.sh
+reports four DWORD pool entries and
+.CW ADWORD
+has no other optab row, so that case fired four times in that run.
+.LP
+.B "The plan's claim that the case could not fire was FALSE,"
+and the lesson generalises to item 1: an invariant checker written from the
+same misreading would have rejected valid output.
+.CW l.h 's
+comment is corrected to say the class is optab-side and why.
+.NH 2
+3b. What was actually worth doing here
+.LP
+.B "The real defect here was the COMMENT, and it has been fixed."
+It described a load-bearing optab-side class in words that read as dead code,
+which is what made defect 3 hard to see
+.B "and what made this plan propose a change that would have broken the build."
+A comment that misleads a reader into deleting working code is worse than no
+comment at all.
 .LP
 The alternative \(em making
 .CW aclass()

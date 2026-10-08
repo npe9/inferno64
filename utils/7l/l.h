@@ -131,19 +131,40 @@ enum
 	C_LCON,		/* 32-bit constant */
 	C_FCON,		/* floating-point constant */
 	/*
-	 * C_VCON IS DECLARED, MATCHED AND HANDLED -- AND PRODUCED NOWHERE.
-	 * span.c's cmp() has a case for it and asmout.c's case 11 handles it,
-	 * but aclass() never returns it, so EVERY integer constant arrives as
-	 * a C_LCON whatever its width.  Do not read a C_VCON test as meaning
-	 * the wide case is covered somewhere.
+	 * C_VCON IS NEVER PRODUCED BY aclass() -- BUT IT IS NOT DEAD, AND THE
+	 * DIFFERENCE IS LOAD-BEARING.  An earlier version of this comment said
+	 * it was "declared, matched and handled, and produced nowhere", which
+	 * reads as dead code and led to a proposal to delete it.  That would
+	 * have broken ADWORD.
+	 *
+	 * C_VCON is an OPTAB-SIDE class.  optab.c's only ADWORD row is
+	 *
+	 *	{ ADWORD, C_NONE, C_NONE, C_VCON, 11, 8, 0 }
+	 *
+	 * and the matcher is asymmetric: span.c builds xcmp[i][n] = cmp(n, i)
+	 * and oplook indexes xcmp[actual][optab], so cmp()'s FIRST argument is
+	 * the optab's class and its second is what aclass() returned.  So
+	 * cmp(C_VCON, C_LCON) is evaluated on every ADWORD, falls into
+	 * `case C_VCON: return cmp(C_LCON, b)', and returns 1 -- which is the
+	 * only reason an 8-byte literal ever matches an operand that aclass()
+	 * called a C_LCON.
+	 *
+	 * Proof rather than argument: tests/7l-bigconst.sh reports "4 DWORD
+	 * pool entries", and ADWORD has no other optab row, so that case fired
+	 * four times in that run.
+	 *
+	 * What IS true and worth keeping: aclass() does not classify constant
+	 * width, so every integer constant arrives as C_LCON and a C_VCON test
+	 * on the ACLASS side would never fire.
 	 *
 	 * That is how a 64-bit constant came to be stored in a FOUR-BYTE
 	 * literal pool slot for every instruction but MOV, making
 	 * `ADD $4294967296' add nothing.  addpool() in span.c now sizes the
 	 * slot from the constant itself rather than from the opcode, which
 	 * does not need this class -- and tests/7l-bigconst.sh is the
-	 * regression test.  The class is left in place because removing it
-	 * would touch cmp() and asmout.c for no gain.
+	 * regression test.  The class stays because ADWORD's matching depends
+	 * on it, which is more than "no gain in removing it": removing it
+	 * would stop 8-byte literals matching at all.
 	 */
 	C_VCON,		/* 64-bit constant -- SEE ABOVE: aclass never returns it */
 
