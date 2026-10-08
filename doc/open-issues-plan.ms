@@ -13395,3 +13395,105 @@ capability claim above
 than it was written: on the board that write is behind an explicit
 .CW iseve()
 check and not merely behind mode 0644.
+.NH 3
+Three false passes in one hour, all of them reassuring
+.LP
+The two tests written above were themselves wrong, in the direction that reads
+as success.
+.B "A peer named the shape:"
+in a defect scan where no match means clean, a broken scanner is
+indistinguishable from a clean tree.
+.IP 1.
+.B "0 commands, all named."
+.CW man-cmdtab 's
+extractor required the enum prefix
+.CW CM .
+.CW devds.c 's
+table names its entries with an
+.CW F
+prefix rather than a
+.CW CM
+one, so it extracted zero of four commands and printed the most reassuring line it
+can produce.
+.B "The tell was in my own output"
+\(em a device with no commands has no reason to carry a
+.CW Cmdtab
+\(em and I read past it, having just written a test whose premise is that
+reassuring output deserves suspicion.  Broadening the pattern found
+.CW devprog.c
+uses
+.CW CD ,
+so
+.CW man/3/prog
+had 13 commands where 5 were measured, two of them
+.RB ( start ,
+.CW maim )
+documented nowhere.
+.IP 2.
+.B "1016 sources, no control characters \(em when 1010 were read."
+.CW troff-ctlchars
+used
+.CW "ls doc/*.ms man/*/*" ,
+which RECURSED into
+.CW man/lib/lookman ,
+.CW man/lib/man
+and
+.CW man/lib/permind ,
+emitting directory headers and bare filenames no
+.CW open()
+could match.  With
+.CW find
+there are 1023 files, so the run naming 1016 had checked 1010.
+.IP 3.
+.B "A control that exited 2 for the wrong reason."
+The deliberately-broken copy built to prove the self-test fires was written to
+.CW /tmp ,
+where
+.CW "cd `dirname $0`/.."
+left it outside the repository, so it exited 2 because
+.CW git
+could not find the tree.  Recorded as "caught".
+.LP
+.B "The pattern across all three is one thing:"
+each was caught by asking the scan to state
+.I "what it did,"
+not what it found.
+.B "A count of findings cannot distinguish zero findings from zero looking;"
+a count of work done can.  So
+.CW scan()
+now reports how many files it opened and the caller refuses to pass when that
+differs from the number handed to it, and zero commands from a file that HAS a
+.CW Cmdtab
+is exit 2.
+.NH 3
+Assert positions, not counts, and the fixture checks its own plant
+.LP
+A peer found that their three mutation tests all printed the SAME diagnostic
+\(em so "three caught" read as three detections and was one detector firing
+three times.
+.B "Asserting hit POSITIONS rather than a hit count fixes that for free."
+.CW troff-ctlchars 's
+fixture requires
+.B "2 hits on lines 1 and 3."
+Breaking the plant on line 1 gives
+.P1
+SELF-TEST FAILED -- known-bad gave 1 hit(s) on line(s) [3 ] (want 2 on [1 3 ])
+.P2
+which names WHICH plant failed and verifies the plant as a side effect, with no
+separate step.  That answers the peer's other finding too: a control can fail
+toward
+.I "the thing under test is broken"
+as readily as toward
+.I "it works,"
+and an exit status alone cannot tell them apart.
+.LP
+.B "And the renderer's signal is not portable."
+I wrote that groff emits one warning for twenty-four form feeds and called it
+"not quite silent, which is worse than silent".
+.P1
+groff 1.23.0 here     1 warning for 24 occurrences
+a peer's groff        0 for the same 30 bytes, 0 for 19 more elsewhere
+.P2
+That was a reading of one install.  A check depending on a renderer mentioning
+this is a check that works on one machine, which is the argument for counting
+bytes in the source.
