@@ -1066,3 +1066,84 @@ and the loaders' own refusals now catch defect classes that clang's optimiser
 would simply not have.
 .B "kencc's advantage was never its code quality; it is that you can read it,"
 and every entry in the "no" column above is there to keep that true.
+.NH 1
+REAL Plan 9 code, which halves the gap my synthetic benchmark reported
+.LP
+.B "The suggestion was Harvey, and it was the right instinct for a reason"
+.B "worth stating:"
+Harvey OS exists because Plan 9's kernel and userspace were made to compile
+under clang, so it is the proof that this comparison can be done on real code
+rather than on six functions somebody wrote to make a point.  Harvey is not in
+this tree, but
+.B "what it proves is available locally:"
+.CW 9front/src
+is 392 files of actual Plan 9 userspace \(em
+.CW libc ,
+.CW libdraw ,
+.CW libframe ,
+.CW libmemdraw ,
+.CW lib9p ,
+.CW cmd
+\(em and both toolchains accept it.
+.LP
+.B "333 files compiled by BOTH, the only honest denominator:"
+.P1
+6c      74623 instructions
+clang   50665 instructions
+aggregate ratio   1.47x
+median per file   1.27x
+clang WORSE than 6c on 51 of 333 files (15%)
+deciles  0.39 0.91 1.03 1.13 1.21 1.27 1.36 1.43 1.57 1.77
+.P2
+.B "MY SYNTHETIC BENCHMARK OVERSTATED THE GAP BY ABOUT TWO TIMES."
+It reported 2.4x; real Plan 9 userspace is 1.27x at the median.
+.B "The reason is the benchmark's shape, not clang's:"
+five of those six functions were tiny leaves, where kencc's per-function cost
+\(em the stack-argument ABI and the prologue copies \(em is most of the
+instruction count and amortises over nothing.
+.CW leaf
+at 5.0x was measuring the ABI.
+.B "Real library functions are bigger, so that fixed cost is divided by more work."
+That is this tree's own rule about testing the shape that bites, applied to a
+benchmark I wrote myself four hours earlier.
+.LP
+.B "Use the MEDIAN here and not the mean."
+The mean per-file ratio is
+.B 5.29x
+against a median of 1.27, because a handful of files are enormous outliers.
+A mean that sits four times its own median is describing the tail, which is the
+same mistake as range-disjointness being decided by one sample.
+.NH 2
+Two findings that only real code could give
+.LP
+.B "clang is WORSE on 15 per cent of the files,"
+and the first decile is
+.B 0.39x
+\(em
+.CW atan.c
+is 75 instructions from 6c against 192 from clang.
+.CW -O1
+still inlines and unrolls, so on small numeric code it spends instructions
+kencc does not.
+.B "A single aggregate ratio hides that entirely."
+.LP
+.B "And clang could not compile 57 of the 390 files at all \(em 15 per cent \(em"
+.B "while 6c failed on 2."
+Nothing compiled only under clang.
+.B "That is the real price of the clang route and it is exactly the work Harvey did:"
+not optimisation, but changing Plan 9 source until a standards-checking front
+end accepts it.
+.B "So the comparison is not kencc against clang on equal terms."
+It is kencc on the code as written against clang on the 85 per cent of it that
+clang agrees to read.
+.NH 2
+What that does to the tradespace
+.LP
+.B "It lowers the ceiling, which makes the reject column easier rather than harder."
+The reachable prize was never 2.4x; on real code the whole distance is 1.27x at
+the median, and a large part of that is the ABI, which is not an optimisation.
+.B "The tier-one items are worth about half a per cent of that distance."
+Closing the rest means SSA, value ranges, inlining and loop transforms \(em and
+the measured consequence of having them is a front end that rejects 15 per cent
+of this tree's own source and a compiler that takes five times longer with its
+optimiser switched off.
