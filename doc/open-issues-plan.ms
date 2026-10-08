@@ -13064,3 +13064,153 @@ A
 .CW kernel8.img
 appeared in this tree at 21:18 that no build of mine accounts for, and it stays
 open rather than closed on a plausible story.
+.NH 2
+bflag: the JIT emitted NO array bounds check on any board, and what that costs
+.LP
+.B "Found by a tool refusing to run."
+.CW tools/jtag/kmesg
+would not read the ring: the board was on build 1791422500 and
+.CW kernel8.img
+said 1791424620.  Four kernel links had happened in this worktree that no build
+of mine accounts for \(em which was the open
+.I "stray kernel8.img"
+question, and it is now CLOSED with evidence rather than a story.
+.CW inferno-rio-71
+built here four times (21:04:08, 21:14:16, 21:18:21, 21:57:01) from their own
+build logs, because in
+.I their
+worktree
+.CW os/
+is out of scope and in this one the kernel is the work.
+.B "The mechanism was never"
+.CW ROOT .
+Both of us had excluded that \(em no worktree's working copy and, as
+.CW multicore-73
+then checked, no branch's committed
+.CW mkconfig
+names this tree \(em and the exclusion was sound and irrelevant, because a
+session working here by
+.I "current directory"
+needs no
+.CW ROOT
+at all.  Two sessions spent effort narrowing the wrong mechanism.
+.LP
+.B "The defect."
+Every
+.CW comp-*.c
+wraps its
+.CW IINDX
+and
+.CW IIND*
+range tests in
+.CW "if(bflag)" ,
+and
+.CW os/inferno/port/dis.c
+declared
+.CW "int bflag;"
+\(em zero, assigned nowhere under
+.CW os/
+in the tree, while
+.CW emu/port/main.c
+has initialised it to 1 since forever.  So every native kernel with the JIT on
+indexed Limbo arrays
+.B "with no bounds check at all."
+.LP
+.B "Verified on silicon, both arms, which is what this tree adds."
+The peer's verification was QEMU and they said so when asked.  Same board, same
+card,
+.CW jit=1
+read from
+.CW /dev/jit :
+.P1
+build 1791422500 (bflag 0)   BNDSTEST 7 ok, 4 fail
+                             "index above the end: store accepted"
+                             "load above the end: read -1159984118"
+build 1791424620 (bflag 1)   BNDSTEST 11 ok, 0 fail
+.P2
+.B "The baseline's failures are themselves the proof the JIT was on."
+.CW xec.c 's
+.CW ind
+instructions test
+.CW "a == H"
+and
+.CW "i >= a->len"
+UNCONDITIONALLY, so an interpreted run passes all eleven whatever
+.CW bflag
+says.  Four failures are reachable only through compiled code \(em which is also
+why this survived: no hosted run and no
+.CW -c0
+run can see it.
+.NH 3
+The price, measured here because two installs is why nobody had
+.LP
+A
+.CW /dev/sysctl
+command sets
+.CW bflag
+at runtime.  It is read when a module is COMPILED and a Limbo command is
+compiled at each invocation, so one boot gives both arms with nothing else
+differing.  20000000 operations a run:
+.P1
+                  bflag=1 (checks)      bflag=0
+array, blocked    3350 3470 3480 3420   3250 3320
+array, alternating     3390 3390 3350   3080 3200 3150
+pooled mean                     3407         3200   +6.5%
+alternating only                3377         3143   +7.4%
+ranges                  3350..3480   3080..3320     do NOT overlap
+
+int (CONTROL)          5170 5370 5530   5280 5320 5270
+                                5357         5290   +1.3%
+ranges                  5170..5530   5270..5320     DO overlap
+.P2
+.B "The control is what makes the first number mean anything."
+.CW int
+does not index an array and shows no effect with overlapping ranges, so the 6.5
+per cent is the checks rather than drift, the kernel print, or module reload.
+Checksums identical in every arm.  Blocked and alternating agree and ON1 against
+ON2 shows no drift.
+.B "6.5 per cent on the most index-heavy test in the suite is an UPPER bound,"
+not a typical cost, and the peer's hosted figure was 5.7 \(em the same order from
+a different measurement site.
+.LP
+.B "The knob's own control caught two things, and one of them twice."
+.CW Cmdtab 's
+count is the TOTAL token count including the command name, so
+.CW "\"bflag\", 1"
+rejected every write.  All three arms then read 11 ok, which
+.B "is exactly what a knob that works and costs nothing looks like;"
+only the
+.CW "wrong #args"
+line beside them told them apart.  Then
+.CW bndstest
+settled the question an A/B taken through a compile-time flag has to answer \(em
+whether a cached module was reused \(em by reporting 7 ok 4 fail on the same boot
+that had just reported 11.
+.LP
+.B "One observation, offered as nothing more."
+An earlier
+.CW bflag=0
+.CW bndstest
+run wedged with
+.CW cpu0
+in
+.CW exit+0x50
+instead of printing its summary, and a later identical run did not.
+.CW bflag=0
+is the arm that deliberately stores out of bounds, so a nondeterministic wedge
+there is the defect doing what the defect does.  One instance, recovered with
+.CW hardreset .
+.LP
+.B "And a build trap the peer hit, which this tree should know:"
+in this mkfile
+.CW "mk kernel8.img"
+alone rebuilds the libraries and
+.B "skips the link,"
+so it silently tests the PREVIOUS image \(em one of their five attempts linked
+zero times and wrote nothing.
+.CW kbuild
+is not exposed, because it removes
+.CW i$CONF
+first and prints the
+.CW 7l
+count, which is what makes the link observable rather than assumed.
