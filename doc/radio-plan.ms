@@ -9278,3 +9278,129 @@ nothing about ssl ON with the keyring conf \- that arm was not run.  And
 board 2 stopped answering a software reset immediately afterwards, six
 attempts, console silent, so it wants a power cycle before the next
 reading.
+.NH 1
+Steps 5 and 6 with no hardware in them, and what that found immediately
+.PP
+Everything above was measured on two clicker2 boards through
+.IR screen ,
+and that has cost more than the steps did: a board stops answering a
+software reset and an arm cannot be run until somebody presses a button,
+two boards are two serial adapters and one wedges if anything opens the
+device twice, and every reading arrives through a terminal's scrollback,
+which was returning a
+.I frozen file
+for two runs in a row.  None of that is about the radio.
+.PP
+.IR Qemustyx (1)
+runs the pair as two guests over the modelled CC1120.
+.B tools/qemu-patches
+already models the part with a socket back end and
+.B /lib/radio
+already has an entry for each guest with a callsign, a peer and a role,
+so the station init runs unmodified and the whole of steps 5 and 6 is
+one command with no hands in it.  The answerer must reach
+.B EXPORTING
+and the caller
+.BR MOUNTED ,
+which are different markers, so neither end can be mistaken for the
+other; the control is the answerer alone, which must announce and never
+export.
+.PP
+.B "And it paid for itself on the first use."
+.NH 2
+ssl on the base conf: it works, and it costs 6536 bytes of core
+.PP
+.B ssl=1
+is set on the two qemu entries in
+.B /lib/radio
+and not on the boards \- the encrypted arm's failures on the air are
+link-level, more frames to lose because of the 30-byte record overhead,
+and a guest pair has no air to lose them on, so this exercises devssl,
+the record reassembly and the memory under a 109-byte frame and nothing
+else.
+.DS
+.CW "sat: styx: ssl on, by ssl=1 in /lib/radio"
+.CW "gnd: styx: ssl on, by ssl=1 in /lib/radio"
+.CW "QEMUSTYX-PAIR-OK answerer exported and caller mounted"
+.CW "sat core: 11144 bytes free"
+.CW "QEMUSTYX-CONTROL-OK announced, never exported"
+.DE
+.PP
+Against 17680 bytes free at export with
+.B ssl=0
+on the same conf, so
+.B "ssl(3) under the Styx costs 6536 bytes of core"
+on this part.  That is the first time that number has been isolated: on
+silicon it was always measured together with whatever else the arm
+changed.
+.NH 2
+And the arm that had never been run fails: keyring and ssl together
+.PP
+The section before this one recorded, as not claimed, "nothing about ssl
+ON with the keyring conf \- that arm was not run".  It runs now, without
+hardware, and it fails every time.  Both ends get further than expected:
+.DS
+.CW "sat: styx: ssl sha/rc4_256 on #D/0"
+.CW "sat: ARMV7M-STYX-SSL"
+.CW "gnd: ARMV7M-STYX-SSL"
+.CW "gnd: ARMV7M-STYX-MOUNTING"
+.CW "gnd: styx: up 41 from the pipe (41 so far)"
+.CW "sat: styx: down 41 off the air (41 so far)"
+.DE
+.PP
+So the handshake completes, the record layer is up on both sides, the
+caller mounts and sends, and
+.B "the answerer receives it."
+Then the answerer locks up before it exports, and the caller times out
+with
+.BR "ax25: no answer" .
+.PP
+.B "One run said why:"
+.CW "no free Blocks" ,
+printed
+.B 22546
+times.  The station has no Blocks left once ssl is pushed on a conf that
+already spends 197K of text and a page on
+.BR $Keyring .
+That is the same shortage the identity half measured, in a different
+resource.
+.PP
+.B "What is NOT claimed, and this one took a controlled run to get right:"
+the flood is not the cause of the lockup.  With
+.IR exhausted ()'s
+print bounded the lockup happens with no message at all, so bounding it
+does not repair the arm \- it only stops the condition destroying its own
+evidence.  The two runs also differed in how far they got before dying,
+which is trajectory variation and not a result.
+.NH 2
+An out-of-resource print that made the condition fatal
+.PP
+.I Exhausted ()
+in
+.B os/inferno/port/proc.c
+printed and then raised, and every caller retries, so one exhausted
+resource was one print per retry for as long as the condition lasted.
+22546 of them took the machine from out of Blocks \- which a program can
+be told about and can fail cleanly on \- to a lockup with SP below the
+bottom of SRAM.
+.PP
+.B "Worse, it hid itself."
+On the first run of that arm the flood filled the console FIFO behind an
+earlier
+.CW #c/poolhist
+dump, so the console showed
+.B ARMV7M-STYX-SSL
+and then a lockup with no message at all, and the failure looked like a
+fault in devssl.  An unbounded print on an error path destroys the
+evidence it exists to provide.
+.PP
+Now the first one goes out at once, then at most one a second, and the
+suppressed ones are
+.I counted
+and reported rather than dropped.
+.B "The error() is untouched:"
+one knob cannot be both the warning and the control, and rate limiting
+the failure would turn a reported shortage into a silent one.  Verified
+against the arm that passes \- base conf with ssl on still exports and
+mounts, with the same 11144 bytes of core \- and against the arm that
+floods, where 22546 lines became none.

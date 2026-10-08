@@ -175,6 +175,15 @@ radio=cc1120 uid=203730395931500800300022
 radio=cc1120 uid=eeeeeeee4b4b4b4b11111111
 	board=qemu-netduinoplus2 click=cc1120-model name=qemu1
 	call=N0CALL-9 peer=N0CALL-8 role=caller
+	# ssl=1 ON THE GUESTS AND NOT ON THE BOARDS, which is the whole
+	# reason this is data.  The encrypted arm's failures are
+	# link-level -- more frames to lose because of the record
+	# overhead -- and a guest pair has no air to lose them on, so
+	# this exercises devssl, the record reassembly and the memory
+	# under a 109-byte frame without asking anything of the bench.
+	# tools/radio/qemustyx.sh runs the pair; it reports which arm
+	# each guest says it ran rather than assuming this line.
+	ssl=1
 	# The model's radio needs no crystal correction: it has no
 	# crystal.  Left out rather than set to zero, so that a run which
 	# expects a calibration says it did not find one.
@@ -183,4 +192,5 @@ radio=cc1120 uid=eeeeeeee4b4b4b4b11111111
 radio=cc1120 uid=dddddddd7878787822222222
 	board=qemu-netduinoplus2 click=cc1120-model name=qemu2
 	call=N0CALL-8 peer=N0CALL-9 role=answerer
+	ssl=1
 	rssioffset=-102 csthr=-90

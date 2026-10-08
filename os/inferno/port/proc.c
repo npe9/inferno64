@@ -1785,13 +1785,61 @@ enverror(void)
 	return up->errstr;
 }
 
+/*
+ * AND THE PRINT IS RATE LIMITED WHILE THE ERROR IS NOT.
+ *
+ * Every caller of this retries, so one exhausted resource is one print
+ * per retry, for as long as the condition lasts.  Measured on
+ * os/inferno/stm32f407 with ssl(3) pushed under the Styx on a kernel
+ * that also registers $Keyring: the station ran out of Blocks the
+ * moment ssl was pushed and printed "no free Blocks" 22546 times, which
+ * took the machine from out of Blocks -- a condition a program can be
+ * told about and can fail cleanly on -- to a lockup with SP below the
+ * bottom of SRAM.  An out-of-resource condition should not be fatal and
+ * it was the PRINT that made it fatal.
+ *
+ * Worse, it hid itself.  On the first run of that arm the same flood
+ * filled the console FIFO behind an earlier #c/poolhist dump, so the
+ * console showed ARMV7M-STYX-SSL and then a lockup with no message at
+ * all, and the diagnosis looked like a fault in devssl.  An unbounded
+ * print on an error path destroys the evidence it exists to provide.
+ *
+ * So: the first one goes out immediately, then at most one a second,
+ * and the suppressed ones are COUNTED and reported rather than
+ * dropped -- a report that silently loses occurrences is how a flood
+ * gets read as a single event.
+ *
+ * The error() is untouched.  One knob cannot be both the warning and
+ * the control: rate limiting the diagnostic is a kindness to the
+ * console, and rate limiting the failure would turn a reported
+ * shortage into a silent one.  Callers see the same error every time,
+ * at the same point, as before.
+ *
+ * Resources are compared by POINTER, because every caller passes a
+ * string literal from a fixed call site; two different resources
+ * therefore always print rather than suppressing each other, which is
+ * the behaviour that matters when one shortage causes another.
+ */
 void
 exhausted(char *resource)
 {
+	static char *lastres;
+	static ulong lastprint, nsupp;
 	char buf[64];
+	ulong now;
 
 	snprint(buf, sizeof(buf), "no free %s", resource);
-	iprint("%s\n", buf);
+	now = MACHP(0)->ticks;
+	if(resource != lastres || (long)(now - lastprint) >= HZ){
+		if(nsupp != 0)
+			iprint("no free %s: %lud more suppressed\n",
+				lastres, nsupp);
+		iprint("%s\n", buf);
+		lastres = resource;
+		lastprint = now;
+		nsupp = 0;
+	} else
+		nsupp++;
 	error(buf);
 }
 

@@ -1,0 +1,132 @@
+.TH QEMUSTYX 1
+.SH NAME
+qemustyx \- a whole Styx-over-the-radio run with no hardware in it
+.SH SYNOPSIS
+.B tools/radio/qemustyx.sh
+.I qemu-system-arm
+.RI [ kernel ]
+.SH DESCRIPTION
+Two
+.I qemu
+guests run the station init over the modelled CC1120: one exports its
+namespace and the other mounts it, over a connected AX.25 link, exactly
+as the two clicker2 boards do.
+.PP
+Steps 5 and 6 of
+.B doc/radio-plan.ms
+had only ever been exercised on the bench, and that cost more than the
+steps did.  A board stops answering a software reset and an arm cannot
+be run until somebody presses a button; two boards are two serial
+adapters and one wedges if anything opens the device twice; and every
+reading arrives through a terminal's scrollback, which was returning a
+frozen file for two runs in a row before
+.I twoboard.session_for ()
+was fixed.  None of that is about the radio.
+.PP
+.B tools/qemu-patches
+models the part and gives it a socket back end, and
+.B /lib/radio
+already has an entry for each guest with a callsign, a peer and a role,
+so the init runs unmodified.
+.SH "WHAT IT CHECKS"
+The two ends print different things, which is the point:
+.B /lib/radio
+makes
+.B qemu2
+the answerer and
+.B qemu1
+the caller, so the answerer must reach
+.B ARMV7M-STYX-EXPORTING
+and the caller
+.BR ARMV7M-STYX-MOUNTED ,
+and neither marker can be mistaken for the other.  A fault or a panic on
+either console fails the run even when both markers appeared, because
+the markers are printed before the traffic that follows them.
+.PP
+The answerer starts first, because it announces and waits; a caller
+that calls before anything is listening gets
+.B "ax25: no answer"
+and that is a harness fault dressed as a link fault.
+.PP
+.B "The control is the second half:"
+the answerer alone, with nobody to call it.  It must announce and never
+export.  Without it an init that printed
+.B EXPORTING
+from a path not depending on a peer would pass \- which is the shape of
+mistake that put two runs of a kernel that never booted into this
+plan's notes.
+.PP
+Each guest's
+.B "conf <name> (<kerndate>)"
+line and its
+.B "styx: ssl"
+line are printed before any verdict, so a log says which image wrote it
+and which arm it ran rather than leaving that to be remembered.
+.SH OPTIONS
+.TP
+.B OUTDIR
+keeps both consoles in that directory instead of a temporary one.  The
+verdict lines are a summary and the diagnosis is in what they leave out:
+the run that found the keyring-plus-ssl arm failing reported only that
+the answerer "did not export", when what mattered was the 22546 lines
+after its last one.
+.TP
+.B SECS
+how long the caller is given, default 90.
+.TP
+.B PORT
+the loopback port for the radio back end, default 15723.
+.SH FILES
+.TP
+.B /lib/radio
+.BR ssl= ,
+.BR call= ,
+.B peer=
+and
+.B role=
+per board.
+.B ssl=1
+is set on the two qemu entries and not on the boards: the encrypted
+arm's failures are link-level, and a guest pair has no air to lose
+frames on, so it exercises devssl, the record reassembly and the memory
+under a 109-byte frame without asking anything of the bench.
+.SH EXAMPLES
+The pair, and then the same with the keyring registered:
+.IP
+.EX
+mk CONF=stm32f407 INIT=armv7mstyx istm32f407
+tools/radio/qemustyx.sh $QEMU os/inferno/stm32f407/istm32f407
+.EE
+.SH "WHAT IT FOUND"
+With
+.B ssl=1
+on the base conf the pair exports and mounts, and ssl costs 6536 bytes
+of core \- 17680 free at export without it, 11144 with.
+.PP
+On
+.B stm32f407auth
+\- the same station with
+.B $Keyring
+registered \- the arm fails every time: both ends push
+.B sha/rc4_256
+and print
+.BR ARMV7M-STYX-SSL ,
+the caller reaches
+.B MOUNTING
+and puts 41 bytes on the air, the answerer receives them, and then the
+answerer locks up before it exports.  One run printed
+.B "no free Blocks"
+22546 times, so the station has no Blocks left once ssl is pushed on a
+conf that already costs 197K of text and a page.
+.B "The flood is not the cause:"
+with
+.IR exhausted ()'s
+print bounded the lockup happens with no message at all.  That arm wants
+a bigger part, which is the same conclusion the identity half reached.
+.SH SOURCE
+.B tools/radio/qemustyx.sh
+.SH "SEE ALSO"
+.IR ax25inittest (1),
+.IR twostyx (1),
+.IR radio (3),
+.B doc/radio-plan.ms
