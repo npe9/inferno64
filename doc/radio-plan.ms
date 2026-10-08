@@ -8712,3 +8712,75 @@ reads 0, so it is not the part reporting an overflow; what has not been
 measured is how much of the FIFO is in use when a long frame is being
 taken, and whether the longest frames are the ones that cannot fit
 beside whatever is already there.
+.NH 2
+What the part says, and the FIFO theory withdrawn
+.PP
+.B "The 125-plus-1-plus-2-is-128 observation was numerology and the data already refuted it."
+.B pendat
+\- NUM_RXBYTES at the moment the length byte is kept \- reads
+.B "6, 13, 15, 16 and 27"
+across the runs that have it, out of 128.
+.B "The FIFO is nearly empty when these frames are abandoned,"
+so capacity is not the mechanism.
+.PP
+.B "And because rxstall tracks rxpartial, the frame had already stopped for over a second before the driver looked at it."
+The driver is not causing it and is not failing to drain fast enough:
+the stall detector needs two equal samples a second apart to fire at
+all.
+.NH 2
+MARC_STATUS1 at the pend, which rules out an abort
+.PP
+The part records how each packet ended, and the driver already reads it
+after a transmit as
+.BR txmarc .
+Read at the pend instead, three runs:
+.DS
+.CW "pendat 15 state 0x10 marc 0x40"
+.CW "pendat  6 state 0x10 marc 0x40"
+.CW "pendat 27 state 0x10 marc 0x40"
+.DE
+.B "0x40 is TX FINISHED."
+Had the part terminated the packet it would hold one of 0x01 to 0x0a \-
+RX timeout, termination on carrier sense or PQT, a length or address or
+CRC discard, a FIFO overflow or underflow \-
+.B "and it holds none of them."
+The last packet-level event it knows about is this station's own
+transmit completing, so
+.B "from the part's point of view the reception never ended: it is still waiting for the rest."
+.PP
+With the sender reporting
+.B "txunderflow 0 txnever 0"
+and its own
+.B "marc 0x40"
+\- TX finished \- the position is that
+.B "the sender believes it sent the whole frame, the receiver believes it is still receiving one, and the bytes are missing in between."
+.NH 2
+And the fault did not occur in those three runs
+.PP
+.B "rxstale 0, 0, 0."
+Earlier runs in the same configuration had one or two a run, so this
+reading is of the mechanism's ABSENCE and not of the fault.
+.B "Two possibilities and no evidence between them:"
+ordinary variance, or the extra SPI read this measurement adds to the
+interrupt path having perturbed the timing that produces it.  The second
+would be worth knowing and needs more runs than one sitting.
+.PP
+What is in place for the next attempt, which is the useful residue:
+.B pendat
+and
+.B marc
+at the pend,
+.B "rxstale (X then Y of L)"
+carrying one frame's three numbers,
+.B rxkilled ,
+.B txskip ,
+.B resume ,
+.B notidle
+and
+.B idlepoll ,
+plus
+.IR roleswap (1)
+and
+.IR ramptrial (1)
+for the two questions that are already answered.
+.B "Every wrong guess in this chase was killed by a counter, and all of them are still there."

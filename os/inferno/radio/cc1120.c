@@ -1394,6 +1394,30 @@ cc1120interrupt(Radio *r)
 				 */
 				rr->rxpendat = navail;
 				rr->rxpendst = st;
+				/*
+				 * AND WHY THE PART STOPPED, WHICH IT WILL
+				 * SAY IF ASKED.
+				 *
+				 * The frames that get abandoned are the
+				 * long ones and only at the end that
+				 * receives them -- established by swapping
+				 * the roles -- and three guesses have been
+				 * wrong about why: not our own transmit
+				 * (rxkilled 0), not the signal level (69dB
+				 * of attenuation changed nothing and the
+				 * stronger receiver is the clean one), and
+				 * not the FIFO filling up, because pendat
+				 * reads 13 to 16 of 128 when the pend is
+				 * taken.
+				 *
+				 * MARC_STATUS1 is the part's own account of
+				 * how the last packet ended -- CRC error,
+				 * timeout, overflow, finished -- and the
+				 * driver already reads it after a transmit
+				 * and prints it as txmarc.  Reading it here
+				 * asks the one party that knows.
+				 */
+				rr->rxpendmarc = rdx(rr, Xmarcstatus1);
 				rr->rxpendtick = m != nil? m->ticks: 0;
 				s->unlock(s);
 				break;
@@ -3976,7 +4000,7 @@ cc1120stat(Radio *r, char *p, int n)
 		"ccabusy %ud ccamode %d fifoerr %ud watch %ud of %ud\n"
 		"rxstall %ud rxpartial %ud resume %ud rxstale %ud (%d then %d of %d) rxunder %ud\n"
 		"status %ud crcbad %ud notidle %ud idlepoll %d said 0x%.2x\n"
-		"txskip %ud rxkilled %ud pendat %d state 0x%.2x\n"
+		"txskip %ud rxkilled %ud pendat %d state 0x%.2x marc 0x%.2x\n"
 		"pacfg2 0x%.2x ramp %d power %d.%ddBm\n"
 		"ppb %d\n",
 		rr->partnum, rr->partversion,
@@ -4001,7 +4025,7 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->nrxunder,
 		rr->nstatus, rr->ncrcbad, rr->nnotidle, rr->idlepoll,
 		rr->idlelast, rr->ntxskip, rr->nrxkilled,
-		rr->rxpendat, rr->rxpendst,
+		rr->rxpendat, rr->rxpendst, rr->rxpendmarc,
 		pacfg2, pacfg2 & Papowerramp,
 		patenths/10, patenths < 0? -patenths%10: patenths%10,
 		/*

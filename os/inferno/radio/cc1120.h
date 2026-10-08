@@ -99,6 +99,7 @@ struct Cc1120
 	int	rxstalenavail;		/* ... and what the FIFO held then */
 	int	rxpendat;		/* navail when the pend was taken */
 	int	rxpendst;		/* and the part's state then */
+	int	rxpendmarc;		/* and MARC_STATUS1: why it stopped */
 	u32	nrxkilled;		/* pends dropped because we transmitted */
 	u32	ntxskip;		/* drains skipped: the part was not in RX */
 	int	idlelast;		/* what it said instead of IDLE */
