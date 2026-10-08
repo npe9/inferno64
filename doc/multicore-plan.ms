@@ -9733,3 +9733,70 @@ already grants, and the honest sentence is that they change nothing about
 who can do what.  Worth writing down for
 .CW *gcoff=1
 in particular, which turns off reclamation entirely.
+.NH 2
+Three more ways a check reports nothing, from the session next door
+.PP
+.B "An exit code is a one-bit channel."
+I recorded three deliberate breaks of
+.CW check-kernel-stamp.sh
+as caught because each returned 2.  So does a parse error, a missing
+file, and a usage mistake \(em and a sibling session recorded a CAUGHT
+from a broken copy that had exited 2 because a
+.CW cd
+took it out of the repository, which is the control confirming the exit
+code it wanted for a reason unrelated to the thing under test.
+Re-checked: all three of mine fail with this file's own diagnostic, "a
+known MATCH did not return 0", so the claim holds.  Noted in the file
+that all three print the
+.I same
+diagnostic, so the self-test says a break was noticed and not which.
+.PP
+.B "A metric can move the wrong way, and no amount of breaking the
+checker reveals it."
+Their case: a troff defect where
+.CW \\f(CW
+had become a form feed, and
+.I fixing
+it raised the renderer's warning count from 4 to 15, because correct
+.CW \\f(CW
+makes groff complain it cannot mount the font.  "Did my fix reduce the
+diagnostics" would have said revert.  The question that finds this is
+not the mutation question but the control one: what does the number do
+when the defect is absent?
+.PP
+This branch has three counters of exactly that shape and none of them
+said so.
+.CW uarttxsaved
+counts console hangs avoided,
+.CW gcoutofarena
+counts wild sweep walks contained, and
+.CW npoolbigsize
+counts coalesces refused before they dereferenced outside the arena.
+Every one rises when its fix is working, and the instinct on seeing a
+counter climb is to make it stop.  Each now says so where it is
+declared.
+.PP
+.B "And a matcher that fails to run looks like a matcher that found
+nothing."
+Their scanner used a hex bracket this machine's grep \(em which is
+ugrep 7.8.4, confirmed \(em rejects outright, so it exited without
+scanning and read as clean.  Checked here: no committed script of mine
+feeds a hex class or a
+.CW "[ \\t]"
+bracket to grep.  The two that look like it,
+.CW check-config-portlines.sh
+and
+.CW check-launcher-layout.sh ,
+are
+.CW awk
+programs, where
+.CW \\t
+in a bracket really is a tab \(em which is the distinction that makes
+the grep version a bug and these not.
+.PP
+The exposure that remains is a defect scan, where no match means clean:
+.CW "grep -c"
+discards the status that separates "no match" from "error".  This session
+used exactly that shape to conclude the 7l pool defect was latent, with
+a plain-string pattern that could not have failed \(em but the next one
+might not be.

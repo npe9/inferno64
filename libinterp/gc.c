@@ -73,6 +73,12 @@ struct Ptrhash
 	 * othersrunning() counts only inxec, by design.  With the bound in
 	 * place the worst a concurrent write can do is cost a restart,
 	 * which is what an unbounded walk should have cost all along.
+	 *
+	 * And this counter rising is the bound WORKING.  Each one is a
+	 * wild forward walk that did not happen, so a nonzero value says
+	 * the hazard is real on this machine and was contained every
+	 * time.  It is not a defect count to be driven down -- the number
+	 * to drive down is whatever is moving the cursor.
 	 */
 	ulong	gcoutofarena;
 	int	gcoff;		/* *gcoff=1: do not collect at all */

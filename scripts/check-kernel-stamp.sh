@@ -107,6 +107,14 @@ PY
 #	grep -a dropped				CAUGHT (needs the NUL)
 #	tail -1 -> head -1			CAUGHT (needs two soak stamps)
 #
+# And each was re-checked to fail for the RIGHT reason, not merely to
+# fail: all three print this file's own "a known MATCH did not return 0".
+# An exit code is a one-bit channel and "I am broken" and "my
+# environment is broken" both come down it -- a peer recorded a CAUGHT
+# from a broken copy that had exited 2 because a cd took it out of the
+# repository.  Note also that all three report the SAME diagnostic, so
+# this says a break was noticed and not which break it was.
+#
 # Each was MISSED by a tidier fixture first.  A plain-text log never
 # triggers grep's binary heuristic, and a log with one soak-line stamp
 # gives head and tail nothing to disagree about -- so both properties are

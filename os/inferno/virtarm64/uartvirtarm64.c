@@ -115,6 +115,14 @@ virtarm64_disable(Uart *uart)
  * QUEUE still had output although the staging buffer did not.  Each one
  * of these is a console that would have stopped for good before this
  * test looked past the staging buffer.
+ *
+ * THIS NUMBER GOING UP IS THE FIX WORKING, not a regression.  It counts
+ * hangs avoided, so a larger value means the condition arose more often
+ * and was handled every time; driving it to zero means removing the
+ * test.  Said here because the obvious instinct on seeing a counter
+ * climb is to make it stop, and because a sibling session had a case
+ * where fixing a defect raised the diagnostic count from 4 to 15 and
+ * "did my fix reduce the warnings" would have told it to revert.
  */
 ulong uarttxsaved;
 

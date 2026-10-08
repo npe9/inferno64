@@ -76,7 +76,12 @@ struct Pool
 };
 
 int poolstat;		/* *poolstat=1 */
-ulong npoolbigsize;	/* frees refused for a size larger than the pool */
+/*
+ * Frees refused for a size larger than the pool.  Rising means the guard
+ * is catching corruption before the coalesce dereferences outside the
+ * arena, so it counts faults prevented rather than faults caused.
+ */
+ulong npoolbigsize;
 
 /* keep the quanta above the size of 5 pointers and 2 longs else the next block
 	will be getting overwritten by the header -- starts a corruption hunt
