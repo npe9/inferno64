@@ -13903,3 +13903,33 @@ of 9.2 over 14 samples an arm.
 only the way it was being reported was fragile.  Plus sign stability across
 three independent runs and the reversed order, which is the claim the data
 supports and the one to lead with.
+.LP
+.B "One more distinction, from the peer, and it is theirs rather than mine."
+.B "Separation is not replication."
+Their arms are separated by
+.I multiples
+\(em the closest a factor of two \(em so a few more samples cannot close them,
+and their direction rests on that separation.  But every figure of theirs is
+.B "one batch per arm in one arm order."
+This board's rests on
+.B repetition :
+three independent runs all the same sign, plus a reversed-order run inside the
+span, 14 samples an arm, both orders.
+.B "For an 8 per cent effect the method has to carry the weight; for a 2x effect the effect does."
+So the two sets of numbers are not earned the same way, and a reader comparing
+the tables would assume they were unless it is said.
+.LP
+.B "And order stays confounded with arm until it is reversed."
+Three sessions ran on-then-off without noticing, this one included.  Any re-run
+of those arms should reverse the order in half the instances.
+.LP
+.B "A rounding tell worth keeping."
+The peer published a control arm as
+.CW "[3.2..3.2]" ,
+which is zero observed spread; the primary data was 3.191, 3.234, 3.247 \(em 1.7
+per cent apart, flattened by printing one decimal place.
+.B "Zero observed spread is the least informative spread there is,"
+and this is the same error as quoting a point estimate to two significant
+figures with the sign reversed: there, more resolution than the data carries;
+here, more repeatability.
+.B "Both come from choosing the number of digits after seeing the numbers."
