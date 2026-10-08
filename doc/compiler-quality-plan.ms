@@ -895,7 +895,7 @@ because the register allocator needs it.
 The tradespace
 .P1
                     sites  /1000   lines  infra   risk   VERDICT
-duplicate RETURN      456   3.37      ~8  flow    low    YES, first
+duplicate RETURN       77   0.57       1  none    HIGH   NO, see below
 shift fold (shiftprop)164   1.21     ~30  flow    med    DONE, ported
 branch to next instr  153   1.13      ~8  none    low    LISTING only
 adjacent spill/reload  69   0.51      ~8  none    low    marginal
@@ -1210,12 +1210,81 @@ not in a per-architecture peephole.  The dead case was deleted rather than left
 in place, because code that looks like an optimisation and never fires is worse
 than no code.
 .LP
-.B "Appropriate to INVESTIGATE, not to enable:"
-.CW shiftprop ,
-because 345 sites is the largest number in the table and the code already
-exists \(em but it is switched off with no comment, which in this tree has
-meant "it was wrong" more often than "nobody got round to it".
-.B "Finding out why it is off is the task, not turning it on."
+.B "THE FRONT-END FIX WAS THEN TRIED, AND IT IS A NO ON TWO INDEPENDENT"
+.B "GROUNDS."
+.LP
+First,
+.B "456 is the LISTING count and 77 is the shipping count."
+A duplicate RETURN pair appears at the end of essentially every function in
+.CW 7c 's
+listing \(em 31 pairs in
+.CW chan.c
+alone \(em but the linked kernel contains 9936
+.CW RET
+instructions and only
+.B 77
+adjacent
+.CW "RET - RET"
+pairs.  So something between the listing and the image already removes about 99
+per cent of them, and the ceiling on the fix is 77 instructions, not 456.  That
+is 0.57 per 1000, which this table calls marginal at 69, for a change to the
+shared front end rather than eight lines in one compiler.
+.B "This is the same error as the branch-to-next row,"
+made again: a count taken from the compiler's output is not a count of what
+ships.
+.LP
+Second, and decisively,
+.B "the one line does not work."
+The guard is
+.P1
+	noretval(3);
+	if(canreach)
+		gbranch(ORETURN);
+.P2
+.LP
+and with it every object file in the kernel becomes unreadable to
+.CW 7l :
+.P1
+	iseve: truncated object file: auth.7
+	now: truncated object file: clock.7
+	segflush: truncated object file: main.7
+	...
+.P2
+.LP
+one line per object, naming the symbol the loader was reading when the text ran
+out, and then
+.CW "too many errors" .
+.B "The trailing epilogue is load-bearing in the object encoding,"
+not merely a redundant instruction \(em so \(lqdelete the unreachable
+RETURN\(rq is not a one-line change in the front end either, and the row is
+closed.
+.LP
+.B "What it cost to find out, which is the reason it is written down:"
+the failed build removes
+.CW kernel8.img ,
+and it ran while a
+.CW kinstall
+was in its pre-flight with that file as the candidate \(em so the rebuild that
+repaired the tree also invalidated a card install in flight, which had to be
+stopped and restarted.
+.B "A measurement build of a shared front end is not a side-effect-free experiment."
+.LP
+.B "shiftprop: investigated, and the investigation licensed the port."
+It was switched off with no comment, which in this tree has meant "it was
+wrong" more often than "nobody got round to it" \(em and the answer turned out
+to be neither.
+.B "It had never been ported from 32-bit ARM,"
+in six places, of which the field layout and 7c's own listing printer are the
+two that produced visibly wrong output.  Ported, and
+.B "168 instructions leave the kernel,"
+measured three ways that agree to within one.  The section above has the
+defects and the byte-level verification;
+.CW tests/kencc-shiftfold.sh
+is the guard, and it has been seen to fail in both directions.
+.B "The 345 in the table was also wrong,"
+by the same mechanism twice: a counter at the point where the pass gives up
+counts attempts, not work.  The real figure is 164 over the kernel sources that
+compile standalone.
 .LP
 .B "Not appropriate, and the reason differs:"
 MADD and spill/reload are too rare to pay for their risk; width-aware copyprop
