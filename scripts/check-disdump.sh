@@ -24,6 +24,13 @@
 # machine.  So the list below is the list, and a print added under a
 # new prefix has to be added to it.
 #
+# ^freeFD: is the first one that arrived that way.  It is a
+# "MULTICORE INSTRUMENTATION - temporary" print in
+# os/inferno/port/inferno.c, capped at three occurrences and NOT behind
+# *disdump, so the switch that gates dis.c and portclock.c misses it --
+# found by this check's own list being incomplete while the merged tree
+# printed it during a suite run.
+#
 # What is deliberately NOT here: "the counts disagree", "waiter %d %s
 # state", "vmachine: prog", and the poolcheckoverlap sweep.  Those
 # report a fault rather than a measurement.  They must stay
@@ -80,7 +87,7 @@ for arm in off on; do
 	# every prefix the temporary instrumentation prints under
 	NOISE='dis: parked for work|dis: global runq|kstack: least headroom'
 	NOISE="$NOISE"'|^soak:|^stall:|^nvm:|^audit:|^runq: [0-9]+ dis programs'
-	NOISE="$NOISE"'|^vmq: [0-9]+ interpreters'
+	NOISE="$NOISE"'|^vmq: [0-9]+ interpreters|^freeFD:'
 
 	shell=no; dump=no
 	sed -e 's/\r$//' "$log" | grep -q 'spawn sh -n /dis/init' && shell=yes
