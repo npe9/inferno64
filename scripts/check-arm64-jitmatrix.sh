@@ -137,7 +137,7 @@ boot() {	# boot <ini> <log>
 	MSEC=-1
 	deadline=`expr $start + $BOOTSECS \* 1000`
 	while kill -0 $qpid 2>/dev/null; do
-		if grep -aq '^DISBENCH ' "$2" 2>/dev/null; then
+		if grep -aq 'DISBENCH ' "$2" 2>/dev/null; then
 			MSEC=`python3 -c "import time;print(int(time.time()*1000)-$start)"`
 			break
 		fi
@@ -186,7 +186,7 @@ verdict() {	# verdict <log>
 			echo "ok-nojit"
 		elif grep -aq 'JIT disabled' "$1"; then
 			echo "ok-refused"
-		elif grep -aq '^conf .*jit 1' "$1"; then
+		elif grep -aq 'conf .*jit 1' "$1"; then
 			echo "ok-jit"
 		else
 			echo "ok"
@@ -227,7 +227,7 @@ for pv in 0 1; do
 		b0="$WORK/p$pv-c$cf-0.log"
 		if grep -aq DISBENCH-OK "$b0"; then
 			printf '	disbench (ms):'
-			grep -a '^DISBENCH ' "$b0" | tr -d '\r' | \
+			grep -a 'DISBENCH ' "$b0" | tr -d '\r' | \
 				awk '{printf " %s=%s", $2, $4}'
 			echo ""
 		else

@@ -107,7 +107,9 @@ wait $CP 2>/dev/null || true
 kill $SP2 2>/dev/null || true
 
 ok=1
-grep -q '^DISCOVERED tcp!' "$WORK/c.log" || {
+# Unanchored: see the note in scripts/check-arm64-smp.sh.  A marker whose
+# absence means FAIL must not be anchored against a console log.
+grep -q 'DISCOVERED tcp!' "$WORK/c.log" || {
 	echo "check-discovery-retry: FAIL -- the client did not find the service" >&2; ok=0; }
 grep -qx 'READ1 SERVED-CONTENT' "$WORK/c.log" || {
 	echo "check-discovery-retry: FAIL -- could not read what it discovered" >&2; ok=0; }

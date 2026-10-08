@@ -44,15 +44,29 @@ run() {	# run ncpu mem logfile
 		-serial "file:$3" >/dev/null 2>&1 || true
 }
 
+# A success marker read out of a kernel console log must NOT be anchored
+# with ^.  The console interleaves writes from several processors without
+# newlines -- on -smp 17 especially -- so a line that is printed can
+# arrive with something else in front of it, and an anchored grep then
+# reports the thing as absent.  Every check below whose absence means
+# FAIL is therefore unanchored; the markers are distinctive enough that a
+# false match is not a concern.
+#
+# This cost the raspi3b-port session a real one: tests/efs-crash.sh lost
+# an interleaved "MARK done" and counted the trial as a filesystem fault,
+# manufacturing fault reports in the one place a comment forbids it.
+# Three of the six checks in this file were already unanchored, which is
+# the tell that the other three were an oversight rather than a decision.
+
 ok=1
 
 run 4 512 "$WORK/four.log"
-if ! grep -q '^cpu: 3 started, 3 answered' "$WORK/four.log"; then
+if ! grep -q 'cpu: 3 started, 3 answered' "$WORK/four.log"; then
 	echo "check-arm64-smp: FAIL -- 3 secondaries did not start on -smp 4" >&2
 	grep -E '^cpu: |ACPI' "$WORK/four.log" >&2 || true
 	ok=0
 fi
-grep -q '^cpu: machnos 1 2 3' "$WORK/four.log" || {
+grep -q 'cpu: machnos 1 2 3' "$WORK/four.log" || {
 	echo "check-arm64-smp: FAIL -- secondaries did not take their own machnos" >&2; ok=0; }
 grep -q 'interactive sh' "$WORK/four.log" || {
 	echo "check-arm64-smp: FAIL -- no shell on -smp 4" >&2; ok=0; }
@@ -62,7 +76,7 @@ grep -q 'interactive sh' "$WORK/four.log" || {
 run 17 1024 "$WORK/seventeen.log"
 grep -q 'more processors than MAXMACH' "$WORK/seventeen.log" || {
 	echo "check-arm64-smp: FAIL -- no MAXMACH clip on -smp 17" >&2; ok=0; }
-grep -q '^cpu: 7 started, 7 answered' "$WORK/seventeen.log" || {
+grep -q 'cpu: 7 started, 7 answered' "$WORK/seventeen.log" || {
 	echo "check-arm64-smp: FAIL -- did not start MAXMACH-1 secondaries on -smp 17" >&2; ok=0; }
 grep -q 'interactive sh' "$WORK/seventeen.log" || {
 	echo "check-arm64-smp: FAIL -- no shell on -smp 17" >&2; ok=0; }

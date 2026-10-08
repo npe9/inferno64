@@ -71,7 +71,7 @@ verdict() {	# verdict <log>
 	elif grep -aqi 'panic' "$1"; then
 		echo "PANIC[`grep -ai panic \"$1\" | head -1 | tr -d '\r' | sed 's/.*panic: *//' | cut -c1-40`]"
 	elif grep -aq 'interactive sh' "$1" || grep -aq 'DEVTEST: done' "$1"; then
-		if grep -aq '^conf .*jit 1' "$1"; then echo "ok-jit"; else echo "ok"; fi
+		if grep -aq 'conf .*jit 1' "$1"; then echo "ok-jit"; else echo "ok"; fi
 	elif [ ! -s "$1" ]; then
 		echo "no-output"
 	else
