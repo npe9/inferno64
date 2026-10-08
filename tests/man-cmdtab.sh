@@ -138,7 +138,21 @@ rm -f $F
 
 echo "man-cmdtab: self-test ok (8 known cons(3) gaps; .B/.BR/.I all recognised)"
 
+#
+# COUNT THE DEVICES CHECKED, not just the gaps found.  Every pair below is
+# a kernel source that exists, so a missing one means this list is stale
+# or the tree is wrong -- and `|| continue' made that a SILENT PASS: the
+# row for that device simply vanished from the output and the exit status
+# stayed 0.  Five rows where six belong is not something a reader counts.
+# A peer hit the mirror of this, exiting 1 ("I found something") from a run
+# that had looked at nothing.
+#
+# So: a missing source is exit 2, and the number of devices actually
+# reported on is asserted against the number in the list at the end.
+#
 rc=0
+ndev=0
+nwant=0
 for pair in \
 	"os/inferno/port/devcons.c:man/3/cons" \
 	"os/inferno/port/devprog.c:man/3/prog" \
@@ -149,7 +163,14 @@ for pair in \
 do
 	src=`echo "$pair" | cut -d: -f1`
 	page=`echo "$pair" | cut -d: -f2`
-	[ -f "$src" ] || continue
+	nwant=`expr $nwant + 1`
+	if [ ! -f "$src" ]; then
+		echo "man-cmdtab: $src is in the list and does not exist." >&2
+		echo "  The list is stale or this is the wrong tree; a device" >&2
+		echo "  that was not checked must not read as a device with no" >&2
+		echo "  gaps.  Not reporting a pass." >&2
+		exit 2
+	fi
 	if [ ! -f "$page" ]; then
 		echo "man-cmdtab: $src has no man page at $page"
 		rc=1
@@ -171,6 +192,7 @@ do
 	fi
 	g=`gaps "$src" "$page"`
 	ng=`echo $g | wc -w | tr -d ' '`
+	ndev=`expr $ndev + 1`
 	if [ "$ng" -eq 0 ]; then
 		printf 'man-cmdtab: ok     %-14s %2d commands, all named\n' "$page" "$n"
 	else
@@ -179,6 +201,14 @@ do
 		rc=1
 	fi
 done
+
+if [ "$ndev" -ne "$nwant" ]; then
+	echo "man-cmdtab: reported on $ndev device(s) of $nwant in the list." >&2
+	echo "  A device that produced no row was not checked; not reporting" >&2
+	echo "  a pass." >&2
+	exit 2
+fi
+echo "man-cmdtab: $ndev device(s) checked"
 
 if [ $rc -ne 0 ]; then
 	echo
