@@ -414,3 +414,123 @@ complexity, and it does not touch the backends' divergence.  It makes four
 specific failure shapes loud and removes one misleading state, on the argument
 that a compiler which fails loudly on the mistakes it actually makes is higher
 quality than one which is merely tidier.
+.NH 1
+Generating faster code: what the output actually wastes
+.LP
+Measured over
+.B "255407 instructions"
+of this tree's own C \(em
+.CW os/inferno/port ,
+.CW libmemdraw ,
+.CW libinterp
+\(em 164 files compiled, 28 failed and accounted for.
+.B "60.7 per cent of all instructions are data movement:"
+.P1
+MOV    28.48%      BL      7.92%      ADD   3.84%
+MOVW   24.71%      B       5.27%      CMPW  3.43%
+MOVWU   6.04%      MOVBU   1.48%      ADDW  1.45%
+.P2
+Arithmetic
+.RB ( ADD
+plus
+.CW ADDW )
+is 5.3 per cent.
+.B "So any optimisation that does not remove a move is working on the small half."
+.NH 2
+The decisive finding: peep is not missing a pass, it has one restriction
+.LP
+.CW peep()
+is already 1561 lines and already does
+.CW copyprop ,
+.CW subprop ,
+.CW constprop ,
+.CW xtramodes ,
+.CW CMP/branch
+fusion and conditional execution.
+.B "So the question was never what is MISSING but why the waste SURVIVES."
+.LP
+Counting same-register moves by what the
+.I previous
+instruction's source was:
+.P1
+previous source     MOVW Rx,Rx    MOVWU Rx,Rx
+MEMORY (D_OREG)          0             0
+REGISTER (D_REG)      1576           291
+CONST (D_CONST)         18             2
+MOV Rx,Rx (true no-op)   0             0
+.P2
+.B "Zero memory-source pairs survive and zero true no-ops survive"
+\(em the existing rule and
+.CW copyprop
+both work perfectly.  The 1867 register-source pairs were rejected by a single
+condition,
+.CW "if(p->from.type != D_OREG) continue" ,
+whose comment said a register move "may not" extend.
+.B "The loader proves it does:"
+.CW asmout.c
+encodes
+.CW "AMOVW reg,reg"
+in the same case arm as
+.CW ASXTW ,
+and
+.CW SXTW
+is idempotent.
+.B "Fixed as one allow-list condition"
+\(em
+.CW -0.59
+per cent of instructions, 3072 out of the kernel's text, no measurable compile
+cost.
+.NH 2
+What the remaining candidates are worth, and the argument against each
+.IP 1.
+.B "Adjacent same-register spill/reload."
+A two-instruction window.  131 occurrences, 0.05 per cent \(em but each removed
+instruction is a LOAD, so the cycle saving exceeds the count.
+.B Against :
+0.05 per cent is under the noise floor of anything measurable on this board, and
+the real fix is in
+.CW reg.c 's
+allocation rather than a peephole.
+.IP 2.
+.B "constprop for AMOVW/AMOVWU."
+554 duplicate constant loads, 0.22 per cent.
+.B "Against, and it is strong:"
+this reaches into the same
+.CW "p->as == AMOV"
+gate the big inline comment exists to protect, and the 20
+.CW D_CONST
+cases in the table above are evidence the hazard is real.  Small win, and the
+blast radius is the family that has already produced two silent miscompiles
+here.
+.IP 3.
+.B "shiftprop, which is disabled with"
+.CW "if(0 && shiftprop(r))"
+.B "and no comment saying why."
+5797 shifts, 2.27 per cent, is the headline number and the ceiling.
+.B "Against, and this is why it ranks LAST despite that:"
+an optimisation switched off with
+.CW "if(0 &&"
+and no explanation was almost certainly switched off because it was wrong; the
+ceiling assumes every shift has a foldable consumer, which it will not; and it
+was written for ARM32's shifted-operand forms, which differ on AArch64.
+.B "Treat 2.27 per cent as a bound, not an estimate."
+.NH 2
+The honest state of ""faster""
+.LP
+.B "Nothing here is a demonstrated speed-up, and the instrument matters more than the number."
+.CW disbench
+is the WRONG instrument for a 7c change: with
+.CW cflag=1
+its hot loops are JIT-generated code, which no 7c peephole touches.
+.CW wm/gfxstress
+exercises
+.CW libmemdraw ,
+which is the right target, but a single run of it against an earlier recorded
+figure compared 750 operations with 500 \(em different workloads, no control.
+.LP
+.B "And 0.59 per cent is under this board's own measurement floor:"
+the within-arm coefficient of variation measured here today is 2.2 to 2.6 per
+cent.
+.B "A static instruction count is the honest unit for this work;"
+a runtime claim needs a two-install A/B that has not been run, and would need
+more samples than the effect size justifies.
