@@ -62,12 +62,57 @@ open(t + "/nostamp.log", "wb").write(b"noise\x00bin\nnothing here\n")
 open(t + "/match.bin", "wb").write(b"xx" + (305419896).to_bytes(4, "little") + b"yy")
 open(t + "/other.bin", "wb").write(b"\x00" * 64)
 MKFIX
+	#
+	# Assert the VALUE as well as the verdict, so a failure names which
+	# part broke rather than only that something did.
+	#
+	# An earlier version checked exit codes alone, and all three of the
+	# mutations it was tested against printed the same line -- "a known
+	# MATCH did not return 0" -- because every one of them makes the
+	# first case fail.  Three identical diagnostics report that a break
+	# was noticed, not which break it was.  The idea of asserting the
+	# thing found rather than a count of findings is a sibling session's;
+	# theirs asserts hit positions in a fixture, which verifies its own
+	# plant as a side effect.  Here the equivalent is the stamp digits:
+	#
+	# Verified by running all three, not predicted:
+	#
+	#	byte order wrong	"a known MATCH returned 1"  (alone)
+	#	grep -a dropped		"no stamp was extracted at all"
+	#	head instead of tail	"extracted stamp 99, want 305419896"
+	#
+	# three distinguishable failures from one extra assertion -- and it
+	# took two wrong versions of that assertion to get there.  The
+	# first read the stamp only from the success line, so all three
+	# mutations (every one of which makes this case fail) reported "no
+	# stamp extracted" and were as indistinguishable as before.  The
+	# second read it with head -1 from a multi-line message.  An
+	# assertion about a value is only as good as the channel it reads
+	# the value from, and that channel has to exist on every path.
+	#
 	fail=0
-	sh "$0" "$t/match.log"   "$t/match.bin" >/dev/null 2>&1; [ $? -eq 0 ] || { echo "self-test: a known MATCH did not return 0" >&2; fail=1; }
+	out=`sh "$0" "$t/match.log" "$t/match.bin" 2>&1`; rc=$?
+	# The stamp has to be read from a channel that exists on EVERY
+	# path, or the assertion collapses into one branch.  A first
+	# version read only the success line "log stamp N is in ...", so
+	# all three mutations -- which all make this case fail -- reported
+	# "no stamp was extracted" and were again indistinguishable.  The
+	# mismatch line "log says built at N" carries it too.
+	got=`printf '%s' "$out" | grep -ao 'log stamp [0-9]*\|log says built at [0-9]*' | tr -dc 0-9`
+	[ "$rc" -eq 0 ] || { echo "self-test: a known MATCH returned $rc, want 0" >&2; fail=1; }
+	if [ -z "$got" ]; then
+		echo "self-test: no stamp was extracted at all from the known-good log" >&2
+		echo "self-test: (the matcher did not run, or ran without -a on a log with a NUL)" >&2
+		fail=1
+	elif [ "$got" != 305419896 ]; then
+		echo "self-test: extracted stamp $got, want 305419896" >&2
+		echo "self-test: (99 means the FIRST soak stamp was taken, not the last)" >&2
+		fail=1
+	fi
 	sh "$0" "$t/match.log"   "$t/other.bin" >/dev/null 2>&1; [ $? -eq 1 ] || { echo "self-test: a known MISMATCH did not return 1" >&2; fail=1; }
 	sh "$0" "$t/nostamp.log" "$t/match.bin" >/dev/null 2>&1; [ $? -eq 2 ] || { echo "self-test: a log with no stamp did not return 2" >&2; fail=1; }
 	[ $fail -eq 0 ] || { echo "check-kernel-stamp: SELF-TEST FAILED -- do not trust its verdicts" >&2; exit 2; }
-	echo "check-kernel-stamp: self-test ok (match 0, mismatch 1, no stamp 2)"
+	echo "check-kernel-stamp: self-test ok (stamp 305419896; match 0, mismatch 1, no stamp 2)"
 	exit 0
 fi
 [ $# -eq 2 ] || { echo "usage: check-kernel-stamp.sh <log> <kernel> | --self-test" >&2; exit 2; }
