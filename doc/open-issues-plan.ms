@@ -12944,3 +12944,102 @@ from it precisely because the two used to be one knob.  A soak with
 set that still faults moves it out of the collector entirely; one that does not
 fault says the collector is in the loop even though none of the three detectors
 fires.  Either answer is smaller than another hypothesis.
+.NH 3
+The answer, which answers a different question
+.LP
+They ran it, eight boots an arm, and got
+.B "zero faults in both arms."
+That is no information about the question.  At the rate the fault was seen at
+\(em 2 in 21 \(em a clean run of eight has probability
+.CW 0.905^8 ,
+which is
+.B 0.45 :
+.TS
+center;
+l r.
+boots per arm	P(0 faults | the rate is unchanged)
+_
+8	0.449
+21	0.122
+30	0.050
+45	0.011
+.TE
+.LP
+So the arm with the collector off was 45 percent likely to come up clean
+.I "whether or not the collector matters,"
+and so was the control.  They said so themselves rather than reading the pair
+as agreement, which is the only reason the result is worth recording.
+.B "Thirty an arm is where this starts to carry a verdict,"
+and that is the same number this plan arrived at for the efs batch, from the
+same arithmetic.
+.LP
+.B "What the run did produce was a different panic:"
+.DS
+.CW
+poolalloc: exact-match chain size mismatch:
+    tt->size 16000 t(=tt->fwd) t->size 0 wanted 16000
+.R
+.DE
+with
+.CW gcnruns
+.B "at zero \(em the collector had never run."
+A size on a free-list chain disagreed with the size the chain is keyed by, with
+nothing collecting.  That is squarely inside the allocator, and it is the first
+observation in this whole line that does not have a collector anywhere in it.
+.LP
+.B "It does not establish that the original fault is allocator-only,"
+and three reasons why not should be read before anyone builds on it.
+.IP 1.
+.B "It is one instance."
+.IP 2.
+.B "The gcoff arm is not the same allocator workload."
+With collection off nothing is ever reclaimed, so every allocation is served by
+growing an arena or by an exact-match chain, and both are being driven far
+harder than they ever are normally.  A defect that needs that pressure is a
+real defect but it is not evidence about the ordinary path.
+.IP 3.
+.B "It is a different panic."
+The fault under investigation is a GPF with
+.CW poolfree
+on the stack.  A chain-size mismatch in
+.CW poolalloc
+is a different failure, and treating the two as one because both say "pool" is
+the error this plan has made before under a different name \(em see the section
+on counting the work rather than the sightings.
+.LP
+What it does do is make the allocator worth instrumenting on its own terms,
+independently of the collector, which is cheaper than another collector
+hypothesis.  Recorded here because an observation nobody writes down is one the
+next person pays for again.
+.NH 3
+A trap they flagged, which this tree is already standing in
+.LP
+They warned that
+.CW mkconfig 's
+.CW ROOT
+decides which tree an install writes to, and that a worktree whose
+.CW ROOT
+points elsewhere will quietly install into another session's tree.  Checked
+here, and the finding is the reverse of reassuring:
+.B "git HEAD's mkconfig has"
+.CW ROOT=/Users/npe/src/inferno64-branches/inferno-ports ,
+while the working copy in this tree has
+.CW .../raspi3b-port .
+.LP
+So the
+.CW "M mkconfig"
+that has sat in this tree's status all along is
+.B "a load-bearing local edit, not noise."
+Reverting it \(em which is what "clean up the working tree" means to anyone who
+has not read this \(em would point every build in this worktree at a different
+checkout.  It is uncommitted because committing it would do the same thing to
+the other thirty-eight worktrees in the other direction.
+.LP
+.B "This does not explain the stray kernel8.img."
+No other worktree's
+.CW ROOT
+points at this one, which was the mechanism worth checking and it is excluded.
+A
+.CW kernel8.img
+appeared in this tree at 21:18 that no build of mine accounts for, and it stays
+open rather than closed on a plausible story.
