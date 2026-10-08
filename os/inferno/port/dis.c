@@ -281,8 +281,42 @@ flushlocal(void)
  * and this is inert -- nothing else can be running, so stopping the
  * world stops nothing.
  *
- * It defaults to 1.  The evidence, all of it on rented hardware rather
- * than an emulator, is in doc/multicore-plan.ms:
+ * IT DEFAULTS TO 0 AGAIN, AND THE FLIP TO 1 WAS MY MISTAKE.
+ *
+ * I turned it on on 21 September on eighteen Compute Engine instances
+ * that ran clean across two workloads and two architectures.  Those
+ * numbers are real and are below.  They were not enough, and the reason
+ * is worth stating exactly: eighteen long single boots on one boot path
+ * are not a boot-failure rate.  A default has to survive the path the
+ * next person builds on, and nobody had counted boots.
+ *
+ * Another session did, on 29 September, on a tree that already had the
+ * flip in it (bca4fdf54, d89868b4d).  pc64, same kernel, same ISO
+ * recipe, eight boots an arm:
+ *
+ *	parallelvm=1   3 of 8 bad
+ *	parallelvm=0   0 of 8 bad
+ *
+ * with "panic: lost pid" and twice "vmachine: error with no current
+ * prog".  And their pc64 matrix at -smp 2, two boots a cell:
+ *
+ *	parallelvm=0 cflag=0   ok ok
+ *	parallelvm=1 cflag=0   PANIC[general protection violation], then ok
+ *
+ * That last line is the same fault I had been chasing from the other
+ * end: a general protection violation under parallelvm=1 and never in
+ * the control, which my own batches put at 2 of 21 instances against 0
+ * of 9, with the stack through poolfree, poolalloc and smalloc.  Two
+ * sessions, two platforms, two boot paths, one signature.  That is
+ * corroboration in the way two relayed copies of one measurement are
+ * not.
+ *
+ * So the lock goes back on by default until that fault is understood.
+ * *parallelvm=1 still selects the parallel VM and the gains below are
+ * what it is worth when it runs; what is not yet true is that it runs
+ * every time.
+ *
+ * The gains, for when it does, all on rented hardware:
  *
  *	channel traffic, amd64, 4 Xeons       2.5x   6 instances
  *	module loading, amd64, 4 Xeons        3.7x   6 instances
@@ -294,15 +328,11 @@ flushlocal(void)
  * against 88.2, 88.7, 89.1 Dis quanta per tick -- which is half a per
  * cent of spread inside each arm.
  *
- * It defaulted to 0 for a long time and was right to.  The first run of
- * this same measurement panicked on three instances of four, and the
- * cause was real: addgrp() and delgrp() maintained the process-group
- * list with no lock, because a global vmlock had always meant one
- * executor at a time.  Turning this on is only honest now because that
- * is found and fixed, and because *parallelvm=0 still selects the old
- * behaviour for anyone who needs it.
+ * The process-group race that made the first run of this measurement
+ * panic on three instances of four is found and fixed, and that fix
+ * stands on its own.  It was not the only thing wrong.
  */
-int parallelvm = 1;	/* MULTICORE: 1 = no VM lock, stop-the-world GC */
+int parallelvm = 0;	/* MULTICORE: 1 = no VM lock, stop-the-world GC */
 int gcstw;		/* a collection wants every other context stopped */
 int stwwaits;		/* MULTICORE INSTRUMENTATION - temporary: turns round
 			 * the wait loop.  It used to count sched() spins and

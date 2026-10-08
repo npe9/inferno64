@@ -9443,3 +9443,80 @@ from it and then reads
 dereferencing an address outside the arena.  One comparison against
 .CW p->arenasize ,
 in a path that already does three, with its own counter.
+.NH 1
+The default goes back to 0, and the flip was my mistake
+.PP
+I turned
+.CW parallelvm
+on on 21 September on eighteen Compute Engine instances that ran clean
+across two workloads and two architectures \(em 2.5x on channel traffic
+and 3.7x on module loading at four Xeons, 4.1x at four Neoverse
+processors, no panic on any of them.  Those numbers are real and they
+stand as what the parallel VM is worth when it runs.
+.PP
+They were not enough, and the reason is exact: eighteen long single
+boots on one boot path are not a boot-failure rate.  Nobody had counted
+boots.  A default has to survive the path the next person builds on,
+and the only path I had measured was a UEFI disk on rented hardware.
+.PP
+.B "Another session counted, eight days later, on a tree that already
+had the flip in it."
+pc64, same kernel, same ISO recipe, eight boots an arm:
+.IP
+.nf
+parallelvm=1   3 of 8 bad
+parallelvm=0   0 of 8 bad
+.fi
+.PP
+with
+.CW "panic: lost pid"
+and twice
+.CW "vmachine: error with no current prog" .
+And their pc64 matrix at
+.CW "-smp 2" ,
+two boots a cell:
+.IP
+.nf
+parallelvm=0 cflag=0   ok ok
+parallelvm=0 cflag=1   PANIC[page fault] x2
+parallelvm=1 cflag=0   PANIC[general protection violation], then ok
+parallelvm=1 cflag=1   refused refused
+.fi
+.PP
+.B "The third line is the fault I had been chasing from the other end."
+A general protection violation under
+.CW parallelvm=1
+and never in the control: my own batches put it at 2 of 21 instances
+against 0 of 9, with the stack through
+.CW poolfree ,
+.CW poolalloc
+and
+.CW smalloc ,
+and three candidate mechanisms excluded by direct detectors reading
+zero.  Two sessions, two platforms, two boot paths, one signature.
+That is corroboration in the way two relayed copies of one measurement
+are not \(em and it is the second time today that distinction mattered.
+.PP
+Two smaller things that matrix also settles.  The second line is the
+amd64 code generator being broken on its own account, which I had found
+as "invalid opcode" and which is why every board ships
+.CW cflag=0 .
+The fourth is the guard added today working: the JIT and the parallel VM
+together are refused where the generator does not update
+.CW Heap.ref
+atomically.
+.PP
+.B "So the lock goes back on by default."
+.CW *parallelvm=1
+still selects the parallel VM.  What is not yet true is that it runs
+every time, and a 3-in-8 boot failure is disqualifying for a default
+whatever the throughput is worth.  The process-group race that made the
+first run of this measurement panic three times in four is found and
+fixed and that fix stands; it was not the only thing wrong.
+.PP
+.B "What would settle it."
+The general protection violation, with the three excluded mechanisms
+written down so the next hunt does not re-exclude them, and a boot-rate
+measurement rather than a throughput measurement as the acceptance test
+\(em eight boots an arm on each boot path, not eighteen long runs on
+one.
