@@ -36,10 +36,21 @@ cd "`dirname $0`/.." || exit 2
 # Perl, not grep: this machine's grep is ugrep, which rejects the bracket
 # expression below outright rather than matching it, so a grep-based
 # version of this test fails to run while looking like it found nothing.
-scan() {	# scan <file>...; prints "file:line: text" per hit
+#
+# `or next' WOULD SILENTLY SKIP AN UNREADABLE FILE, so this counts the
+# files it actually opened and the caller checks that against the number
+# it passed.  A file that cannot be read is a file that was not scanned,
+# and a scan that did not happen must not read as a clean scan -- the
+# same false pass that made man-cmdtab print "0 commands, all named".
+# The totally-broken-perl case is already covered by the self-test below,
+# which requires two hits from a fixture.
+#
+scan() {	# scan <file>...; prints "file:line: text" per hit, then "#scanned N"
 	LC_ALL=C perl -e '
+		$seen = 0;
 		for $f (@ARGV) {
 			open F, "<", $f or next;
+			$seen++;
 			$n = 0;
 			while (<F>) {
 				$n++;
@@ -48,8 +59,18 @@ scan() {	# scan <file>...; prints "file:line: text" per hit
 				chomp;
 				print "$f:$n: $_\n";
 			}
+			close F;
 		}
+		print "#scanned $seen\n";
 	' "$@"
+}
+
+hitsonly() {	# strip the bookkeeping line
+	grep -v '^#scanned '
+}
+
+scanned() {	# how many files scan() actually opened
+	sed -n 's/^#scanned //p'
 }
 
 #
@@ -84,9 +105,9 @@ printf 'an undamaged line\n'             >> $T/bad.ms
 printf 'and \014ISLOW\014P here\n'       >> $T/bad.ms
 printf 'A \\f(CWlibdraw/\\fP line\n'     >  $T/good.ms
 printf "bind -b '#\302\237' /dev\n"      >> $T/good.ms
-nbad=`scan $T/bad.ms | grep -c .`
-ngood=`scan $T/good.ms | grep -c .`
-badlines=`scan $T/bad.ms | cut -d: -f2 | tr '\n' ' '`
+nbad=`scan $T/bad.ms | hitsonly | grep -c .`
+ngood=`scan $T/good.ms | hitsonly | grep -c .`
+badlines=`scan $T/bad.ms | hitsonly | cut -d: -f2 | tr '\n' ' '`
 rm -rf $T
 if [ "$nbad" -ne 2 ] || [ "$ngood" -ne 0 ] || [ "$badlines" != "1 3 " ]; then
 	echo "troff-ctlchars: SELF-TEST FAILED -- known-bad gave $nbad hit(s)" >&2
@@ -97,12 +118,28 @@ if [ "$nbad" -ne 2 ] || [ "$ngood" -ne 0 ] || [ "$badlines" != "1 3 " ]; then
 fi
 echo "troff-ctlchars: self-test ok (2 hits on lines 1 and 3; UTF-8 not flagged)"
 
-files=`ls doc/*.ms man/*/* 2>/dev/null`
+#
+# find, NOT `ls doc/*.ms man/*/*'.  man/lib/lookman, man/lib/man and
+# man/lib/permind are DIRECTORIES, so ls recursed into them and emitted
+# "man/lib/lookman:" headers plus bare filenames with no path -- six
+# entries in the list that no open() could ever match.  The guard above
+# caught it: 1016 passed, 1010 opened, and the earlier run that said
+# "1016 sources, no control characters" had checked 1010.
+#
+files=`find doc man -type f \( -name '*.ms' -o -path 'man/*' \) 2>/dev/null | sort`
 [ -n "$files" ] || { echo "troff-ctlchars: no troff sources found" >&2; exit 2; }
-hits=`scan $files`
+raw=`scan $files`
+hits=`echo "$raw" | hitsonly`
+nfiles=`echo "$files" | wc -w | tr -d ' '`
+nscanned=`echo "$raw" | scanned`
+if [ "$nscanned" != "$nfiles" ]; then
+	echo "troff-ctlchars: passed $nfiles file(s) but only opened $nscanned." >&2
+	echo "  A file that was not read was not checked; not reporting a pass." >&2
+	exit 2
+fi
 n=`echo "$hits" | grep -c .`
 if [ "$n" -eq 0 ]; then
-	echo "troff-ctlchars: ok -- `echo "$files" | wc -w | tr -d ' '` sources, no control characters"
+	echo "troff-ctlchars: ok -- $nscanned sources scanned, no control characters"
 	exit 0
 fi
 echo "troff-ctlchars: $n line(s) with a C0 control character:"
