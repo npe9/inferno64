@@ -4269,6 +4269,11 @@ soakline(void)
 			print("soak: gc sweeps %lud, chains broken %lud"
 				" (magic 0 in %lud, cursor out of arena %lud)\n",
 				gcsweeps, gcbroken, gcbrokenzero, gcoutofarena);
+			{
+				extern void poolchainline(void);
+
+				poolchainline();
+			}
 			if(npoolbigsize != 0)
 				print("soak: frees refused for size>arena %lud\n",
 					npoolbigsize);

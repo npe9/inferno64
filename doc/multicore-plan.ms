@@ -10083,3 +10083,61 @@ That is what the check looks like when it fires, which is what makes
 line would be an instrument with no demonstrated failure mode \(em and the
 reason it does not fire here is the one already given: a factor of two
 does not care how it was measured.
+.NH 2
+The chain walk, built and controlled but not yet run at size
+.PP
+.CW *poolchain=1
+walks the same-size ring that
+.CW poolalloc() 's
+exact-match branch is about to use, and checks the invariant
+.CW pooladd()
+builds: every member of a
+.CW fwd
+ring carries the same size and
+.CW MAGIC_F .
+The existing check tested only the one block about to be handed out,
+which catches the first
+.I use
+of a corrupt ring rather than the first corruption.
+.PP
+.B "And the positive control found a defect in the detector, by hanging."
+.CW *poolchain=2
+inverts the test so it fires on every correct ring.  It did not fire \(em
+it hung the boot.  The handler called
+.CW print() ,
+and
+.CW print()
+reaches
+.CW putstrn ,
+.CW qiwrite ,
+.CW iallocb ,
+.CW mallocz
+and back into
+.CW poolalloc ,
+which wants the pool lock the walk is already holding.  A detector that
+cannot report from where it stands would have returned zero for ever, and
+the zero would have looked like a hundred million clean members.  The walk
+now records the first violation into a static and
+.CW soakline()
+prints it from outside the lock.
+.PP
+Both controls then behave:
+.IP
+.nf
+*poolchain=1   358065 walks, 96180443 members, 0 bad   337 chantest, no panic
+*poolchain=2   868801 walks,   869051 members, 867889 bad, boot survives
+               first bad: main ring 0xdc62a0 size 128, member 0,
+               magic 0xbadc0c0a -- which is MAGIC_F, so the walk is
+               reading real ring members and not garbage
+.fi
+.PP
+.B "What it has and has not established."
+Ninety-six million ring members examined under
+.CW parallelvm=1
+with no violation is a real negative, and it is a negative from a check
+with a demonstrated failure mode and a denominator.  It is one emulated
+boot.  Running it where the general protection violation actually appears
+needs the batch sized as above \(em the arm that can produce the fault
+large enough to produce it \(em and that is a separable, budgeted step
+rather than something to fold into a measurement that happens to be
+running.

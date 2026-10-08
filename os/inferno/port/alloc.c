@@ -465,6 +465,112 @@ poolstatline(void)
 	}
 }
 
+
+/*
+ * Walk a same-size chain and check the invariant pooladd() builds.
+ *
+ * pooladd() threads blocks of equal size into a circular fwd/prev ring
+ * with one member in the tree, so every member of a ring must carry the
+ * same size and MAGIC_F.  poolalloc()'s exact-match branch checks only
+ * the one block it is about to hand out -- which catches the first USE
+ * of a corrupt ring and not the first corruption, so a bad member sits
+ * there until it happens to be next.  The suggestion to walk the whole
+ * ring instead is the raspi3b-port session's, after a capture here of
+ * "exact-match chain size mismatch: tt->size 16000 t->size 0".
+ *
+ * Called with the pool locked, from inside the exact-match branch, so
+ * the ring is not moving underneath it.  Bounded, because a corrupt
+ * ring can be circular in a way that never returns to its head.
+ *
+ * *poolchain=1 walks.  *poolchain=2 inverts the test so it fires on a
+ * correct ring: that is the positive control, and without it a count of
+ * zero violations cannot be told from a walk that never ran.  It also
+ * reports members examined, so the zero has a denominator.
+ */
+int poolchainck;			/* *poolchain=1 walks, 2 inverts */
+ulong npoolchainwalks, npoolchainmembers, npoolchainbad;
+
+/*
+ * What the first violation looked like, for something outside the lock
+ * to print.  THE WALK MUST NOT PRINT.
+ *
+ * The first version of it called print() on a violation, and the
+ * positive control -- *poolchain=2, which fires on every correct ring --
+ * did not fire.  It hung the boot instead: print() goes to putstrn,
+ * qiwrite, iallocb, _allocb, mallocz and back into poolalloc, which
+ * wants the pool lock this walk is already holding.  So the control
+ * failed by deadlocking rather than by reporting, which is the useful
+ * direction, and it is the whole reason the control existed -- a
+ * detector that cannot report from where it stands would have returned
+ * zero for ever and the zero would have looked like 106 million clean
+ * members.
+ */
+static struct {
+	Bhdr	*head;
+	uintptr	headsize;
+	int	idx;
+	Bhdr	*member;
+	uintptr	size;
+	u32	magic;
+	char	*pool;
+} chainbad;
+
+enum { Chainmax = 4096 };
+
+static void
+poolchainwalk(Pool *p, Bhdr *head)
+{
+	Bhdr *b;
+	int i;
+
+	npoolchainwalks++;
+	b = head;
+	for(i = 0; i < Chainmax; i++){
+		npoolchainmembers++;
+		if(poolchainck == 2 ? (b->size == head->size && b->magic == MAGIC_F)
+				    : (b->size != head->size || b->magic != MAGIC_F)){
+			if(npoolchainbad++ == 0){
+				chainbad.pool = p->name;
+				chainbad.head = head;
+				chainbad.headsize = head->size;
+				chainbad.idx = i;
+				chainbad.member = b;
+				chainbad.size = b->size;
+				chainbad.magic = b->magic;
+			}
+			return;
+		}
+		b = b->fwd;
+		if(b == head)
+			return;
+	}
+	if(npoolchainbad++ == 0){
+		chainbad.pool = p->name;
+		chainbad.head = head;
+		chainbad.headsize = head->size;
+		chainbad.idx = -1;	/* did not close */
+		chainbad.member = b;
+	}
+}
+
+/*
+ * Printed from soakline(), which is not holding a pool lock.
+ */
+void
+poolchainline(void)
+{
+	if(npoolchainwalks == 0)
+		return;
+	print("soak: pool chain walks %lud, members %lud, bad %lud\n",
+		npoolchainwalks, npoolchainmembers, npoolchainbad);
+	if(npoolchainbad != 0)
+		print("soak: first bad: %s ring %#p size %zud, member %d at %#p"
+			" size %zud magic %#ux\n",
+			chainbad.pool, chainbad.head, chainbad.headsize,
+			chainbad.idx, chainbad.member, chainbad.size,
+			chainbad.magic);
+}
+
 void*
 poolalloc(Pool *p, uintptr asize)
 {
@@ -508,6 +614,9 @@ poolalloc(Pool *p, uintptr asize)
 	while(t) {
 		if(t->size == size) {
 			Bhdr *tt = t;
+
+			if(poolchainck)
+				poolchainwalk(p, tt);
 			t = t->fwd;
 			/*
 			 * A self-consistent "_allocb: lim < base" capture this
