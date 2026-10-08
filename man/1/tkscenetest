@@ -183,14 +183,63 @@ nest below is built from
 at every level, so a widget in a canvas window item is exercised at depths
 one through ten rather than not at all.
 .PP
+.B "RESOLVED: the population is now all seventeen widget types,"
+.B "and that claim is checkable from the program's own output."
+This paragraph used to say every widget kind was covered. It was not:
+.B "render types"
+showed
+.B panel
+and
+.B choicebutton
+absent from the population entirely \(em the test had no opinion on
+them \(em and
+.B separator
+present but reading
+.BR "separator 2 0" ,
+two draws and no joins, because the gate in
+.I tkdrawframe
+named
+.B TKframe
+alone. An assertion of coverage that does not state its population is
+not one a reader can check, which is how it stood unexamined.
+.PP
+The line now reads, for all seventeen:
+.IP
+.EX
+frame 38 38 label 12 12 checkbutton 1 1 button 3 3
+menubutton 1 1 menu 2 2 separator 2 2 cascade 2 2
+listbox 4 4 scrollbar 2 2 text 2 2 canvas 4 0
+entry 4 4 radiobutton 1 1 scale 2 2 panel 1 0
+choicebutton 1 1
+.EE
+.PP
+Two join nothing, both deliberately.
+.B Canvas
+builds its own scene per draw and frees it, so its items never enter the
+shared walk.
+.B Panel
+is the one widget whose content is the application's own live image,
+handed in by
+.BR putimage :
+.B TkNtexture
+names a
+.BR file ,
+which is what keeps a tree free of display-side resources so it can
+outlive the repaint that built it, and a panel's image has no path. So
+.I tkdrawpanel
+calls
+.I tkwalkflush
+and paints directly, and a tree cannot describe a panel without giving
+up the property that makes it worth having. A GPU backend would want a
+texture
+.I handle
+here rather than a path, which is the one place that design would need
+extending.
+.PP
 What is left, so far as this program can tell, is the things it says in
 .B "Where it has actually been run"
-rather than a widget kind or a state. Every widget kind
-.I libtk
-has a scene conversion for, every state those conversions have their own
-node kinds for, nesting past the walk's limit, two toplevels interleaved
-and a posted menu are all here. If something is missing it is something
-neither this nor
+rather than a widget kind or a state. If something is missing it is
+something neither this nor
 .IR tkofftest (1)
 thought to name, which is the kind of gap a list cannot close.
 .PP
