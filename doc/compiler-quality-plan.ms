@@ -534,3 +534,120 @@ cent.
 .B "A static instruction count is the honest unit for this work;"
 a runtime claim needs a two-install A/B that has not been run, and would need
 more samples than the effect size justifies.
+.NH 1
+The other compilers and loaders
+.NH 2
+The loaders: priority was the reverse of what I assumed
+.LP
+Surveying which loader actually links something here:
+.P1
+jl  riscv64   6 boards   spike virt virts sifiveu shakti mangopi
+tl            3 boards
+7l  aarch64   3 boards
+zl            2 boards
+8l, 6l, 5l    1 each
+.P2
+.B "7l, where the defect was found, is not the loader with the widest reach."
+.CW jl
+links six of seventeen, twice as many, and had
+.B "no coverage from either side"
+\(em
+.CW selfbranch.py
+accepts
+.CW e_machine
+183 only and every riscv64 image is 243, so the scan reports all six as
+skipped.
+.CW 6l
+was worse still: its defect was real and fixed in
+.CW b97ac24d0 ,
+and
+.CW os/inferno/pc64/ipc64
+is Plan 9 a.out, which the scan cannot read at all.
+.LP
+.B "So 7l, 6l and jl now refuse at emit time"
+\(em 10 of 17 boards \(em each verified with a positive control (refuses, exits
+nonzero, leaves no output file), a negative control (an unconditional
+self-branch still links, because
+.CW "for(;;)"
+compiles to one), a clean build of every board that loader serves, and a
+mutation test in which the check is stubbed and the test must report DEFECT.
+.LP
+.B "tl, zl, 8l and 5l are NOT done, and that is a decision."
+Each
+.CW check.c
+is about 85 lines; the plan's whole budget was 200; three is already 255 for 10
+of 17 boards.  The next 85 lines buy 3 boards, then 2, then 1 \(em a declining
+return against a budget whose point is that kencc staying readable is what lets
+anyone find these defects at all.
+.NH 2
+The compilers: the peephole fix does not port, for a reason
+.LP
+.B "The restriction I widened exists only in 7c."
+A grep for it across all eleven
+.CW peep.c
+files finds one hit.  It was added for aarch64's
+.CW SXTW
+semantics and there is nothing to port.
+.LP
+.B "But the WASTE is worth comparing, and the answer differs by architecture."
+Same 38 files of
+.CW libmemdraw
+and
+.CW libmemlayer ,
+three compilers:
+.P1
+       instructions   reg-to-reg extension moves   redundant pairs
+7c            25941          2487   (9.59%)              0  (0.000%)
+6c            22207          2220  (10.00%)             34  (0.153%)
+jc            24587            37   (0.15%)              0  (0.000%)
+.P2
+.B "7c's zero is the fix, confirmed independently:"
+the redundant pairs it used to leave are gone from this corpus entirely.
+.LP
+.B "jc has almost no extension moves AT ALL \(em 0.15 per cent against 10 \(em"
+and that is architectural rather than lucky: RISC-V's W-form operations
+sign-extend their result into the full register, so the compiler rarely needs
+to emit an extension at all.
+.B "There is nothing here to optimise, and the reason is the ISA."
+.LP
+.B "6c has the same density as 7c and 34 genuine redundant pairs, unaddressed"
+\(em
+.CW "MOVL CX,AX"
+followed by
+.CW "MOVL AX,AX"
+\(em and
+.CW MOVL
+on amd64 is idempotent for the same reason
+.CW SXTW
+is.
+.B "It is NOT worth doing here:"
+6c has no such rule to widen, so it is about 25 lines of new code rather than
+one, for 0.153 per cent, on the one board in this tree that uses it.  Recorded
+so the next person has the number instead of the question.
+.LP
+.B "And the 32-bit compilers have no such defect to have:"
+5c, 8c, kc, qc, vc, 0c, tc and zc target machines where pointer and int are the
+same width, so there is no widening to drop or to repeat.
+.NH 2
+A tool bug found by trying the other architecture
+.LP
+.CW tools/jtag/kbuild
+counted
+.CW "^7l -o i$CONF"
+in the build log
+.I "whatever the board was."
+On
+.CW pc64 ,
+whose loader is
+.CW 6l ,
+it counted zero and REFUSED a build that had linked perfectly.
+.B "A false refusal, in the safe direction, but it meant the one tool whose"
+.B "whole purpose is making the link observable was blind on every architecture"
+.B "but one"
+\(em and said nothing about that.  It now derives the loader from the board's
+.CW OBJTYPE
+and
+.CW mkfiles/mkfile-Inferno-<objtype> ,
+the way
+.CW tests/kencc-selfbranch.sh
+already did, and exits 2 rather than guessing if it cannot tell.
