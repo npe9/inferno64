@@ -21,6 +21,15 @@
 #                     so it needs them built -- and it is the one test here
 #                     that can fail because of a stale image rather than a
 #                     stale compiler.
+#   kencc-shiftfold   a shift folded into the next instruction's shifted
+#                     operand.  7c's shiftprop had never been ported from
+#                     32-bit ARM: the field layout was 5c's, so a correct
+#                     R10<<3 encoded as R0<<24.  Checks the BYTES, because
+#                     7c's listing printer had the same stale layout and
+#                     showed garbage for a correct operand.  Also requires
+#                     the shift to SURVIVE in the seven shapes aarch64
+#                     cannot encode -- a fold that fires where it must not
+#                     is a miscompile, not a slow program.
 #   kencc-narrowcast  a narrowing cast that emits no narrowing instruction.
 #                     Found twice, because the first re-check used a shape
 #                     whose source and destination land in different registers
@@ -86,7 +95,8 @@ cd "$ROOT" || exit 1
 
 TESTS="kencc-brloop.sh kencc-selfbranch.sh kencc-narrowcast.sh \
 	kencc-widencast.sh 7l-bigconst.sh troff-argorder.sh man-cmdtab.sh \
-	troff-ctlchars.sh selfbranch-refused.sh troff-p1.sh"
+	troff-ctlchars.sh selfbranch-refused.sh troff-p1.sh \
+	kencc-shiftfold.sh"
 
 pass=0
 broke=0

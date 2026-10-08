@@ -50,7 +50,7 @@ loop1:
 			/*
 			 * elide shift into D_SHIFT operand of subsequent instruction
 			 */
-			if(0 && shiftprop(r)) {
+			if(shiftprop(r)) {
 				excise(r);
 				t++;
 			}
@@ -752,20 +752,33 @@ shiftprop(Reg *r)
 	}
 	/* check whether substitution can be done */
 	switch(p1->as) {
+	default:
+		FAIL("non-dpi");
+	case AADD:
+	case AAND:
 	case ABIC:
 	case ACMP:
-	case ACMN:
-		if(p1->reg == n)
-			FAIL("can't swap");
-		if(p1->reg == NREG && p1->to.reg == n)
-			FAIL("shift result used twice");
 	case AMVN:
-		if(p1->from.type == D_SHIFT)
-			FAIL("shift result used in shift");
-		if(p1->from.type != D_REG || p1->from.reg != n)
-			FAIL("BOTCH: where is it used?");
+	case ANEG:
 		break;
 	}
+	/*
+	 * The shift result must be the operand that BECOMES the shifted
+	 * one, and must not also be the unshifted operand -- asmout case 3
+	 * builds `op Rm<<k, Rn, Rd' from from/reg/to, and when reg is NREG
+	 * it uses Rd for Rn.  So n appearing as reg, or as to with reg
+	 * unset, would read n unshifted after the shift has been elided.
+	 * Dropping either of these two tests makes a toy test case fold
+	 * and miscompiles `a += a<<3'.
+	 */
+	if(p1->reg == n)
+		FAIL("result is also the unshifted operand");
+	if(p1->reg == NREG && p1->to.type == D_REG && p1->to.reg == n)
+		FAIL("result is also the unshifted operand (reg==to)");
+	if(p1->from.type == D_SHIFT)
+		FAIL("shift result used in shift");
+	if(p1->from.type != D_REG || p1->from.reg != n)
+		FAIL("result is not the shiftable operand");
 	/* check whether shift result is used subsequently */
 	p2 = p1;
 	if(p1->to.reg != n)
@@ -787,30 +800,30 @@ shiftprop(Reg *r)
 		break;
 	}
 	/* make the substitution */
-	p2->from.type = D_SHIFT;
-	p2->from.reg = NREG;
+	if(p->from.type != D_CONST)
+		FAIL("register shift");
+	if((p->from.offset & ~0x3F) != 0)
+		FAIL("shift amount");
 	o = p->reg;
 	if(o == NREG)
 		o = p->to.reg;
-	switch(p->from.type){
-	case D_CONST:
-		o |= (p->from.offset&0x3f)<<7;
-		break;
-	case D_REG:
-		o |= (1<<4) | (p->from.reg<<8);
-		break;
-	}
+	o = (o & 0x1F) << 16;
+	o |= (p->from.offset & 0x3F) << 10;
 	switch(p->as){
+	default:
+		FAIL("shift kind");
 	case ALSL:
-		o |= 0<<5;
+		o |= 0 << 22;
 		break;
 	case ALSR:
-		o |= 1<<5;
+		o |= 1 << 22;
 		break;
 	case AASR:
-		o |= 2<<5;
+		o |= 2 << 22;
 		break;
 	}
+	p2->from.type = D_SHIFT;
+	p2->from.reg = NREG;
 	p2->from.offset = o;
 	if(debug['H'])
 		print("\t=>%P\tSUCCEED\n", p2);

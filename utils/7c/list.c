@@ -115,12 +115,16 @@ Dconv(Fmt *fp)
 		break;
 
 	case D_SHIFT:
+		/*
+		 * 7l's layout (utils/7l/list.c), which is 7a's (a.y's shift
+		 * rule): register at 16, amount at 10, kind at 22.  This
+		 * printer used to be 5c's -- register at 0 with `v&15', so
+		 * not even expressible past R15, amount at 7, kind at 5 --
+		 * and it printed a correctly encoded R10<<3 as R0<<24.
+		 */
 		v = a->offset;
-		op = "<<>>->@>" + (((v>>5) & 3) << 1);
-		if(v & (1<<4))
-			snprint(str, sizeof(str), "R%d%c%cR%d", v&15, op[0], op[1], (v>>8)&15);
-		else
-			snprint(str, sizeof(str), "R%d%c%c%d", v&15, op[0], op[1], (v>>7)&31);
+		op = "<<>>->@>" + (((v>>22) & 3) << 1);
+		snprint(str, sizeof(str), "R%d%c%c%d", (v>>16)&0x1F, op[0], op[1], (v>>10)&0x3F);
 		if(a->reg != NREG)
 			sprint(str+strlen(str), "(R%d)", a->reg);
 		break;

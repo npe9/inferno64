@@ -896,7 +896,7 @@ The tradespace
 .P1
                     sites  /1000   lines  infra   risk   VERDICT
 duplicate RETURN      456   3.37      ~8  flow    low    YES, first
-shift fold (shiftprop)345   2.55       0  flow    HIGH   investigate only
+shift fold (shiftprop)164   1.21     ~30  flow    med    DONE, ported
 branch to next instr  153   1.13      ~8  none    low    LISTING only
 adjacent spill/reload  69   0.51      ~8  none    low    marginal
 width-aware copyprop    ?      ?     ~40  flow    HIGH   only with a test
@@ -994,6 +994,173 @@ The board's within-arm coefficient of variation is 2.2 to 2.6 per cent.
 .B "Nothing in the table above is individually measurable on hardware."
 They are code-size and instruction-count wins, and saying so is more useful
 than a speed claim that cannot be supported.
+.NH 2
+Why shiftprop was off, and what porting it cost
+.LP
+.B "It was never ported from 32-bit ARM, and that is a different answer"
+.B "from \(lqit was tried and it broke\(rq."
+.CW shiftprop
+exists in exactly two compilers,
+.CW 5c
+where it is enabled and
+.CW 7c
+where it is not, and
+.CW 7c
+is
+.CW 5c
+with the aarch64 parts rewritten.  Six defects, each found from a primary
+source rather than reasoned about:
+.IP 1.
+.B "The operand layout is 5c's."
+.CW 7c
+encoded the shift into
+.CW D_SHIFT
+as register at bits 0\-4, amount at 7\-12, kind at 5\-6.
+.CW 7l
+decodes register at 16\-20, amount at 10\-15, kind at 22\-23, and so does
+.CW 7a
+\(em and
+.CW asmout
+case 3 is
+.CW "o1 |= p->from.offset" ,
+which ORs the field straight into the instruction word, so the layout is not a
+convention but the encoding itself.  A correctly folded
+.CW R10<<3
+came out as
+.CW R0<<24 .
+.IP 2.
+.B "There was no default arm on the opcode switch."
+Any consuming instruction outside
+.CW ABIC ,
+.CW ACMP ,
+.CW ACMN
+and
+.CW AMVN
+fell through the \(lqcan the substitution be done\(rq test straight into the
+substitution.
+.IP 3.
+.B "The allow-list it did have named an opcode the loader cannot encode."
+.CW optab.c
+has a
+.CW C_SHIFT
+row for
+.CW AADD ,
+.CW AAND ,
+.CW ABIC ,
+.CW ACMP ,
+.CW AMVN
+and
+.CW ANEG
+only.
+.CW ACMN
+is not among them, and
+.CW AADD
+\(em which is where every fold in this kernel actually goes \(em was reached
+only by the fall-through in defect 2.
+.IP 4.
+.B "The call site admits the 32-bit forms."
+.CW ALSLW ,
+.CW ALSRW
+and
+.CW AASRW
+reach
+.CW shiftprop ,
+the kind switch had no case for them and no default, so a 32-bit shift would
+have folded as a 64-bit
+.CW "LSL #0" .
+There is no
+.CW C_SHIFT
+row for any W-form, so they cannot be folded at all.
+.IP 5.
+.B "The register-amount case has no aarch64 encoding."
+.CW "ADD Rd, Rn, Rm, LSL Rs"
+does not exist; that is two instructions.  The ported code refuses it.
+.IP 6.
+.B "7c's own listing printer was 5c's too."
+.CW list.c
+read the register as
+.CW v&15
+\(em not expressible past R15 on a machine with 31 \(em the amount from bit 7
+and the kind from bit 5.  So the listing would have shown garbage for a
+correctly encoded operand, and this is the defect that would have sent the next
+reader after the encoder instead of the printer.  Fixed to
+.CW 7l 's
+layout.
+.LP
+.B "The fold is verified at the byte level, not from the listing,"
+because defect 6 is exactly the trap where a listing reads correct and the
+bytes are wrong.
+.CW "a + (b<<3)"
+must assemble to
+.CW "ADD X0, X0, X10, LSL #3" ,
+which is
+.CW 0x8B0A0C00
+hand-computed from the architecture manual; the linked output contains that
+word once, and the ASR variant
+.CW 0x8B8A0C00
+once.  The word the old layout would have produced,
+.CW 0x8B00018A ,
+is absent, as is the amount-lost
+.CW 0x8B0A0000 .
+.LP
+.B "Five adversarial shapes are refused:"
+a result used as both the shifted and the unshifted operand
+.CW "(a <<= 3; return a + a)" ,
+the same through
+.CW "reg == NREG"
+where
+.CW asmout
+substitutes the destination, a result used twice downstream, a shift amount
+outside 0\-63, and the W-forms.
+.B "Two of those refusals were briefly deleted"
+because a toy test case did not fold without them, which is the wrong reason to
+delete a check; they are restored with a comment saying what deleting them
+miscompiles.
+.LP
+.B "168 instructions leave the kernel, measured three independent ways."
+UBFM immediates, which is how
+.CW "LSL $n"
+encodes, fall from 4077 to 3909.  Shifted-register
+.CW ADD s
+with a nonzero amount rise from 294 to 463.  And
+.CW iraspi3b
+shrinks from 3353929 to 3353257 bytes, which is 672, which is exactly 168
+instructions.  The three agree to within one.
+.LP
+.B "The 345 in the first version of the table was wrong, and so was 333."
+Both came from a counting build that printed at the substitution and then
+returned 0, which prevented
+.CW excise
+and left
+.CW t
+at zero \(em so
+.CW loop1
+re-ran and tagged the same site on every pass.  Counting at a
+.I successful
+fold, where the site is consumed, gives 164 across the 152 kernel sources that
+compile standalone, against 168 in the full 460-source image.  A counter placed
+where the work is abandoned counts attempts, not work.
+.LP
+.B "One thing found by accident and worth more than the optimisation."
+.CW copyu ,
+whose third argument is nil for a query and an
+.CW Adr*
+for a substitution,
+.B "mutates the program when it is merely asked a question:"
+.CW "if(copyas(&p->to, v)) { if(p->reg == NREG) p->reg = p->to.reg;"
+at
+.CW peep.c :1168.
+It normalises a two-operand
+.CW ADD
+into three-operand form as a side effect.  It is semantically inert \(em
+.CW "ADD R4,R2"
+and
+.CW "ADD R4,R2,R2"
+are the same instruction \(em which is why nobody has noticed, and it cost an
+hour here because enabling a pass that only
+.I asks
+changed the output of three functions.
+.B "An analysis pass in this compiler cannot be assumed not to transform."
 .NH 2
 The honest summary
 .LP

@@ -14230,3 +14230,88 @@ rather than by anything on this side.
 it was "unestablished whether the paced phase is inside blanking" and it is now
 "inside blanking for any v-total at or above about 512, for any definition of
 the vsync event, with 16.6 lines of margin at 525".
+.NH 1
+copyu mutates the program when it is only asked a question
+.LP
+.B "OPEN, found by accident, and the reason it is written down here is that"
+.B "it is a trap for the next analysis pass rather than a bug today."
+.CW utils/7c/peep.c :1024,
+.CW "copyu(Prog *p, Adr *v, Adr *s)" ,
+takes
+.CW s
+nil for a query and an
+.CW Adr*
+for a substitution \(em
+.CW gc.h
+even defines
+.CW A
+as
+.CW (Adr*)0
+for exactly that call.  But at
+.CW peep.c :1168:
+.P1
+	if(copyas(&p->to, v)) {
+		if(p->reg == NREG)
+			p->reg = p->to.reg;
+.P2
+.LP
+which runs whatever
+.CW s
+is.  So asking "is
+.CW v
+used or set here" about a two-operand
+.CW ADD
+rewrites it into three-operand form.
+.LP
+.B "It is semantically inert today."
+.CW "ADD R4,R2"
+and
+.CW "ADD R4,R2,R2"
+are the same instruction, and
+.CW asmout
+case 3 substitutes the destination for
+.CW Rn
+when
+.CW reg
+is
+.CW NREG
+anyway, which is why nobody has noticed in the life of this compiler.
+.LP
+.B "What it cost."
+Enabling
+.CW shiftprop
+\(em a pass that, in the five traced calls, asked questions and then declined
+every one \(em changed the emitted code for three functions.  An hour went into
+looking for a mutation inside
+.CW shiftprop ,
+which has none: the mutation was in the question.  The bisect that found it put
+.CW "return 0"
+at the top of
+.CW shiftprop
+(output identical) and then after its first loop (output changed), and the
+first loop contains nothing but
+.CW copyu
+and
+.CW uniqs .
+.LP
+.B "Why this is not fixed in the same commit as the shiftprop port."
+Removing the normalisation means auditing every caller that may silently depend
+on
+.CW reg
+being set after a query, and
+.CW copyu
+is called from
+.CW copyprop ,
+.CW subprop ,
+.CW constprop ,
+.CW xtramodes
+and
+.CW shiftprop .
+That is its own investigation.  The same arm exists in
+.CW 5c ,
+which is where it came from.
+.LP
+.B "The rule it establishes, which is the part worth keeping:"
+in this compiler an analysis function cannot be assumed not to transform, so a
+pass that means to measure without changing anything has to be checked by
+comparing emitted output, not by reading the pass.
