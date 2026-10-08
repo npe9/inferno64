@@ -1,0 +1,84 @@
+.TH ZDIVTEST 1
+.SH NAME
+zdivtest \- test that integer division by zero raises an exception
+.SH SYNOPSIS
+.B zdivtest
+.SH DESCRIPTION
+.I Zdivtest
+checks that integer division and modulo by zero raise the Dis
+.B "zero divide"
+exception, for
+.BR int ,
+.B big
+and
+.BR byte ,
+and that an enclosing
+.B "{} exception {}"
+block catches it and execution resumes afterwards.
+It also checks that ordinary division by a non-zero divisor is
+undisturbed, including the sign of a negative quotient and remainder;
+without those a guard that always raised would pass every other case.
+.PP
+Each case prints
+.B ok
+or
+.BR FAIL ,
+and the last line is a count.
+.PP
+.B "Run it under both"
+.B -c0
+.B "and"
+.BR -c1 .
+The two execution paths raise from different code \-
+.B libinterp/xec.c
+interpreted,
+.B libinterp/comp-arm64.c
+compiled \- and a run under one says nothing at all about the other.
+.IP
+.EX
+emu -c0 /dis/sh.dis -c zdivtest
+emu -c1 /dis/sh.dis -c zdivtest
+.EE
+.PP
+On AArch64 the
+.B SDIV
+instruction yields 0 for a zero divisor and does not trap, so neither
+path gets the exception for free the way x86 does from
+.BR SIGFPE :
+each has to test the divisor itself. Before this test existed the
+interpreter was fixed and the compiler was not, and the fix was recorded
+as complete \- which is why running both settings is part of the test
+rather than a suggestion.
+.SH SOURCE
+.B /appl/cmd/zdivtest.b
+.SH SEE ALSO
+.IR emu (1)
+.SH BUGS
+It does not cover
+.BR real
+division: IEEE arithmetic defines division by zero as an infinity, and
+.B divf
+is deliberately left without a check.
+.PP
+It does not cover the other JIT back ends. On x86 the hardware traps and
+the exception arrives through
+.BR SIGFPE ,
+so the defect this tests for cannot occur there; the remaining
+back ends
+.RB ( comp-arm.c ,
+.BR comp-mips.c ,
+.BR comp-power.c ,
+.BR comp-sparc.c ,
+.BR comp-spim.c )
+were not examined and are untested.
+.PP
+Each division sits in the same stack frame as its handler. This build
+crashes outright when an exception unwinds through a frame that has no
+handler of its own, so a deeper raise would test that defect instead of
+this one.
+.PP
+It does not cover division by a zero that arrives in the
+.B middle
+operand rather than the source operand, nor the
+.B IDIVX
+family used for array indexing.
