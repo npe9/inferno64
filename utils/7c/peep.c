@@ -190,6 +190,48 @@ loop1:
 		excise(r1);
 	}
 
+	/*
+	 * A BRANCH WHOSE TARGET IS THE NEXT INSTRUCTION.
+	 *
+	 * 153 sites in 135333 instructions of this tree's own C, 1.13 per
+	 * 1000 -- one of the three cheapest entries in the tradespace in
+	 * doc/compiler-quality-plan.ms.
+	 *
+	 * It needs no reachability guard, which is what makes it the cheap one:
+	 * excise() rewrites the Prog to ANOP rather than unlinking it, so a
+	 * predecessor that jumped to this branch lands on the ANOP and falls
+	 * through to the instruction the branch was going to anyway.
+	 *
+	 * THE DUPLICATE-RETURN CASE WAS TRIED HERE AND REMOVED, with the
+	 * reason in the plan: 456 sites, and neither a uniqp() nor an
+	 * unreachability test fires, because reg.c leaves p1 SET on the second
+	 * RETURN.  The epilogue is emitted unconditionally by the shared front
+	 * end -- utils/cc/pgen.c calls gbranch(ORETURN) after the body even
+	 * when its own canreach says the body already returned -- so the fix
+	 * belongs there and costs eleven compilers' blast radius, not here.
+	 * Dead code that looks like an optimisation is worse than no code.
+	 */
+	for(r=firstr; r!=R; r=r->link) {
+		p = r->prog;
+		switch(p->as) {
+		case AB:
+			/*
+			 * uniqs(), not a field on Prog: the COMPILER's Prog has
+			 * no branch-target pointer -- that is the loader's
+			 * `cond' -- and reaching for one does not compile.  The
+			 * flow graph answers it directly: an unconditional
+			 * branch has exactly one successor, so if that
+			 * successor is also the next instruction in program
+			 * order, the branch goes nowhere.
+			 */
+			if(r->link == R)
+				break;
+			if(uniqs(r) == r->link)
+				excise(r);
+			break;
+		}
+	}
+
 #ifdef NOTYET
 	for(r=firstr; r!=R; r=r->link) {
 		p = r->prog;

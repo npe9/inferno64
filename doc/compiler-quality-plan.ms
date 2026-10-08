@@ -897,7 +897,7 @@ The tradespace
                     sites  /1000   lines  infra   risk   VERDICT
 duplicate RETURN      456   3.37      ~8  flow    low    YES, first
 shift fold (shiftprop)345   2.55       0  flow    HIGH   investigate only
-branch to next instr  153   1.13      ~5  none    low    YES
+branch to next instr  153   1.13      ~8  none    low    LISTING only
 adjacent spill/reload  69   0.51      ~8  none    low    marginal
 width-aware copyprop    ?      ?     ~40  flow    HIGH   only with a test
 MUL+ADD -> MADD        18   0.13     ~20  flow    med    NO -- too rare
@@ -997,10 +997,51 @@ than a speed claim that cannot be supported.
 .NH 2
 The honest summary
 .LP
-.B "Appropriate, together worth about 0.5 per cent of instructions:"
-duplicate RETURN, branch-to-next, and the extension pair already done.  Tens of
-lines, no new infrastructure, no measurable compile time, each with a test that
-can be made to fail.
+.B "BOTH OF THE YES ROWS WERE TRIED, AND BOTH ANSWERS CHANGED,"
+which is the most useful thing in this section.
+.LP
+.B "branch-to-next: implemented, and it buys NOTHING in the shipped kernel."
+The compiler emitted 153 of them in 135333 instructions and emits none now
+\(em measured, exactly 153 fewer, compile time unchanged.  But a full rebuild
+produced a kernel image of
+.B "exactly the same size,"
+2655592 bytes, and the built image contains
+.B "zero"
+branch-to-next instructions either way.
+.CW 7l
+has
+.CW xfol() ,
+a branch-following pass called from
+.CW follow() ,
+which straightens them at link time.
+.B "So the win is in the LISTING, not in the code that ships."
+It is kept at eight lines because a branch to the next instruction is noise
+when reading generated code to hunt a codegen bug, which is what most of this
+document was written while doing \(em but it is
+.B "not a code-quality improvement"
+and the row above says so.
+.LP
+.B "duplicate RETURN: tried, removed, and the reason is the useful part."
+Neither a
+.CW uniqp()
+test nor an unreachability test fires, because
+.CW reg.c
+leaves
+.CW p1
+SET on the second RETURN \(em instrumented and confirmed, 456 sites and 0
+removed.  The epilogue is emitted
+.I unconditionally
+by the SHARED front end:
+.CW utils/cc/pgen.c
+calls
+.CW gbranch(ORETURN)
+after the body even when its own
+.CW canreach
+already says the body returned.
+.B "So the fix belongs in the front end, where it is one line and eleven compilers' blast radius,"
+not in a per-architecture peephole.  The dead case was deleted rather than left
+in place, because code that looks like an optimisation and never fires is worse
+than no code.
 .LP
 .B "Appropriate to INVESTIGATE, not to enable:"
 .CW shiftprop ,
