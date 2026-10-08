@@ -9607,10 +9607,27 @@ n=45   0.011
 .fi
 .PP
 So eight instances were 45 per cent likely to come up clean whether or
-not the collector is in the loop, and so was the control.  Thirty an arm
-is where it begins to say something.  Sixteen instances were spent
-finding that out, and one line of arithmetic beforehand would have said
-it for nothing.
+not the collector is in the loop, and so was the control.  Sixteen
+instances were spent finding that out, and one line of arithmetic
+beforehand would have said it for nothing.
+.PP
+.B "And "thirty an arm" is not what that column means."
+I first wrote that thirty is where this begins to carry a verdict, and
+the session that supplied the numbers corrected it: 0.050 at n=30 is the
+chance of a clean arm
+.I "if the rate is unchanged" ,
+which is a statement about one arm and not a two-arm test.  Zero of
+thirty against zero of thirty still distinguishes nothing.  What thirty
+buys is the power to say the rate in one arm is no longer 2-in-21.
+.PP
+If the question is whether turning the collector off
+.I changes
+the rate, then the fault has to actually appear in the arm that still has
+a collector \(em about 3 of 30 at 9.5 per cent \(em so it is the
+.B control
+that has to be large enough to show something, not the treatment.  That
+is the opposite of how I had been sizing these batches, which were
+built around giving the treatment enough runs.
 .PP
 Worth recording with the number: it is the same thirty their own
 filesystem batch uses, arrived at independently, which is some evidence
