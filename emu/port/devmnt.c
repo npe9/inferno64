@@ -1021,7 +1021,15 @@ alloctag(void)
 
 	for(i = 0; i < NMASK; i++){
 		v = mntalloc.tagmask[i];
-		if(v == ~0UL)
+		/*
+		 * ~0U, because TAGSHIFT is 5 -- "ulong has to be 32 bits",
+		 * as the enum above says -- while `ulong' here is the host's
+		 * 64 bits.  ~0UL asked whether all SIXTY-FOUR bits were set,
+		 * which never happened, so this shortcut never fired and a
+		 * full word was rescanned bit by bit.  A wasted scan rather
+		 * than a wrong answer, unlike the Dir.mode sites.
+		 */
+		if(v == ~0U)
 			continue;
 		for(j = 0; j < 1<<TAGSHIFT; j++)
 			if((v & (1<<j)) == 0){

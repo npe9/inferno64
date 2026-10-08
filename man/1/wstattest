@@ -1,0 +1,81 @@
+.TH WSTATTEST 1
+.SH NAME
+wstattest \- check that a 9P wstat's "do not change" sentinel is honoured
+.SH SYNOPSIS
+.B wstattest
+.SH DESCRIPTION
+A 9P
+.B wstat
+field of
+.B "all ones"
+means
+.I "do not change this field" .
+.I Wstattest
+makes a pipe, records its mode, sends a
+.B wstat
+built from
+.BR Sys->nulldir ,
+and requires the mode to be unchanged. It then sends a
+.B wstat
+carrying a real mode and requires that one to be applied.
+.PP
+.B "Both arms are needed."
+A device that ignored
+.I every
+.B wstat
+would pass the first check on its own, so the second is what makes the
+first mean anything.
+.SH SOURCE
+.B /appl/cmd/wstattest.b
+.SH SEE ALSO
+.IR styxdirtest (1),
+.IR stat (2)
+.SH BUGS
+.B "It tests one device."
+A pipe reaches
+.BR emu/port/devpipe.c .
+Six others carried the same defect \(em
+.BR devcmd ,
+.BR devip ,
+.BR devprog ,
+.BR devsrv ,
+.B devssl
+and
+.B Nt/deveia
+\(em and none is exercised here. Each was fixed by inspection against
+the one that is measured.
+.PP
+.B "It tests mode and nothing else."
+.BR atime ,
+.BR mtime ,
+.B gid
+and
+.B length
+have their own sentinel paths and are untouched by this test.
+.PP
+.B "It cannot run on a kernel."
+The defect is specific to a host
+.B emu ,
+where
+.B ulong
+is 64 bits while
+.B Dir.mode
+is a
+.BR u32 ,
+so
+.B ~0UL
+promotes the field and the comparison is always true.
+.B os/inferno/port
+carries the identical line and is
+.I correct,
+because kencc's
+.B long
+is 32 bits \(em which is why this survived: the kernel is what gets
+tested. A pass here says nothing about any board, and a board cannot
+reproduce the failure.
+.PP
+.B "And emu exits 0 whether a Limbo command raises or not,"
+so a script that checks only the exit status will call a failing run a
+pass. Read the output. This is the mirror of a program that prints
+success and exits non-zero, and it is why the summary line names the
+counts.
