@@ -1042,3 +1042,40 @@ guard catches it; the resolution belongs in the merge commit.
 .B "Everything builds."
 Tree, host tools, four kernels, the 32-bit Dis tree and all fourteen
 boards, in three minutes.
+.PP
+.B "And the gate on the merged tree is sixteen of seventeen, with the
+one failure a three-line config gap."
+.CW check-rootparity
+fails:
+.CW /dis/disbench.dis
+is in
+.CW virtarm64 's
+root and not in
+.CW virtarm64cloud 's.
+It arrived with
+.CW d783f3624 ,
+"the board runs disbench now", on a third branch again, and it is the
+same shape as
+.CW chantest
+and as
+.CW fw_cfg
+inside
+.CW screenarm.c :
+one configuration of a two-configuration board gained something and the
+other did not.  The check found it in under a second on its first
+contact with that tree, which is what it was written for.
+.PP
+It cannot be pre-empted from here \(em
+.CW disbench.b
+and its
+.CW .dis
+exist only on their side, so adding the root line to this tree would
+name a file that is not here.  It is one line at adoption, or one line
+there, and the rest of the suite passes: both the checks that were
+flaky under load \(em
+.CW check-pc64-disk
+and
+.CW check-crossarch
+\(em came out clean this time without a solo re-run, and
+.CW check-pc64-bigmem
+still passes, 16 GiB to a shell.
