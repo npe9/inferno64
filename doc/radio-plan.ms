@@ -9039,3 +9039,46 @@ all.
 .B "The board wants a power cycle before the next attempt,"
 and the attempt worth making is the ssl-off arm on the same kernel,
 which isolates it in one run.
+.NH 2
+And auth runs on the real part, which qemu got right about memory
+.PP
+.B AUTHCHK-OK
+on board 1, flashed with
+.B image-armv7mauth
+and verified by its banner at
+.BR "nproc 4" :
+.DS
+.CW "              qemu    silicon"
+.CW "time          6920ms  13940ms"
+.CW "main high     59904   60608    of 76244"
+.CW "heap high     13120   13120    of 77800"
+.DE
+.B "The memory transfers and the time does not."
+Main's high water differs by a fifth of a per cent and the heap's is
+identical, while the wall clock doubles \- so
+.B "qemu is a sound bench for what auth COSTS and a useless one for how long it TAKES,"
+which is the half that matters if this is ever to be fitted inside a
+pass.
+.NH 2
+A trap in the derived conf, found by deleting it
+.PP
+.B "The conf has to exist before mk PARSES the mkfile."
+.B ROOTFILES
+is a backquote substitution evaluated at parse time and it runs awk on
+.BR $CONF ,
+so a conf produced by a rule in that same mkfile is too late:
+.DS
+.CW "awk: can't open file stm32f407auth"
+.CW "bad include program status"
+.DE
+which names neither the cause nor the fix.
+.B "It had been working only because the conf was already there from making it by hand,"
+and a regression check that deleted it is what found that out.
+.PP
+So it is two commands \-
+.B "mk stm32f407auth"
+and then the build \- and
+.I flashverify (1)
+does the first itself whenever it is asked for a conf that is not the
+default.  Proved by deleting the conf and letting the tool rebuild,
+flash and verify from nothing.

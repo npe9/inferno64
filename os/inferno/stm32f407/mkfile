@@ -31,7 +31,16 @@ RADIODIR=../radio
 # else; pc64's config .c are generated and gitignored for the same
 # reason.
 #
+#	mk stm32f407auth			# first, and separately
 #	mk CONF=stm32f407auth INIT=armv7mauth istm32f407auth
+#
+# TWO COMMANDS AND NOT ONE, because the conf has to exist before mk
+# PARSES this mkfile: ROOTFILES below is a backquote substitution
+# evaluated at parse time and it runs awk on $CONF.  A conf produced by
+# a rule here is too late, and the failure says so in a way that does
+# not name the cause -- "awk: can't open file stm32f407auth" and "bad
+# include program status".  tools/f407/flashverify.sh makes it first
+# when asked for a conf that is not this one.
 #
 # crypt and math come with keyring because that is what mps2 and
 # nucleof303 declare, and they are where authchk(1) was measured.

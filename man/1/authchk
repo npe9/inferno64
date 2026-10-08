@@ -55,9 +55,9 @@ over a socket pair: twelve messages each way, costing 15 and 17
 transmissions with 3 and 5 retries, in 13.5 and 21.5 seconds.
 .PP
 .B "And measured on the stm32f407, which is the part that mattered:"
-the pipe form completes in
-.B "6.9 seconds"
-with every check passing, and the cost is
+the pipe form completes with every check passing, in
+.B "13.9 seconds on silicon"
+and 6.9 under qemu, and the cost is
 .DS
 .CW "main  live 27520 -> 30080,  high water 28160 -> 59904  of 76244"
 .CW "heap  live  3456 ->  9472,  high water  3456 -> 13120  of 77800"
@@ -66,6 +66,14 @@ with every check passing, and the cost is
 So auth peaks about 32K above its baseline, leaves 16K of that pool's
 ceiling, and does thirty-eight thousand allocations of bignum
 temporaries.
+.PP
+.B "Those are the qemu numbers and the board agrees with them:"
+main's high water 60608 against qemu's 59904, a fifth of a per cent
+apart, and the heap's 13120 identical.
+.B "The TIME does not transfer -- 13.9 seconds against 6.9 --"
+so qemu is a sound bench for what auth costs in memory and not for what
+it costs in seconds, which is the distinction to keep hold of when
+sizing a link budget around it.
 .B "The protocol fits on the target core,"
 which is what this form exists to establish.
 .PP
