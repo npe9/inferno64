@@ -1,0 +1,81 @@
+.TH DRAW3DKERNTEST 1
+.SH NAME
+draw3dkerntest \- check that the draw device implements the draw3d protocol
+.SH SYNOPSIS
+.B draw3dkerntest
+.SH DESCRIPTION
+.I Draw3dkerntest
+draws the same geometry through both
+.IR draw3d (2)
+providers and compares the pixels.
+.B /dis/math/draw3ddev.dis
+writes protocol messages that the C handlers in
+.B devdraw.c
+execute;
+.B /dis/math/draw3d.dis
+does the arithmetic in Limbo. They are independent implementations of
+the same formulae, so comparing their output compares an implementation
+against an implementation rather than against itself.
+.PP
+That comparison is the only check on the first question worth having: a
+device that accepts the protocol letters and rasterises them wrongly
+passes any test that only asks whether it errored.
+.PP
+.B "It needs no window and no GPU."
+Everything is drawn into an ordinary image and read back with
+.BR readpixels ,
+which depends on nothing outside the process \- that is what makes it
+runnable on a bare board over a serial console.
+.PP
+Each primitive is compared on its own, which is what localises a
+difference, and a checksum of each picture is printed so the
+.B same
+provider can be compared between a host and a board when the images
+themselves cannot travel.
+.SH EXAMPLE
+Both environments agree exactly on the device provider:
+.IP
+.EX
+host emu      poly 0x1124da01  line \-0x208b1d40  plot \-0x35ddb944
+Pi 3B kernel  poly 0x1124da01  line \-0x208b1d40  plot \-0x35ddb944
+.EE
+.SH SOURCE
+.B /appl/cmd/draw3dkerntest.b
+.SH SEE ALSO
+.IR draw3d (2),
+.IR draw3dsafetest (1),
+.IR qputry (1)
+.SH BUGS
+.B "fillpoly3 differs between the providers"
+by 228 bytes of 4356, and the test reports that rather than asserting
+it: the two rasterisers disagree on an edge rule, which predates this
+and is not something a comparison can fix.
+.B Line3
+and
+.B plot3
+agree to the byte.
+.PP
+The ink assertions are not decoration. The first version of this test
+compared two
+.B black
+images and passed: a quadrilateral at
+.B "z == 0"
+is at the eye plane and clips, and the device provider queues its
+messages until a flush. A comparison that cannot tell "identical" from
+"both empty" says nothing.
+.PP
+It covers
+.BR fillpoly3 ,
+.B line3
+and
+.B plot3
+only. The sprite letters, the matrix letters, the z-buffer letters and
+.B fillpoly3g
+are exercised by
+.IR draw3dsafetest (1)
+for safety but by nothing for agreement.
+.PP
+It says nothing about speed, and nothing about the GPU: the
+.B gpudraw*
+hooks are nil in the kernel, so what it checks there is the software
+rasteriser.

@@ -272,6 +272,7 @@ dmview dmview
 dmwm dmview
 doodle doodle
 draw3ddemo draw3ddemo
+draw3dkerntest draw3dkerntest
 drop sh-string
 du du
 dungen dungen
@@ -423,6 +424,7 @@ psalmody psalmody
 puttar gettar
 putzip getzip
 pwd pwd
+qputry qputry
 query grid-query
 quote sh
 raindrops raindrops

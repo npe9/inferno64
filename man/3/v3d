@@ -1,0 +1,150 @@
+.TH V3D 3
+.SH NAME
+v3d \- VideoCore IV QPUs, as far as the firmware exposes them
+.SH SYNOPSIS
+.B bind -a #Q /dev
+.PP
+.B /dev/v3dctl
+.br
+.B /dev/v3dcode
+.SH DESCRIPTION
+The
+.B v3d
+device gives Limbo the Raspberry Pi firmware's two QPU property tags,
+.B SET_ENABLE_QPU
+and
+.BR EXECUTE_QPU ,
+and reports what the firmware answered.
+.PP
+.B "It is an instrument, not a driver."
+A driver needs the QPU instruction encoding, and that encoding is not
+documented on this machine. It has to be established from the
+hardware, and this exists to make each attempt a write from Limbo
+rather than a kernel rebuild and a card swap.
+.PP
+.B /dev/v3dcode
+takes raw bytes, appended at a running offset so a program can be
+copied in pieces.
+.B /dev/v3dctl
+takes:
+.TP
+.B reset
+Discard the loaded code.
+.TP
+.B clock
+Read the V3D clock
+.RB ( GET_CLOCK_RATE ,
+clock id 5).
+.TP
+.BR enable ", " disable
+.B SET_ENABLE_QPU
+with 1 or 0.
+.TP
+.BI exec " ctlidx w0 w1 w2 w3"
+.B EXECUTE_QPU
+with those four words as the request's value buffer, and the control
+list's bus address substituted into word
+.IR ctlidx .
+.PP
+Reading
+.B /dev/v3dctl
+reports the clock, whether an enable was tried and succeeded, how much
+code is loaded, the four words actually sent, and then what the
+firmware answered.
+.SH "WHAT THE STATUS MEANS"
+.TP
+.B code
+The mailbox response:
+.B 0x80000000
+ok,
+.B 0x80000001
+error parsing the request.
+.TP
+.B tag
+.B "The word that matters."
+Bit 31 set means the tag was processed; the low bits are how many bytes
+it wrote.
+.B "A tag of 0 means EXECUTE_QPU was never touched,"
+and
+.B "wrote 0 bytes"
+means it was processed and answered nothing.
+.TP
+.B value
+.BR buf[5..8] " after the call,"
+so an echo of the request can never be mistaken for an answer again.
+.TP
+.I us
+Elapsed microseconds, from the board's own 1MHz counter.
+.SH EXAMPLE
+.EX
+bind -a '#Q' /dev
+echo enable >/dev/v3dctl
+cp prog.qpu /dev/v3dcode
+echo exec 1 1 0 1 1000 >/dev/v3dctl
+cat /dev/v3dctl
+.EE
+.SH SOURCE
+.B /os/inferno/raspi3b/devv3d.c
+.SH SEE ALSO
+.IR qputry (1),
+.IR draw3dkerntest (1),
+.IR cons (3)
+.SH BUGS
+.B "Nothing here drives the GPU."
+.IR Devdraw 's
+.B gpudraw*
+hooks are nil on this board, so the draw3d letters rasterise in
+software. This device is how the question of whether they could do
+otherwise is being investigated.
+.PP
+.B "An earlier version reported a"
+.B resp
+.B "word that was the caller's own input."
+It read
+.B buf[5]
+unconditionally while writing the control address to
+.BR buf[5+ctlidx] ,
+so every figure published through it \- on silicon and under emulation
+alike \- had to be withdrawn, along with a documented reading rule that
+could never fire. The
+.B value
+line exists so that cannot recur.
+.PP
+.B "Under QEMU every answer here is fiction."
+The emulator accepts tags it does not implement \- including
+.BR 0x000f0f0f ,
+which does not exist \- and fabricates values for ones it does: it
+reports the V3D clock as 700MHz where silicon says 250. See
+.I v3dprobe
+in
+.BR mailbox.c ,
+which carries the nonsense-tag control.
+.PP
+.B SET_ENABLE_QPU
+enables a power domain and nothing here disables it on close, so a
+.B bind
+and one
+.B enable
+leaves the block powered until reboot.
+.PP
+The
+.B EXECUTE_QPU
+argument layout is unknown. A believed
+.RB ( num_qpus ,
+.IR control ,
+.IR noflush ,
+.IR timeout_ms )
+had its timeout falsified by a 500\(mu sweep that moved the elapsed
+time by 0.004%, and
+.I ctlidx
+does not move it either. That is why
+.B exec
+takes all four words rather than named arguments.
+.PP
+One job only: the control list is built as a single
+.RI ( uniforms ,
+.IR code )
+pair whatever
+.I w0
+says, so asking for several QPUs does not give each a different
+program.
