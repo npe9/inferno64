@@ -54,6 +54,7 @@ TARG=\
 	cp.dis\
 	cpu.dis\
 	crypt.dis\
+	draw3dkerntest.dis\
 	date.dis\
 	dbfs.dis\
 	dd.dis\

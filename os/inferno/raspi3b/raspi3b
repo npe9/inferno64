@@ -237,5 +237,17 @@ root
 	/dis/lib/styxconv/ostyx.dis
 	/dis/lib/styxservers.dis
 	/dis/lib/workdir.dis
+#
+# draw3dkerntest(1) and the two draw3d(2) providers. This board's
+# devdraw now implements the draw3d protocol letters, which until now
+# existed only in emu, so "does the kernel rasterise them, and the same
+# way" is a question only the board can answer. The test needs no window
+# and no GPU: it draws into an ordinary image and reads the pixels back,
+# which is what makes it runnable over a serial console.
+#
+	/dis/draw3dkerntest.dis
+	/dis/math/draw3d.dis
+	/dis/math/draw3ddev.dis
+	/dis/math/polyfill.dis
 	/fonts/pelm/unicode.8.font
 	/fonts/pelm/latin1.8
