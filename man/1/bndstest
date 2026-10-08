@@ -107,8 +107,15 @@ says, and four failures are reachable only through compiled code.
 .PP
 .B "What the checks cost, on the board:"
 .B array
-is 6.5 per cent slower with them, ranges 3350-3480ms against
-3080-3320ms, non-overlapping.
+is
+.B "6 to 11 per cent"
+slower with them \- about 9 on the better (strictly alternating) design,
+pooled over six samples an arm, ranges 3350-3550ms against 3080-3210ms
+and never overlapping in any run.
+.B "The magnitude is quoted as a range on purpose:"
+two runs of the same six-sample design gave 7.4 and 10.8 per cent, so a
+single figure to two significant figures is more precision than the data
+carries.
 .B "The control is what makes that mean anything"
 \- the
 .B int

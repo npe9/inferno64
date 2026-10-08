@@ -13688,3 +13688,63 @@ and
 .CW kencc-widencast ,
 whose data was measured to contain no backslashes: a passing tool changed for a
 theoretical gain is a worse trade than a note saying it was checked.
+.NH 3
+The bflag cost REPLICATED at 10.8 per cent, not 7.4, so the headline was low
+.LP
+A peer re-swept for anchored matching by the correct category and found it
+reached
+.I "their own published numbers"
+\(em every log parser they wrote used
+.CW re.match ,
+which anchors implicitly, missing 15 of 98 soak lines.
+.B "Asking the same question of my own numbers:"
+the
+.CW bflag
+cost was extracted from the board console with
+.CW "grep -aE '^(ON|OFF) DISBENCH'" ,
+anchored, and
+.CW board.out
+has since rolled, so those samples cannot be rechecked.
+.LP
+.B "The count was self-checking, which is why the figure survived:"
+the shell loop issues exactly six runs and six lines were observed, so a lost
+line would have shown as five.  That protected the measurement
+.I "by accident,"
+not by design \(em it is the denominator principle again, and I had it only
+because I happened to know how many lines to expect.
+.LP
+.B "But replication moved the number."
+Re-run on the same board and kernel with UNANCHORED extraction (anchored 6,
+unanchored 6 \(em no loss in this run):
+.P1
+                   bflag=1              bflag=0        delta
+original alt   3390 3390 3350      3080 3200 3150      +7.4%
+re-run   alt   3410 3550 3510      3120 3120 3210     +10.8%
+pooled n=6            3433                3147       + 9.1%
+ranges        3350..3550          3080..3210      do NOT overlap
+.P2
+.B "So the published 6.5 per cent was LOW,"
+and it was low partly by construction: it pooled the alternating arms with a
+blocked run that had only two
+.CW bflag=0
+samples.  The alternating design is the better one and its pooled estimate is
+.B "9.1 per cent."
+.LP
+.B "What is stable and what is not."
+Stable: the direction, and that the ranges never overlap in any run.  Not
+stable: the magnitude, which moved from 7.4 to 10.8 between two runs of the
+same six-sample design, so
+.B "quoting it to two significant figures was more precision than the data carries."
+The honest statement is
+.I "6 to 11 per cent on the most index-heavy test in the suite, around 9 on the better design,"
+and it remains an upper bound on the cost rather than a typical one \(em the
+.CW int
+control shows no effect at all.
+.LP
+The movement is entirely in the
+.CW bflag=1
+arm (3377 to 3490) with
+.CW bflag=0
+flat (3143 to 3150), which is consistent with thermal or scheduling variance on
+a board that has been installing kernels all session, and is
+.B "not explained."
