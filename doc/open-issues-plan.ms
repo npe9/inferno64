@@ -14145,3 +14145,78 @@ the override on
 refusal, and that was denied to this session as a safety-bypass flag \(em
 correctly, since the guard exists because the hang needs a reboot to clear.
 .B "The narrowing above is what could be done without it."
+.NH 2
+The paced flip IS inside the blanking interval, by arithmetic rather than by construction
+.LP
+.CW screenbcm.c
+said bucket 0 is inside the blanking interval
+.B "by construction,"
+because
+.CW mboxvsync()
+returns at a vertical blank \(em and the standing note against it was that this
+was
+.B unestablished ,
+since the blank's length is not knowable from the ARM side.  It can be settled
+from a measurement already in the tree plus timing arithmetic.
+.LP
+.B "First, the measurement, which nobody had read against this question."
+.CW vsyncprobe()
+times eight successive
+.CW mboxvsync()
+calls and the dump prints them:
+.P1
+SCREEN vsync errors 0 gaps(us) 2478 16666 16665 16666 16667 16665 16666 16667
+.P2
+Zero errors, and after the partial first gap
+.B "every interval is within 1us of 16666us"
+\(em 60.000Hz to 0.012 per cent.  So
+.CW mboxvsync()
+is locked to the display's frame clock and returns at a
+.I "consistent point"
+in every frame, stable to
+.B "0.03 of a scanline."
+The short first gap says it waits for the next event rather than sleeping a
+fixed period.
+.LP
+.B "Second, the arithmetic."
+640x480 at 60Hz in standard DMT timing is 480 active lines plus a 10-line front
+porch, a 2-line vsync pulse and a 33-line back porch \(em 525 total, 31.75us a
+line, so
+.B "the blanking interval is 1429us."
+The pacing window is
+.CW "fpperiod / 32" ,
+.B 521us .
+So:
+.P1
+vsync event meaning      window spans      inside the 1429us blank?
+blanking start              0..521 us      yes
+vsync pulse start         317..838 us      yes
+vsync pulse end           381..902 us      yes
+.P2
+.B "For every plausible meaning of the firmware's vsync event the paced flip"
+.B "lands inside the blanking interval,"
+with 527us \(em 16.6 scanlines \(em of margin in the worst case.  The question
+does not need the firmware's definition pinned down, which is why it is
+answerable at all.
+.LP
+.B "What it is conditional on, stated because it is the whole remaining gap:"
+the vertical total being 525 lines.
+.P1
+v-total   blank    worst case needs   verdict
+  525    1429 us        902 us        fits
+  512    1042 us        911 us        fits
+  500     667 us        921 us        DOES NOT FIT
+  490     340 us        929 us        DOES NOT FIT
+.P2
+So the conclusion holds for any v-total down to about 512 and fails below 500.
+525 is the standard figure for this mode and the measured 16666.7us period is
+consistent with it, but
+.B "the ARM side cannot read the vertical total,"
+so that is an assumption and not a measurement.
+.B "It would be settled by a firmware mailbox query for the timings"
+rather than by anything on this side.
+.LP
+.B "Which upgrades the claim rather than closing the item outright:"
+it was "unestablished whether the paced phase is inside blanking" and it is now
+"inside blanking for any v-total at or above about 512, for any definition of
+the vsync event, with 16.6 lines of margin at 525".

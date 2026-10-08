@@ -278,6 +278,37 @@ static int	vsclosed;	/* the window filled up before it was read */
  * blank, so phase near zero IS inside the blanking interval by construction,
  * whatever its length.  A flip paced to land there cannot tear.
  *
+ * THAT WAS AN ASSUMPTION AND IS NOW ARITHMETIC, because "by construction" was
+ * doing more work than it could carry -- it assumed the firmware's vsync event
+ * is at the blank's START, which nothing here knows.  It does not have to be.
+ *
+ * vsyncprobe() times eight successive mboxvsync() calls, and the dump prints
+ *
+ *	SCREEN vsync errors 0 gaps(us) 2478 16666 16665 16666 16667 ...
+ *
+ * -- zero errors and every interval after the partial first one within 1us of
+ * 16666, i.e. 60.000Hz to 0.012 per cent.  So the return point is a CONSISTENT
+ * point in every frame, stable to 0.03 of a scanline, and the short first gap
+ * says it waits for the next event rather than sleeping a period.
+ *
+ * 640x480 at 60 in standard DMT timing is 480 active + 10 front porch + 2
+ * vsync + 33 back porch = 525 lines at 31.75us, so blanking is 1429us.  The
+ * pacing window below is fpperiod/32, 521us.  Therefore:
+ *
+ *	vsync event meaning     window spans     inside the 1429us blank?
+ *	blanking start             0..521 us     yes
+ *	vsync pulse start        317..838 us     yes
+ *	vsync pulse end          381..902 us     yes
+ *
+ * so the conclusion holds for EVERY plausible meaning of the event, with 16.6
+ * scanlines of margin in the worst case, and does not need the firmware's
+ * definition pinned down.
+ *
+ * IT IS CONDITIONAL ON THE VERTICAL TOTAL, which this side cannot read: it
+ * fits at 525 and at 512, and fails at 500.  525 is standard for the mode and
+ * the measured period is consistent with it, but that is an assumption.  A
+ * mailbox query for the timings would settle it; nothing on the ARM side can.
+ *
  * ARMED BY teararm(), WHICH RUNS AT THE END OF screenstats() AND NOWHERE ELSE,
  * so the clock does not exist until a dump has been taken.  That is why the
  * report prints "charged N of M" rather than just the buckets: an unarmed clock
