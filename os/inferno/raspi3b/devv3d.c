@@ -84,44 +84,72 @@
  *
  * AND EXECUTE_QPU DOES SOMETHING REAL. Nine bytes of garbage:
  *
- *	QEMU     exec accepted resp 0x1       16 us
- *	silicon  exec refused  resp 0x1  1050951 us
+ *	QEMU     elapsed      16 us
+ *	silicon  elapsed 1050951 us
  *
- * 65000x, reproducible to four decimal places, and the response word is
- * 0x1 in BOTH -- so the response alone cannot tell silicon from
- * emulation and only the elapsed time can. That is the whole argument
- * for reporting microseconds.
+ * 65000x. THAT IS THE ONLY PART OF THE ORIGINAL READING THAT SURVIVED,
+ * and it survived because it is a clock: everything else in the first
+ * version of this block was wrong, in three different ways, and all
+ * three were found by the raspi3b-port session running it on silicon.
  *
- * BUT THE FOURTH WORD IS NOT THE TIMEOUT, and this file used to say it
- * was. Sweeping it 500x moved nothing:
+ * ONE: `resp' WAS THIS DRIVER'S OWN INPUT, ECHOED. lastresp was
+ * buf[5] read unconditionally, while the control-list address is
+ * written to buf[5+ctlidx] -- so at ctlidx 0 the "response" was the
+ * address written one line earlier and otherwise it was w0. Every
+ * `resp 0x1' printed here, in the QEMU table and the silicon table
+ * alike, was w0 == 1 coming back. The control: send 0xdeadbeef, read
+ * 0xdeadbeef; send 0x5a5a5a5a, read 0x5a5a5a5a. So a reading rule this
+ * file used to state -- "elapsed ~= 0, resp 0 -> the firmware did
+ * nothing" -- could never have fired, because resp is never 0 unless
+ * w0 is.
  *
- *	requested ms   10      200     1000    5000
- *	elapsed us   1050914 1050913 1050956 1050951
+ * The firmware's verdict was in two words this driver discarded, and
+ * the status now prints them. buf[1] is the mailbox code; buf[4] is
+ * the TAG's response -- bit 31 set means the tag was processed, the low
+ * bits are the byte count written. **buf[4] == 0 means EXECUTE_QPU was
+ * never touched**, which is the single question this instrument exists
+ * to answer and was the one thing it was not reading.
  *
- * 43us of spread, 0.004% of the elapsed time. So ~1.0509s is a FIXED
- * cost in the firmware's EXECUTE_QPU path and the layout I had reasoned
- * my way to is wrong in at least that field.
+ * And the byte count is as important as the bit, which the first fix
+ * nearly missed. QEMU now reads:
  *
- * WHICH BREAKS THE METHOD I DESIGNED THIS FOR, in the way worth
- * recording: the plan was to vary a candidate end-of-program encoding
- * and watch for a call that returns promptly instead of BURNING THE
- * TIMEOUT. There is no timeout to burn. Reading the constant 1.0509s as
- * "it timed out, as expected" would have confirmed a control that was
- * never connected to anything -- a blind instrument, and one I would
- * have trusted because I built it to be trustworthy.
+ *	exec accepted code 0x80000000 tag 0x80000000 PROCESSED
+ *	     wrote 0 bytes 17 us
+ *	value 0x1 0xc0310970 0x3e8 0x0
  *
- * What survives is better than what was lost: 1.05s against
- * microseconds is a wide, stable signal, so varying an encoding and
- * watching the elapsed time still works. It just cannot be CALIBRATED
- * by the timeout argument. Hence `exec' now takes all four words and
- * ctlidx: the next thing to find out is which word moves the elapsed
- * time, and if none does, the layout is wrong at a coarser level than
- * one field.
+ * Processed, and wrote NOTHING, with the value buffer still holding
+ * exactly what was sent. That is the stub's signature stated properly,
+ * where before it was hidden behind an echoed `resp 0x1' that looked
+ * like an answer. On silicon a real EXECUTE_QPU should set the bit AND
+ * a nonzero length, and value[0] should then be the firmware's own
+ * return rather than w0.
  *
- *	echo exec 1 1 CTL 1 1000 >/dev/v3dctl   # ctlidx 1, as believed
- *	echo exec 0 CTL 1 1 1000 >/dev/v3dctl   # ...or 0
+ * TWO: ~1.05s IS NOT A FIXED COST. This block asserted it was. Three
+ * levels have now been seen for the same command shape across kernel
+ * builds: 1.0509s, ~0.83s and ~1.14s (n=13). The level moves between
+ * builds, so "a fixed cost in the firmware's EXECUTE_QPU path" is not
+ * supported, and the 0.83s is unattributed -- not ctlidx, not w3, not
+ * thermal.
  *
- * (Silicon numbers measured by the raspi3b-port session on the board.)
+ * THREE: the four-word sweep that appeared here is WITHDRAWN. Its
+ * driver built the command with an Inferno sh list subscript, which
+ * does not exist, so every row ran at ctlidx 0 and three of the four
+ * words were never varied at all. Done properly and interleaved,
+ * ctlidx does not move the elapsed time either: 1127699..1163585 us
+ * across all four indices, ranges overlapping, 3.1% spread.
+ *
+ * SO THE LAYOUT IS STILL UNKNOWN, and the honest state is narrower
+ * than this file once claimed: a garbage program takes ~1s of
+ * something on silicon and microseconds under emulation, and nothing
+ * yet identifies which argument word is which. The next run should
+ * read buf[4] first -- if the tag was never processed, every elapsed
+ * time measured so far is the cost of a rejected request and not of
+ * anything executing.
+ *
+ * (Silicon numbers measured by the raspi3b-port session on the board,
+ * against this device as of b54afb448, which was on the card after the
+ * tree copy had been reverted -- reverting a tree and reverting a card
+ * are two acts.)
  *
  * So on silicon, with garbage code:
  *	elapsed ~= the timeout	the QPUs really ran it and never ended
@@ -167,7 +195,28 @@ static struct {
 	int	enableok;	/* ...and whether the last attempt worked */
 	u32	lastargs[4];	/* the four words the last exec actually sent */
 	int	lastctlidx;	/* which of them carried the control address */
-	int	lastresp;	/* response word from the last exec */
+	/*
+	 * WHAT THE FIRMWARE WROTE, which is not what we sent. This used to
+	 * be a single `lastresp = buf[5]', read unconditionally -- so at
+	 * ctlidx 0 it reported the control-list address this driver had
+	 * written one line earlier, and otherwise it reported w0. Every
+	 * `resp 0x1' this device ever printed was w0 == 1 echoed back. The
+	 * control that proved it: send w0 = 0xdeadbeef, read resp
+	 * 0xdeadbeef; send 0x5a5a5a5a, read 0x5a5a5a5a. Verbatim, twice,
+	 * on silicon.
+	 *
+	 * The firmware's actual verdict is in the two words below.
+	 * lastcode is the mailbox response (0x80000000 ok,
+	 * 0x80000001 error parsing the request) and lasttag is the TAG's
+	 * response word: bit 31 set means the tag was processed, the low
+	 * bits are how many bytes it wrote. lasttag == 0 means
+	 * EXECUTE_QPU was never touched -- which is the one thing this
+	 * whole instrument exists to find out, and it was not being read.
+	 * (Found by the raspi3b-port session.)
+	 */
+	u32	lastcode;	/* buf[1]: the mailbox response code */
+	u32	lasttag;	/* buf[4]: processed bit | bytes written */
+	u32	lastval[4];	/* buf[5..8] AFTER the call */
 	int	lastok;		/* whether mboxprop reported success */
 	uvlong	lastus;		/* how long it took */
 	u32	clock;
@@ -175,6 +224,15 @@ static struct {
 } v3d;
 
 static Lock v3dlk;
+
+/*
+ * FILE SCOPE, not a function-local static: 7l emits no symbol for a
+ * function-local `static u32 raw[]', so there is nothing for ksyms to
+ * resolve and the request/response buffer cannot be read from a halted
+ * target over JTAG. That is where the firmware's verdict lives, so it
+ * has to be reachable. 16-byte aligned by hand below.
+ */
+static u32	v3draw[32+4];
 
 extern int mboxprop(u32*);
 /*
@@ -188,10 +246,9 @@ extern uvlong systmrusec(void);
 static int
 v3dclock(void)
 {
-	static u32 raw[32+4];
 	u32 *buf;
 
-	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf = (u32*)(((uintptr)v3draw + 0xf) & ~(uintptr)0xf);
 	buf[0] = 8*4;
 	buf[1] = 0;
 	buf[2] = Tagclock;
@@ -210,10 +267,9 @@ v3dclock(void)
 static int
 v3denable(int on)
 {
-	static u32 raw[32+4];
 	u32 *buf;
 
-	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf = (u32*)(((uintptr)v3draw + 0xf) & ~(uintptr)0xf);
 	buf[0] = 7*4;
 	buf[1] = 0;
 	buf[2] = Tagqpuen;
@@ -255,7 +311,6 @@ v3denable(int on)
 static int
 v3dexecraw(int ctlidx, u32 w0, u32 w1, u32 w2, u32 w3)
 {
-	static u32 raw[32+4];
 	u32 *buf;
 	uvlong t0;
 	int i, nj;
@@ -275,7 +330,7 @@ v3dexecraw(int ctlidx, u32 w0, u32 w1, u32 w2, u32 w3)
 	cacheflush(v3d.unif, sizeof v3d.unif);
 	cacheflush(v3d.ctrl, sizeof v3d.ctrl);
 
-	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf = (u32*)(((uintptr)v3draw + 0xf) & ~(uintptr)0xf);
 	buf[0] = 10*4;
 	buf[1] = 0;
 	buf[2] = Tagqpuex;
@@ -293,7 +348,10 @@ v3dexecraw(int ctlidx, u32 w0, u32 w1, u32 w2, u32 w3)
 	t0 = systmrusec();
 	v3d.lastok = mboxprop(buf) >= 0;
 	v3d.lastus = systmrusec() - t0;
-	v3d.lastresp = buf[5];
+	v3d.lastcode = buf[1];
+	v3d.lasttag = buf[4];
+	for(i = 0; i < 4; i++)
+		v3d.lastval[i] = buf[5+i];
 	return 0;
 }
 
@@ -348,7 +406,8 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			"clock %s %ud\nenabled %d\nenable %s\n"
 			"code %d bytes (appended; `reset' clears)\n"
 			"args %#ux %#ux %#ux %#ux ctlidx %d\n"
-			"exec %s resp %#ux %llud us\n",
+			"exec %s code %#ux tag %#ux %s wrote %ud bytes %llud us\n"
+			"value %#ux %#ux %#ux %#ux\n",
 			v3d.clockok? "hz" : "unknown", v3d.clock,
 			v3d.enabled,
 			!v3d.enabletried? "untried" :
@@ -357,7 +416,12 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			v3d.lastargs[0], v3d.lastargs[1],
 			v3d.lastargs[2], v3d.lastargs[3], v3d.lastctlidx,
 			v3d.lastok? "accepted" : "refused",
-			v3d.lastresp, v3d.lastus);
+			v3d.lastcode, v3d.lasttag,
+			(v3d.lasttag & 0x80000000)? "PROCESSED" : "UNTOUCHED",
+			v3d.lasttag & 0x7fffffff,
+			v3d.lastus,
+			v3d.lastval[0], v3d.lastval[1],
+			v3d.lastval[2], v3d.lastval[3]);
 		return readstr((ulong)offset, a, n, buf);
 	}
 	error(Eperm);
