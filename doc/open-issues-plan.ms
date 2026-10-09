@@ -50,6 +50,60 @@ comes before
 because it is about damage this session may already have done, and that
 outranks extending the fix to another architecture.
 .NH 1
+STATE OF THE BOARD, read before picking anything (9 October 2026)
+.LP
+.B "THE SD CARD IS NOT IN THE PI."
+It was repaired in a card reader and ejected, and only a person can put it
+back.  Two overlapping
+.CW kinstall
+runs had left its
+.CW KERNEL8.IMG
+directory entry pointing at a free cluster, so the firmware loaded nothing; see
+C3, which also records the guard that now stops that happening.  What is on the
+card has been checked as far as bytes can be checked \(em byte-identical to the
+tree's
+.CW kernel8.img
+(md5 b2abd1b296f776fb116eaef74939a68a, 2635128 bytes, 0 v3d strings), first
+words
+.CW "aa0003f3 d53800b5 92401eb5 34000175" ,
+.CW fsck
+clean \(em and
+.B "nobody has booted it."
+Bytes on a card are not a boot.
+.PP
+.B "So the first thing to do once the card is back"
+is a card boot, and grade it on OUTPUT and not on exit status:
+.CW bndstest
+should say 11 ok 0 fail and
+.CW drawink
+should say
+.CW "all checks passed" .
+.CW drawink
+exits 0 while printing nothing, so a suite reading
+.CW $status
+scores it a pass when it has done nothing at all.
+.PP
+.B "Until then only JTAG-reachable work is open, and that is a real restriction rather than an inconvenience."
+A JTAG boot holds cores 1-3, so it is a single-processor arm.  Every
+multi-processor question in this file is invisible to it \(em the I-cache bug
+under H4 would have been pronounced fixed by any JTAG-booted test here \(em so
+no change that needs four cores to validate should be started, let alone
+declared done, while the card is out.
+.PP
+.B "What that leaves open:"
+.CW H1a
+(tearing) and
+.CW H2
+both want the card.
+.CW H3
+is a prescribed no-op and must stay one: 8l's validation is not to be closed by
+argument.  H4's two failures are both closed, and its residue is a design
+question that can be SCOPED without hardware \(em what
+.CW rootset()
+walks, how often, and what a bound would cost in missed roots.
+.CW doc/compiler-quality-plan.ms
+is complete and has no open rows.
+.NH 1
 A.  The kencc narrowing-cast class
 .NH 2
 A1.  DONE.  6c's peephole was deleting the truncation
