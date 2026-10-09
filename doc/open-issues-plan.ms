@@ -2423,6 +2423,192 @@ rather than report "dead" when given a mismatched one.  That second half is
 the part worth building \(em this file's own history is five false failures
 from instruments that returned a value instead of admitting they could not
 see.
+.NH 2
+C2.  DONE.  Six tools read the wrong board's console
+.LP
+.B Established.
+Six files chose the console with
+.P1
+SESS=${SESS-`screen -ls | awk '/ttys/{print $1; exit}'`}
+.P2
+which means "the first screen session on a tty".  That is not a description of
+the Pi.  Four sessions are attached on this desk, and they were identified by
+their
+.I content ,
+not by their names or their order:
+.P1
+19277  cu.usbserial-2234301       a SiFive HiFive Unmatched, at U-Boot "=>"
+32543  cu.PL2303G-USBtoUART223420 THE PI, printing usbdwc: lines
+80649  cu.PL2303-USBtoUART22430   an xip radio bench board
+17858  cu.usbserial-AQ02DK34      the other end of that bench
+.P2
+The awk returns 19277.  So a whole session of board work read a SiFive's
+scrollback: every tool reported that the console had seen nothing while the
+kernel's own log ring said the build was running, and that contradiction was
+chased through the ring reader, the clear, the grep pattern and the read-back
+before anyone asked
+.I which
+console.  Four boots were recorded as failures for a kernel that was up.
+.PP
+.B "Fixed in"
+.CW 5ab91d4d3 .
+.CW tools/jtag/boardsess.sh
+asks the kernel, through
+.CW lsof ,
+which screen process holds the Pi's adapter, and requires
+.CW "screen -ls"
+to still list that session \(em a dead session accepts every
+.CW -X
+quietly, which is its own way of typing into nothing.  It never opens the
+device: screen owns it, and a second opener wedges the PL2303 until a human
+unplugs the USB.
+.PP
+.B "The part that is a decision and not a fix."
+When it cannot tell, it prints
+.I nothing
+and says why, rather than falling back to another session.  Typing a reboot
+into a neighbouring board is worse than any failure that fallback could avoid,
+and
+.CW boot.sh 's
+no-console path \(em reading the kernel's log ring over JTAG \(em is the better
+instrument anyway, because a freshly loaded kernel zeroes its BSS and the ring
+therefore holds only this boot.
+.PP
+.B Verified.
+The helper returns 32543 where the old idiom returns 19277; three refusals
+(a named device that is absent, a pattern matching twelve devices, a device
+no screen holds) each print an explanation and return nothing; and
+.CW boot.sh
+itself, run for real against a nonexistent image so that it stops at the stamp
+without touching the board, printed
+.P1
+boot: confirming the boot on console 32543.ttys006.Noethikoma
+.P2
+.NH 2
+C3.  DONE.  Nothing enforced one-operator, and the card paid for it
+.LP
+.B Established.
+.CW tools/jtag/kinstall.sh
+has carried the line
+.P1
+NOTHING ELSE MAY TOUCH THE CARD WHILE THIS RUNS.
+.P2
+in capitals since it was written, and nothing enforced it.  Two runs
+overlapped.  The card was left holding a
+.CW kernel8.bak
+and a
+.CW kernel8.new
+from different builds, and a
+.CW kernel8.img
+whose directory entry started at a free cluster:
+.P1
+Warning: /KERNEL8.IMG starts with free cluster
+Warning: size of /KERNEL8.IMG is 2635112, should at most be 16384
+Warning: Found 18 orphaned clusters
+.P2
+macOS msdosfs returned
+.CW EINVAL
+for that one name in every operation \(em create, write, stat, rename-to \(em
+while the identical bytes wrote fine under another name, and readdir did not
+list it at all.  So the isolation read as "the name is the problem", which it
+was.  The firmware loaded nothing: 0x80000 held
+.CW "0f03130f 0f030f03"
+\(em uninitialised DRAM \(em against the image's
+.CW "aa0003f3 d53800b5" .
+.PP
+.B "Why the two runs were started."
+The guard in use was
+.CW "pgrep -c openocd" ,
+and macOS pgrep has no
+.CW -c
+flag: it exits 2, prints nothing, and
+.CW "|| echo 0"
+turns that into the reassuring answer.  Three replacement guards were then
+written and all three were also wrong \(em
+.CW "ps ax"
+wraps long command lines and counted 4 for 2 processes, and
+.CW "-o pid,command"
+matched the shells watching
+.I for
+openocd and counted 2 when the answer was 0.
+.PP
+.B Repaired.
+Not by the tree.  The card went into a reader and
+.CW "diskutil repairVolume"
+truncated the bad entry and freed the orphans; that works without a password
+where
+.CW fsck_msdos
+does not, because diskutil goes through a privileged helper rather than
+opening the device as the caller \(em
+.CW /dev/rdisk4s1
+is
+.CW root:operator
+mode 640 and the account is not in
+.CW operator .
+The verified image was already on the card under another name, so the repair
+was a rename.
+.PP
+.B "Fixed in"
+.CW 5ab91d4d3 .
+.CW tools/jtag/boardlock.sh
+does the job two ways, neither of them a pattern match against a command line.
+openocd by
+.I "executable name"
+through
+.CW "ps ax -o pid,comm" ,
+which a watcher shell cannot satisfy; and the tools against each other by a
+lock holding a pid, because a run cannot recognise its siblings in a process
+listing without also recognising itself, and every attempt to exclude itself by
+pattern is a new way to be wrong.  The lock lives outside the repository and
+outside any session scratchpad, since the collision is between agents in
+different worktrees driving one Pi.
+.PP
+.B "Two details that are the whole difference between this working and not."
+A child of the holder inherits the lock, because
+.CW kinstall.sh
+boots its candidate by running
+.CW boot.sh
+and
+.CW efsbatch
+runs it once per trial \(em without that, the first thing a locked install
+would be refused by is its own pre-flight boot, and this is the shape of fix
+that gets deleted in frustration a week later.  But inheritance is keyed on the
+pid
+.I recorded
+.I "in the lock" ,
+not on whether the variable is set, or a stale exported value would wave an
+unrelated run past somebody else's lock.  And release checks the holder, so the
+run that was just refused cannot delete the lock belonging to the run it was
+refused in favour of.
+.PP
+.B Verified.
+.CW tests/boardlock.sh ,
+16 checks, and it is shown to fail rather than merely to pass: four mutations
+\(em never refusing, releasing without checking the holder, matching openocd on
+the command line, and keying inheritance on "is it set" \(em each produce
+DEFECT lines and exit 2.  Two traps in the test itself, both of which made it
+report a working guard as broken:
+.CW "cp /bin/sleep openocd"
+is SIGKILLed on exec because a copy of a system binary loses its signature, so
+the control has to be a binary the test compiles; and
+.CW $$
+inside
+.CW "( )"
+is the parent's pid, so a second operator has to be
+.CW "env -u BOARDLOCK_HELD sh -c"
+or the test is asking one process whether it is two.
+.PP
+.B "Not verified, and only a person can."
+That the Pi boots the repaired card.  What is checked is that the card's
+.CW KERNEL8.IMG
+is byte-identical to the tree's
+.CW kernel8.img
+(md5 b2abd1b296f776fb116eaef74939a68a, 2635128 bytes, 0 v3d strings \(em the
+build that passed bndstest 11 of 11 and drawink all-checks), that its first
+words are the
+.CW "aa0003f3 d53800b5 92401eb5 34000175"
+the board failed to find, and that fsck now reports the volume clean.
+
 .NH 1
 D.  Housekeeping
 .NH 2
