@@ -313,6 +313,65 @@ never opens looks exactly like an identity that does \(em and only a
 comparison against an independent implementation of the same
 arithmetic could.
 .PP
+.B "And the third kind: opacity."
+.CW tk.h
+names clip, transform and opacity as the three that make animation cost
+nothing to rasterise.
+.CW TkNopacity
+is the last of them and the only one that needs a surface:
+.CW TkNclip
+narrows a clipping rectangle and
+.CW TkNtransform
+changes arithmetic, but compositing a span at an alpha means having the
+span somewhere before it lands. So the span renders into a surface that
+starts as a
+.B copy
+of the destination and the close composites that whole surface back
+through a constant\-alpha mask \(em which gives the right answer for the
+span over what was beneath it without a per\-pixel path, and reuses the
+1x1 replicated image
+.CW tkcolor()
+already caches.
+.PP
+.CW "render opacity A"
+drives it.
+.CW 255
+emits no node at all, because an opacity that changes nothing should
+not cost a surface, so the identity case here is weaker than the
+transform's and the checks beside it are quantitative:
+.IP
+.EX
+opacity 255   byte\-identical to no opacity at all
+opacity 0     0 bytes inked
+opacity 128   272256 of 525088, wanted 263573 +\-13178
+.EE
+.LP
+The third line is
+.B ink
+\(em the summed distance of every channel from white, not inked
+.B pixels ,
+because a half\-transparent picture touches the same pixels. Forcing the
+mask's alpha to 192 instead of the node's gave 394208 of 525088, which
+is 0.751, which is 192/255 to three figures: the ink is
+.B linear
+in the alpha, so the figure above is the compositing arithmetic and not
+a coincidence.
+.PP
+The alpha\-0 check is weaker than it reads, and the control said so:
+with the composite deleted outright it still
+.B passes ,
+because a span drawn into a surface nobody blits back also leaves a
+blank page. It is evidence the span was
+.B diverted
+and none at all that anything was composited. Written beside the check
+rather than left to read stronger than it is.
+.PP
+What this does not do yet is nest. A clip, a layer and an opacity each
+occupy one slot in a flat list and each refuses to open inside the
+others that would put it in the wrong coordinates \(em the same
+limitation the clip has had since it was added, and the same choice to
+keep one renderer rather than grow a second.
+.PP
 What a size\-selection step would need, if text at a scale is wanted:
 the node holds a face
 .I name

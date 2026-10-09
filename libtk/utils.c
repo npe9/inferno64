@@ -1446,8 +1446,15 @@ tkrendercmd(TkTop *t, char *arg, char **ret)
 	if(strcmp(buf, "opacity") == 0){
 		int alpha;
 
+		/*
+		 * `opacity' itself first: the dispatcher read the
+		 * subcommand WITHOUT advancing arg.  Unlike `scaled' and
+		 * `xform' there is no second number, so the word after the
+		 * alpha is never read and arg is not advanced again --
+		 * which 7c says and clang does not.
+		 */
 		arg = tkword(t, arg, buf, buf+sizeof(buf), nil);
-		arg = tkword(t, arg, buf, buf+sizeof(buf), nil);
+		tkword(t, arg, buf, buf+sizeof(buf), nil);
 		if(buf[0] == '\0'){
 			if(ret != nil)
 				return tkvalue(ret, "%d", tkscenegetopacity());

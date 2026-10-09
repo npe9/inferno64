@@ -2037,7 +2037,6 @@ renderscene(TkScene *s, TkCtxt *c, Image *dst, int num, int den)
 	 * visible, missing it is not.
 	 */
 	if(opaq != nil){
-		target = savedop;
 		blitopacity(c, savedop, opq, opaq);
 		freeimage(opq);
 	}
