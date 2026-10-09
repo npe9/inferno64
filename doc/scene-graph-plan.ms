@@ -284,6 +284,35 @@ is worth something because
 is demonstrated beside it. Pi 3B kernel: 100 ok 0 fail 2 skipped, the
 two skips being a font file and a bitmap absent from the kernel root.
 .PP
+.B "And the scale generalised to a node."
+.CW TkNtransform
+was declared in the vocabulary and emitted by nothing. It is bracketed
+now, by a
+.CW TkNtransformend
+appended at the end of the enum rather than beside its opener, and
+.CW "render xform"
+wraps each tree in one. Translate and uniform scale only: a rotation
+maps a rectangle to something that is not one, and this renderer draws
+fills, borders and glyph runs as rectangles, so supporting it would
+mean resampling \(em the thing a description exists to avoid.
+.PP
+The two paths are each other's control, which is the point of having
+both:
+.IP
+.EX
+a transform of 2 == a global scale of 2   0 bytes differ
+a transform of 1 is the identity          0 differ
+.EE
+.LP
+Byte\-identical on the host and on the Pi 3B kernel. That comparison
+earned itself on its first run: the transform node was appended like
+every other, so it arrived AFTER the span it was meant to bracket and
+did nothing, and the picture came back identical to the untransformed
+one. The identity case could not have found it \(em an identity that
+never opens looks exactly like an identity that does \(em and only a
+comparison against an independent implementation of the same
+arithmetic could.
+.PP
 What a size\-selection step would need, if text at a scale is wanted:
 the node holds a face
 .I name
