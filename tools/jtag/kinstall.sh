@@ -48,9 +48,17 @@
 set -u
 HERE=`dirname "$0"`
 ROOT=`cd "$HERE/../.." && pwd`
-S=${S:-/private/tmp/claude-501/-Users-npe-src-inferno64-branches-raspi3b-port/2675f84d-d333-4a0e-ba1f-4ef786fc52b7/scratchpad}
-CMD=$ROOT/os/inferno/raspi3b/board.cmd
-OUT=$ROOT/os/inferno/raspi3b/board.out
+#
+# S is scratch for this run's trimmed board output.  The default used to
+# be a hard-coded session scratchpad belonging to a DIFFERENT worktree,
+# which exists only while that session does; nothing here creates S, so
+# with it absent every trim silently wrote nothing and every grep below
+# read an empty file.  Make our own and create it.
+#
+S=${S:-${TMPDIR:-/tmp}/kinstall-$$}
+mkdir -p "$S" || { echo "kinstall: cannot create scratch $S" >&2; exit 1; }
+CMD=${CMD:-$ROOT/os/inferno/raspi3b/board.cmd}
+OUT=${OUT:-$ROOT/os/inferno/raspi3b/board.out}
 IMG=${IMG:-$ROOT/os/inferno/raspi3b/kernel8.img}
 ELF=${ELF:-$ROOT/os/inferno/raspi3b/iraspi3b}
 REMOTE=/n/remote/os/inferno/raspi3b/kernel8.img
@@ -75,6 +83,33 @@ fail() {
 	echo "kinstall: $*" >&2
 	echo "kinstall: THE CARD WAS NOT CHANGED." >&2
 	exit 1
+}
+
+#
+# board.cmd is ONE COMMAND DEEP and this tree has three writers for it:
+# this script, netbench and styxstress.py.  Nothing marks whose command
+# it holds, so an unrelated run of either of the others replaces the
+# command this script is waiting for; the token never comes back, and
+# the timeout then reads as a board that stopped answering.  It is not,
+# and in the steps after the card is written `THE CARD WAS NOT CHANGED'
+# would be a false statement about a card that just changed -- so this
+# is its own exit, saying only what is known.
+#
+# The EXIT trap is cleared first: idle() writes board.cmd, which would
+# destroy the other writer's command on the way out and move the damage
+# to whoever is actually mid-run.
+#
+clash() {
+	trap - EXIT INT TERM
+	echo "kinstall: ANOTHER WRITER REPLACED board.cmd WHILE THIS STEP WAITED." >&2
+	echo "kinstall:   waiting for: $1" >&2
+	echo "kinstall:   it now holds: `head -1 "$CMD" 2>/dev/null`" >&2
+	echo "kinstall: so $2 never ran.  Nothing above is a statement about the" >&2
+	echo "kinstall: board, and the card is in whatever state the last COMPLETED" >&2
+	echo "kinstall: step left it -- read the steps that printed their marker." >&2
+	echo "kinstall: board.cmd is LEFT AS THE OTHER WRITER SET IT." >&2
+	echo "kinstall: serialise the writers; do not retry until the other run ends." >&2
+	exit 3
 }
 
 # ---------------------------------------------------------------- 1
@@ -187,10 +222,20 @@ runcmd() {
 	rcseq=`expr $rcseq + 1`
 	tok=KI-DONE-$$-$rcseq
 	printf '%s; echo %s\n' "$*" "$tok" > "$CMD"
+	mine=`cat "$CMD"`
 	i=0
 	while [ $i -lt "$limit" ]; do
 		sleep 5
 		i=`expr $i + 5`
+		#
+		# The board only READS board.cmd, so any change to it is
+		# another writer.  Checked before board.out, because a
+		# replaced command means the output cannot arrive and
+		# waiting out the remaining timeout buys nothing.
+		#
+		if [ "`cat "$CMD" 2>/dev/null`" != "$mine" ]; then
+			clash "$mine" "$marker"
+		fi
 		[ -f "$OUT" ] || continue
 		LC_ALL=C tr -cd '\11\12\40-\176' < "$OUT" > "$S/ki-out.txt" 2>/dev/null
 		awk -v t="$tok" '
@@ -225,6 +270,51 @@ runcmd() {
 	cat "$S/ki-last.txt" 2>/dev/null >&2
 	return 1
 }
+
+#
+# KINSTALL_SELFTEST=1 exercises the clash detection above and exits.  It
+# needs no board, no adapter and no card: point CMD and OUT somewhere
+# scratch, let runcmd write its command, have a second writer replace it,
+# and require exit 3 with board.cmd still holding the OTHER writer's
+# text.  It must not be pointed at the real board.cmd -- another session
+# may be mid-install -- which is why CMD and OUT are overridable.
+#
+case ${KINSTALL_SELFTEST:-0} in
+1|2)
+	case $CMD in
+	*/os/inferno/raspi3b/board.cmd)
+		#
+		# Clear the trap BEFORE exiting.  idle() writes $CMD, so a
+		# refusal that merely exits still overwrites the real
+		# board.cmd on the way out -- which is the collision this
+		# whole change is about, committed by the thing testing for
+		# it.  Found by doing exactly that: a refusal run replaced a
+		# netbench command with IDLE.
+		#
+		trap - EXIT INT TERM
+		echo "kinstall: SELFTEST refuses to use the real board.cmd; set CMD and OUT" >&2
+		exit 2;;
+	esac
+	: > "$OUT"
+	#
+	# Mode 1 puts a second writer in; mode 2 does not.  Mode 2 is the
+	# control: without it, a comparison that was always unequal -- a
+	# stray newline between the write and the read would do it -- would
+	# report a clash on every step and pass mode 1 for the wrong
+	# reason.  Mode 2 must reach the ordinary timeout with no clash
+	# message at all.
+	#
+	if [ "${KINSTALL_SELFTEST}" = 1 ]; then
+		( sleep 7; printf 'netbench; echo NB-DONE\n' > "$CMD" ) &
+		runcmd KI-SELFTEST 60 "load std; echo KI-SELFTEST"
+		echo "kinstall: SELFTEST 1: runcmd returned $? without detecting the clash" >&2
+		exit 1
+	fi
+	runcmd KI-SELFTEST 15 "load std; echo KI-SELFTEST"
+	rc=$?
+	echo "kinstall: SELFTEST 2: no second writer, runcmd returned $rc (want 1, no clash)" >&2
+	exit $rc;;
+esac
 
 # ---------------------------------------------------------------- 2, 3
 

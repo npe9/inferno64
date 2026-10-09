@@ -55,6 +55,45 @@ evidence), or drive the board from the host instead by writing
 os/inferno/raspi3b/board.cmd.
 
 
+BOARD.CMD HAS THREE WRITERS AND NO LOCK.  kinstall.sh, netbench and
+styxstress.py all write os/inferno/raspi3b/board.cmd, the file is one
+command deep, and nothing in it records whose command it holds.  So an
+unrelated run of any of them replaces the command another is waiting
+for.  The waiting run then sees its token never come back, and that is
+indistinguishable from a board that stopped answering -- which is how
+it was first read, as "the command poller never answered".
+
+kinstall.sh now detects it: it remembers what it wrote and checks on
+every poll that board.cmd still holds it.  If not it exits 3 with the
+command it wanted and the command it found, says the step never ran,
+and does NOT claim anything about the card -- in the steps after the
+card is written, "THE CARD WAS NOT CHANGED" would be false.  It also
+leaves board.cmd as the other writer set it, rather than letting its
+own exit handler overwrite a run that is still going.
+
+Detection is not serialisation.  Two runs still collide; one of them
+now says so accurately instead of blaming the board.  If you need them
+not to collide, run them one at a time.
+
+	KINSTALL_SELFTEST=1 CMD=$S/board.cmd OUT=$S/board.out S=$S/s \
+		sh tools/jtag/kinstall.sh	# clash: exit 3
+	KINSTALL_SELFTEST=2 CMD=$S/board.cmd OUT=$S/board.out S=$S/s \
+		sh tools/jtag/kinstall.sh	# no clash: exit 1, timeout
+
+The refusal clears the exit handler before exiting.  Without that it
+refused and then overwrote the real board.cmd anyway on the way out,
+because idle() writes it -- the same collision this change is about,
+committed by the thing that tests for it.  That is not hypothetical: a
+refusal run replaced a committed netbench stats command with IDLE here,
+and it was restored from HEAD.
+
+Both need no board, no adapter and no card, and mode 2 is the control:
+without it a comparison that was always unequal would report a clash on
+every step and pass mode 1 for the wrong reason.  The self-test refuses
+to run against the real board.cmd, since another session may be
+mid-install.
+
+
 WIRING.  The pins are the 40-pin header's own, and the firmware puts
 them in ALT4 when enable_jtag_gpio=1 is set:
 
