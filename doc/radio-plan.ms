@@ -9605,3 +9605,70 @@ sample, so the last step is inference.  Catching it directly wants an
 MPU region below each stack, which this port has
 .RI ( mmu.c
 is there) and does not use for this.
+.NH 2
+Silicon agrees with the model to the byte, and ssl is not a stack cost
+.PP
+Everything in the two sections above was measured under
+.IR qemu .
+Both boards were then flashed with the same station image and the same
+arms run on the hardware, with the boot-stack watch in and
+.IR twostyx 's
+filter keeping both stacks' numbers.  Each log carries its own
+.B "conf <name> (<kerndate>)"
+and each matches what
+.I flashverify
+reported writing, so these are this run.
+.PP
+.B "ssl off, base conf:"
+.DS
+.CW "sat | msp stack 0x20005f8c..0x20006f8c sp 0x20006f6c, 3936 bytes"
+.CW "sat | 17680 bytes free        ARMV7M-STYX-EXPORTING"
+.CW "sat | kstack high water 3908 of 4096   msp headroom 2360"
+.CW "gnd | ARMV7M-STYX-MOUNTED"
+.DE
+.PP
+.B "ssl on, base conf:"
+.DS
+.CW "sat | styx: ssl sha/rc4_256 on #D/0        ARMV7M-STYX-SSL"
+.CW "sat | 11144 bytes free        ARMV7M-STYX-EXPORTING"
+.CW "sat | kstack high water 3908 of 4096   msp headroom 2360"
+.CW "gnd | ARMV7M-STYX-MOUNTED"
+.CW "     90s | styx: down: ax25: no answer / ax25: refused"
+.DE
+.PP
+.B "The two core figures are 17680 and 11144 on silicon,"
+which are the
+.I same
+two numbers
+.IR qemustyx (1)
+printed from two guests \- to the byte.  So
+.B "ssl(3) under the Styx costs 6536 bytes of core,"
+measured twice on different hardware, and the guest pair can be trusted
+for this kind of question.  It also corrects
+.BR /lib/radio ,
+which recorded 12512 bytes at export from before the arena fix and the
+process count change.
+.PP
+.B "And ssl is not a stack cost at all."
+The exporting end's kernel stack high water is
+.B "3908 of 4096 with ssl on and 3908 with it off,"
+and the boot stack's headroom is 2360 in both.  That depth belongs to
+the export path itself; ssl buys none of it.  Which also says the 188
+bytes of margin is the station's normal state in the simplest arm it
+has, not a symptom of the encrypted one.
+.PP
+So on the base conf the encrypted arm
+.I works
+on silicon: it mounts, and it ran ninety seconds before the link died
+with
+.BR "ax25: no answer" ,
+which is item 9 and not memory.
+.PP
+.B "What was NOT run, deliberately:"
+keyring-plus-ssl on silicon.  It locks up reproducibly under
+.IR qemu ,
+and that lockup is what left board 2 needing a power cycle twice in one
+session.  Confirming a failure that reproduces in ninety seconds
+without hardware is not worth wedging a board for.  The boards are back
+on the shipping arm, ssl off by
+.BR /lib/radio .

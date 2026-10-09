@@ -89,9 +89,22 @@
 #			THE MEMORY IS NO LONGER IN THE WAY, and it is still
 #			0 here, because that is not the same as working.
 #			Both boards mount over sha/rc4_256 on #D/0 every
-#			time, with 12512 bytes of core free at export, and
-#			ONE RUN OF THREE read 273 bytes twice over the air
-#			and compared them equal.
+#			time, and ONE RUN OF THREE read 273 bytes twice over
+#			the air and compared them equal.
+#
+#			The core at export is 11144 bytes and not the 12512
+#			recorded here before: measured again on silicon in
+#			October 2026 against 17680 with ssl off, so ssl(3)
+#			under the Styx costs 6536 bytes.  The same two
+#			numbers come out of tools/radio/qemustyx.sh to the
+#			byte, which is the first time this arm has had a
+#			reading that does not need the bench.
+#
+#			And it is NOT a stack cost.  The exporting end's
+#			kernel stack high water is 3908 of 4096 with ssl on
+#			and 3908 with it off -- that depth is the export
+#			path itself, and ssl buys none of it.  See
+#			os/inferno/armv7m/main.c for the other stack.
 #
 #			Against a control of plain Styx THREE of three on
 #			the same build and the same process count, so the

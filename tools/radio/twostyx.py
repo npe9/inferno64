@@ -76,6 +76,11 @@ KEY = re.compile(
     # one the far end actually heard.
     r"|rssi -?\d+ offset|styx: core |pool (main|heap|image): live|chunks \d+ span "
     r"|no procs|smalloc|no free Blocks|panic|exceeded"
+    # The two kernel stacks, because the arm that works runs the
+    # per-process one at 3912 of 4096 and the one that fails dies of
+    # a stack leaving its bounds.  Both watches sample from the idle
+    # hook, so the numbers only exist if the log keeps them.
+    r"|kstack high water|msp headroom|msp stack 0x"
     # AND THE WORDS THE BOARD ACTUALLY USES WHEN IT RUNS OUT.  The ssl
     # arm was read for an afternoon as a kernel wedge because the one
     # message that explained it -- "exportproc 7: waiting for memory
