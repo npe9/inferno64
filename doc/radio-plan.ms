@@ -9513,3 +9513,95 @@ Also not claimed: what consumed the stack, if it was consumed.  Also not claimed
 the same way.  The board's own
 .B "kstack high water 3908 of 4096"
 in the passing arm is consistent with it and is not the same evidence.
+.NH 2
+Which stack, measured: not MSP, and KSTACK cannot be tested on this part
+.PP
+The section above said the instrument for deciding this did not exist.
+It does now \-
+.IR mspwatchinit ()
+in
+.B os/inferno/armv7m/main.c
+paints l.s's
+.CW "GLOBL stack(SB), $KSTKSIZE"
+at boot and the idle hook prints the untouched bytes when they fall \-
+and it exonerates the stack it was built to accuse.
+.PP
+.B "The geometry first, because it was not what the last section assumed."
+.B end
+\- the top of bss \- is at 0x20008988, and the initial MSP from the
+vector table is 0x20006f6c, so bss ends
+.I above
+the stack pointer: the stack is a 4096-byte array
+.I inside
+bss, at 0x20005f84..0x20006f84, with kernel variables above it and 24
+kilobytes of them below it down to the bottom of SRAM.
+.B "There is no guard on either side."
+An overflow of those 4096 bytes does not fault; it writes through 24K
+of live kernel state and the machine faults only when SP leaves SRAM,
+which is what 0x1fffffec was.  The first cut of the watch pointed at
+.B end
+on the opposite assumption, found hi <= lo every time, returned
+quietly, and printed nothing \- which reads exactly like a stack that
+never came close.
+.PP
+.B "And then the numbers say it is the other stack."
+.IP \(bu
+In the arm that PASSES, the boot stack bottoms out at
+.B "2360 of 4096"
+while the
+.I process
+stack reaches
+.B "3912 of 4096"
+\- 184 bytes of margin.  On silicon the satellite printed 3908 of 4096
+in the same arm.
+.IP \(bu
+In the arm that FAILS, the boot stack still has
+.B 2228
+bytes free at the moment of death.
+.PP
+So MSP is not the stack under pressure;
+.B KSTACK
+is, and
+.B l.s
+says "everything runs privileged on MSP", which means a process runs
+with SP repointed into its own 4096-byte stack.  That makes "thread
+mode on MSP" in the fault consistent with a process stack that left
+its bounds and walked down through the pools and bss until it passed
+0x20000000.
+.NH 2
+And the obvious experiment is not available here
+.PP
+Raising
+.B KSTACK
+should make the arm get further if the diagnosis is right.  It does the
+opposite, because the process stacks and the pools come out of the same
+155648 bytes:
+.IP \(bu
+.B "KSTACK 6144:"
+11 stacks cost 67584 instead of 45056, and the station does not start
+at all \- even the control never announces.
+.IP \(bu
+.B "KSTACK 5120:"
+it starts and reaches LISTENING, and then dies
+.I earlier
+than before, during
+.CW core() 's
+read at link-up rather than after the ssl push.
+.PP
+.B "Neither isolates anything,"
+because each changes the stack and the available core together, and
+this part has no spare of either.  That is the honest end of this
+thread on this hardware: the fatal mechanism is a stack leaving its
+bounds, which stack is inferred from the two headroom readings rather
+than measured at the fault, and the fix cannot be tested here because
+testing it costs the memory whose shortage is the other half of the
+problem.
+.PP
+.B "What is NOT claimed:"
+a direct reading of a process stack exceeding 4096 in the failing arm.
+.B KSTACKWATCH
+samples from the idle hook and the failing process dies before the next
+sample, so the last step is inference.  Catching it directly wants an
+MPU region below each stack, which this port has
+.RI ( mmu.c
+is there) and does not use for this.
