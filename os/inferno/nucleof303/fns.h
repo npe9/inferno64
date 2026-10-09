@@ -10,6 +10,9 @@ void	clockintr(Ureg*);
 void	clockpoll(void);
 uvlong	timersoon(void);
 uvlong	fastticks(uvlong*);
+int	mspheadroom(void);
+int	mspspan(void);
+void	mspwatchinit(void);
 ulong	tk2ms(ulong);
 void	coherence(void);
 ulong	fpr1test(void);	/* ../armv7m/l.s */

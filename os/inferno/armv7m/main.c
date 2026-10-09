@@ -137,6 +137,140 @@ confinit(void)
 	conf.nmach = 1;
 }
 
+/*
+ * THE BOOT AND INTERRUPT STACK, WHICH NOTHING WAS WATCHING.
+ *
+ * KSTACKWATCH paints every PROCESS stack with 0xbe in newproc() and
+ * kstackused() reads back how far the pattern was eaten; that is where
+ * "kstack high water 3988 of 4096" comes from.  Nothing did that for
+ * the stack in l.s -- "GLOBL stack(SB), $KSTKSIZE", whose top is the
+ * initial MSP in the vector table -- and l.s says "everything runs
+ * privileged on MSP", so that array carries the boot, the idle loop
+ * and every exception taken outside a process.
+ *
+ * WHY IT MATTERS, measured on os/inferno/stm32f407: the array is
+ * KSTKSIZE = 4096 bytes at 0x20005f6c..0x20006f6c, and it sits in the
+ * MIDDLE of bss.  Kernel variables are above it (bss ends at
+ * 0x20008988) and 24 kilobytes of them are below it, down to the
+ * bottom of SRAM at 0x20000000.  There is no guard on either side.
+ *
+ * So an overflow of these 4096 bytes does not fault.  It writes
+ * through 24K of live kernel state, silently, and the machine faults
+ * only when SP finally leaves SRAM.  That is what the keyring-plus-ssl
+ * arm did: an exception-entry stacking fault at 0x1fffffec, with no
+ * fault before it, 28524 bytes below the top of a 4096-byte stack.
+ * Everything crossed on the way down was already wrong.
+ *
+ * Unconditional, unlike its KSTACKWATCH neighbour: one memset at boot,
+ * a scan only when something asks, and an instrument that is off is an
+ * instrument that is not there when the fault happens.
+ */
+enum {
+	Msppat	= 0xbe,		/* same pattern as KSTACKWATCH, for one habit */
+	Mspslack = 128,		/* left unpainted: the painting frame itself */
+};
+
+extern uchar stack[];		/* l.s: the boot and interrupt stack */
+
+static void serialputhex(uintptr);
+
+static uchar *msplo;		/* lowest address painted */
+static uchar *msphi;		/* highest address painted */
+
+void
+mspwatchinit(void)
+{
+	uchar *lo, *hi;
+	int here;
+
+	/*
+	 * &here is this frame, which is ON this stack, so paint below it
+	 * and not through it.  Called as early in main() as there is a
+	 * frame to measure from, so "below this frame" is very nearly
+	 * the whole array.
+	 *
+	 * SAYS WHAT IT FOUND, INCLUDING WHEN IT DECLINES.  The first cut
+	 * pointed at end[] -- the top of bss -- on the assumption that
+	 * the stack grew down towards bss from above.  It does not: bss
+	 * ENDS above the initial MSP because the stack is an array
+	 * inside it.  So hi <= lo every time, the function returned
+	 * quietly, and the watch printed nothing at all -- which reads
+	 * exactly like a stack that never came close.  A blind
+	 * instrument is the thing this whole exercise is about.
+	 *
+	 * serialputs and not print: this runs before printinit().
+	 */
+	lo = stack;
+	hi = (uchar*)&here - Mspslack;
+	serialputs("msp stack ", -1);
+	serialputhex((uintptr)lo);
+	serialputs("..", -1);
+	serialputhex((uintptr)stack + KSTKSIZE);
+	serialputs(" sp ", -1);
+	serialputhex((uintptr)&here);
+	serialputs("\n", -1);
+	if(hi <= lo || hi > stack + KSTKSIZE){
+		serialputs("msp stack: sp is not in it, not watching\n", -1);
+		return;
+	}
+	msplo = lo;
+	msphi = hi;
+	memset(lo, Msppat, hi - lo);
+}
+
+/*
+ * How much of the array the stack has never touched, which is the
+ * number that matters: when it reaches zero the next push is writing
+ * over a kernel variable 24K of which lie below, and nothing will say
+ * so until something else breaks.
+ *
+ * -1 if the array was never painted.  A reading of 0 does not prove an
+ * overflow -- the pattern is one byte -- but it is the only reading
+ * that can.
+ */
+int
+mspheadroom(void)
+{
+	uchar *p;
+
+	if(msplo == nil)
+		return -1;
+	for(p = msplo; p < msphi; p++)
+		if(*p != Msppat)
+			break;
+	return p - msplo;
+}
+
+/*
+ * The array's size, so the headroom reads as a fraction: a reader who
+ * does not know the stack is 4096 bytes cannot tell 400 bytes of
+ * headroom from 400 bytes of stack.
+ */
+int
+mspspan(void)
+{
+	return KSTKSIZE;
+}
+
+/*
+ * Eight hex digits down the board's uart before printinit() exists.
+ * The geometry above is three addresses and nothing else in the kernel
+ * can say them this early.
+ */
+static void
+serialputhex(uintptr v)
+{
+	char b[9];
+	int i;
+
+	for(i = 7; i >= 0; i--){
+		b[i] = "0123456789abcdef"[v & 0xf];
+		v >>= 4;
+	}
+	b[8] = 0;
+	serialputs(b, -1);
+}
+
 void
 machinit(void)
 {
@@ -153,6 +287,7 @@ void
 main(void)
 {
 	machinit();
+	mspwatchinit();
 	archreset();
 	confinit();
 

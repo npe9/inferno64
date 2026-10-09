@@ -410,6 +410,31 @@ idlehands(void)
 			}
 		}
 #endif
+		/*
+		 * And MSP's, which nothing watched.  Reported as the
+		 * HEADROOM left below the deepest the boot and
+		 * interrupt stack has ever gone, because that is the
+		 * distance to the top of bss and there is no guard
+		 * there: when it reaches zero the next push corrupts a
+		 * kernel variable, silently, and the fault comes later
+		 * and somewhere else.  See mspwatchinit() in
+		 * ../armv7m/main.c.
+		 *
+		 * Printed when it FALLS, unlike the kstack line which
+		 * prints when its high water rises -- same event, and
+		 * the direction that matters here is down.
+		 */
+		{
+			static int least = -1;
+			int n;
+
+			n = mspheadroom();
+			if(n >= 0 && (least < 0 || n < least)){
+				least = n;
+				print("msp headroom %d of %d\n",
+					n, mspspan());
+			}
+		}
 	}
 	idle();
 }
