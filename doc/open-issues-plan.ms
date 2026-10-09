@@ -15107,6 +15107,95 @@ rather than by anything on this side.
 it was "unestablished whether the paced phase is inside blanking" and it is now
 "inside blanking for any v-total at or above about 512, for any definition of
 the vsync event, with 16.6 lines of margin at 525".
+.NH 2
+H1a REFUTED on this hardware: the scanout is 1080p60, so blanking is 666us and the paced flip is OUTSIDE it
+.LP
+The section above upgraded the claim to "inside blanking for any v-total at or
+above about 512, for any definition of the vsync event, with 16.6 lines of
+margin at 525", and named the one way to settle the remaining assumption: "a
+firmware mailbox query for the timings would settle it; nothing on the ARM side
+can."  That query is now built, and
+.B "the answer refutes the conclusion."
+.PP
+.B "What the firmware says, from a kernel that asks it."
+.CW mboxedid()
+issues GET_EDID_BLOCK
+.CW 0x00030020 ) (
+and
+.CW edidtimings()
+in
+.CW screenbcm.c
+decodes the first detailed timing descriptor beside the
+.CW vsyncprobe()
+gaps it qualifies.  On this desk:
+.P1
+SCREEN edid active 3840x2160 total 4400x2250 pixclk 594000 kHz
+                   line 7407407 ps vblank 90 lines (666 us)
+SCREEN edid v-total 2250 (assumed 525): blanking 666 us vs 902 us
+                   worst case -- paced flip NOT inside blanking
+SCREEN edid pixel clock(id 9): set = 0 kHz, measured = 148500 kHz,
+                   max = 2400000 kHz
+SCREEN edid live pixel clock 148500 kHz vs 594000 kHz in the
+                   descriptor: a DIFFERENT mode is being driven
+.P2
+.B "THE ERROR IN THE ASSUMPTION WAS NOT THE NUMBER, IT WAS THE MODE."
+525 lines is right for 640x480 at 60Hz, and the framebuffer here IS 640x480 \(em
+but the firmware does not drive 640x480.  It scales that framebuffer into the
+display's mode, and the measured live pixel clock says which one:
+.CW "148500 kHz" ,
+which is 1920x1080 at 60Hz.  Cross-checked against a measurement already in the
+tree, the
+.CW "SCREEN vsync"
+period:
+.P1
+pixclk x period = 148.5e6 x 16666us = 2474901 pixels a frame
+1080p60 standard total 2200 x 1125  = 2475000
+.P2
+agreement to 0.004 per cent, so the live mode is 1080p60 and not a guess.
+.PP
+.B "And the blanking interval is 666us for either candidate mode:"
+.P1
+mode                              line     vblank          of frame  fits 902us
+640x480@60 DMT  (H1a assumed)  31.78 us  45 lines 1430 us     8.6%   yes
+1920x1080@60    (live)         14.81 us  45 lines  667 us     4.0%   NO
+3840x2160@60    (EDID pref.)    7.41 us  90 lines  667 us     4.0%   NO
+.P2
+Every standard CEA 60Hz mode puts vertical blanking at about four per cent of
+the frame; the 640x480 DMT mode is the outlier at 8.6, which is why assuming it
+was generous by more than a factor of two.  So the worst case the table in
+.CW screenbcm.c
+needs \(em 902us \(em does not fit, and
+.B "the paced flip is outside the blanking interval on this hardware."
+.PP
+.B "What this does and does not overturn."
+It overturns the blanking claim and nothing else: the 60.000Hz lock, the 1.1us
+residual, the phase predictability to 3 ppm and the 84.9 per cent damage-copy
+saving were all measured and stand.  What dies is the argument that pacing
+alone puts the flip in a safe window.  A flip 666us-wide-window late is still a
+flip during active scanout, which is the thing the flip was supposed to avoid \(em
+so either the pacing window has to shrink below the real blanking interval, or
+the tear it was meant to remove is not removed by pacing at this mode.
+.PP
+.B "Two pieces of instrument design worth keeping."
+The decoder was positive-controlled on the host before the board ran it, with
+synthetic EDID blocks for 640x480 and 1080p: it returned total 800x525 and
+vblank 1430us for the first, which is the figure this plan derived by hand, so
+the arithmetic agreed with an independent derivation before it was trusted.
+And the clock read reports THREE facts \(em set, measured, max \(em because the
+first version used
+.CW mboxgetclock() ,
+which returns -1 both for an unanswered tag and for a rate of zero, and printed
+"pixel clock UNREADABLE".  That hid the answer completely: the set rate IS zero
+here and the MEASURED rate is the one that exists.  Collapsing "no answer" into
+"answered zero" cost a build, and
+.CW mboxclockraw()
+now keeps them apart.
+.PP
+.B "What is still not established,"
+because the ARM side cannot see it: the live mode's horizontal and vertical
+totals individually.  The product is pinned by pixclk times period and matches
+1080p60 exactly, and the 666us follows from any CEA 60Hz mode, so the conclusion
+does not depend on the split \(em but it is derived, not read.
 .NH 1
 copyu mutates the program when it is only asked a question
 .LP

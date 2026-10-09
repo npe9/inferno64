@@ -33,6 +33,7 @@ extern int mboxvirtoffset(int, int);
 extern void (*screenpresent)(void);
 extern void (*screenpartial)(Rectangle);
 extern int mboxvsync(void);
+extern int mboxedid(int, uchar*, u32*);
 extern void drawpresentstats(void);
 static void vsyncprobe(void);
 static void bcmpresent(void);
@@ -823,6 +824,166 @@ screenstats(void)
  *	errors 8, gaps near a second	the spin expired after all, and
  *					the reasoning above is wrong
  */
+/*
+ * What the firmware says the display timings actually are.
+ *
+ * THE ONE ASSUMPTION LEFT IN THE PACED-FLIP ARGUMENT.  The comment at
+ * the head of this file shows the paced flip lands inside the vertical
+ * blanking interval for every plausible meaning of the firmware's vsync
+ * event -- conditional on the vertical total being 525 lines.  525 is
+ * the standard figure for 640x480 at 60Hz and the measured 16666.7us
+ * period is consistent with it, but it was never read from anywhere,
+ * and the table in that comment shows the conclusion FAILING below a
+ * v-total of about 500.  So it is an assumption load-bearing for a
+ * correctness claim, which is the kind this tree writes down.
+ *
+ * EDID settles it: the first detailed timing descriptor carries
+ * vertical active and vertical blanking, and their sum is the vertical
+ * total.  Nothing else on the ARM side can.
+ *
+ * NO MONITOR IS A RESULT, NOT A FAILURE.  A board with nothing plugged
+ * in runs a firmware default mode and has no EDID, so this says which
+ * of the two happened rather than printing a number either way.  A
+ * fabricated number here would be worse than none: it would close the
+ * item wrongly, and this tree has already caught a firmware answering
+ * for a tag it does not implement.
+ */
+static void
+edidtimings(void)
+{
+	uchar e[128];
+	u32 st;
+	int i, sum, ha, hb, va, vb, ht, vt;
+	uvlong pxhz, lineps, blankus;
+
+	st = ~0;
+	if(mboxedid(0, e, &st) < 0){
+		print("SCREEN edid MAILBOX FAILED -- v-total still assumed 525\n");
+		return;
+	}
+	if(st != 0){
+		print("SCREEN edid none (firmware status %#ux):"
+			" no monitor, so the mode is a firmware default"
+			" and v-total 525 stands UNCHECKED\n", st);
+		return;
+	}
+	/*
+	 * Two integrity checks before reading any field, because a
+	 * plausible-looking v-total out of a corrupt block would be the
+	 * worst possible outcome -- it would close the item with a wrong
+	 * number and no way to tell.
+	 */
+	if(e[0] != 0 || e[1] != 0xFF || e[2] != 0xFF || e[3] != 0xFF ||
+	   e[4] != 0xFF || e[5] != 0xFF || e[6] != 0xFF || e[7] != 0){
+		print("SCREEN edid BAD HEADER %02ux %02ux %02ux %02ux"
+			" %02ux %02ux %02ux %02ux -- not using it\n",
+			e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7]);
+		return;
+	}
+	sum = 0;
+	for(i = 0; i < 128; i++)
+		sum += e[i];
+	if((sum & 0xFF) != 0){
+		print("SCREEN edid BAD CHECKSUM (sum&255 = %d, want 0)"
+			" -- not using it\n", sum & 0xFF);
+		return;
+	}
+
+	/*
+	 * First detailed timing descriptor, at byte 54.  The split fields
+	 * are EDID's: a low byte plus a high nibble, active in the top
+	 * nibble and blanking in the bottom.
+	 */
+	pxhz = (uvlong)(e[54] | (e[55] << 8)) * 10000;
+	ha = e[56] | ((e[58] >> 4) << 8);
+	hb = e[57] | ((e[58] & 0xF) << 8);
+	va = e[59] | ((e[61] >> 4) << 8);
+	vb = e[60] | ((e[61] & 0xF) << 8);
+	ht = ha + hb;
+	vt = va + vb;
+
+	if(pxhz == 0 || ht == 0 || vt == 0){
+		print("SCREEN edid DTD empty (pxclk %llud h %d v %d)"
+			" -- the first descriptor is not a timing\n",
+			pxhz, ht, vt);
+		return;
+	}
+
+	/*
+	 * A line is ht pixels; the blanking interval is vb lines.  In
+	 * picoseconds per line first, so a 640x480 line (31.75us) does not
+	 * round to 31us and lose 2 per cent of the answer.
+	 */
+	lineps = (uvlong)ht * 1000000000000ULL / pxhz;
+	blankus = (uvlong)vb * lineps / 1000000ULL;
+
+	print("SCREEN edid active %dx%d total %dx%d pixclk %llud kHz"
+		" line %llud ps vblank %d lines (%llud us)\n",
+		ha, va, ht, vt, pxhz / 1000, lineps, vb, blankus);
+	/*
+	 * And the verdict against the assumption, said here rather than
+	 * left to whoever reads the numbers: the table in this file's
+	 * header needs the blanking interval to exceed the worst-case
+	 * pacing window, which is 902us.
+	 */
+	print("SCREEN edid v-total %d (assumed 525): blanking %llud us"
+		" vs 902 us worst case -- paced flip %s\n",
+		vt, blankus,
+		blankus > 902? "INSIDE blanking": "NOT inside blanking");
+
+	/*
+	 * ...AND WHETHER THAT IS THE MODE BEING DRIVEN, which the EDID
+	 * cannot say.  Block 0's first descriptor is the display's
+	 * PREFERRED timing, not the firmware's choice: the framebuffer
+	 * here is 640x480 and the firmware may be scaling it into a much
+	 * larger scanout, in which case the line time -- and so the
+	 * blanking interval in microseconds -- is the big mode's and not
+	 * 640x480's.  Blanking LINES is the wrong unit for this question;
+	 * blanking TIME is the right one, and time needs the pixel clock.
+	 *
+	 * Firmware clock id 9 is PIXEL, and it reports the clock actually
+	 * feeding the scanout.  Comparing it against the descriptor's
+	 * pixel clock says whether the two agree, so the verdict above is
+	 * either confirmed for the live mode or exposed as being about a
+	 * mode nobody is driving.
+	 */
+	{
+		extern int mboxclockraw(u32, int, u32*);
+		u32 cur, meas, max;
+		int ocur, omeas, omax;
+
+		cur = meas = max = 0;
+		ocur  = mboxclockraw(0x00030002, 9, &cur);   /* set rate   */
+		omeas = mboxclockraw(0x00030047, 9, &meas);  /* measured   */
+		omax  = mboxclockraw(0x00030004, 9, &max);   /* max rate   */
+		/*
+		 * Printed as three separate facts rather than one verdict,
+		 * because "unreadable" was the first answer here and it
+		 * hid which of three different things had happened.  A tag
+		 * the firmware does not answer, a tag it answers with
+		 * zero, and a clock genuinely stopped are not the same
+		 * finding, and only the first is a reason to stop asking.
+		 */
+		print("SCREEN edid pixel clock(id 9):"
+			" set %s %ud kHz, measured %s %ud kHz,"
+			" max %s %ud kHz\n",
+			ocur  < 0? "unanswered": "=", cur  / 1000,
+			omeas < 0? "unanswered": "=", meas / 1000,
+			omax  < 0? "unanswered": "=", max  / 1000);
+		if(omeas == 0 && meas != 0)
+			print("SCREEN edid live pixel clock %ud kHz vs"
+				" %llud kHz in the descriptor: %s\n",
+				meas / 1000, pxhz / 1000,
+				(uvlong)meas == pxhz?
+					"the preferred mode IS being driven":
+					"a DIFFERENT mode is being driven");
+		else
+			print("SCREEN edid the ARM side cannot read the live"
+				" pixel clock, so which mode is driven is"
+				" NOT established here\n");
+	}
+}
+
 static void
 vsyncprobe(void)
 {
@@ -853,6 +1014,13 @@ vsyncprobe(void)
 	for(i = 1; i <= 8; i++)
 		print(" %llud", (t[i] - t[i-1]) * 1000000 / (uvlong)hz);
 	print("\n");
+	/*
+	 * Beside the measurement it qualifies: the gaps above establish a
+	 * stable 16666us frame, and the line below says whether the
+	 * blanking interval inside that frame is long enough for the
+	 * paced flip -- which is the question the gaps cannot answer.
+	 */
+	edidtimings();
 }
 
 void

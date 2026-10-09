@@ -972,3 +972,106 @@ mboxsetgpioreq(int pin, int on, int reqbytes, u32 *tagresp)
 		return -1;
 	return 0;
 }
+
+/*
+ * Ask the firmware for an EDID block (tag 0x00030020).
+ *
+ * WHY: doc/open-issues-plan.ms H1a establishes that the paced page flip
+ * lands inside the vertical blanking interval for any vertical total at
+ * or above about 512, and 525 is the standard figure for 640x480 at
+ * 60Hz -- but the ARM side cannot read the vertical total, so 525 is an
+ * assumption and the item says so.  screenbcm.c:310 names the remedy:
+ * "a mailbox query for the timings would settle it; nothing on the ARM
+ * side can."  This is that query.  EDID's first detailed timing
+ * descriptor carries vertical active and vertical blanking, and their
+ * sum IS the vertical total.
+ *
+ * The response is 136 bytes: the block number, a status word, then 128
+ * bytes of EDID.  So the value buffer is the largest of this file's
+ * messages and the word count is spelled out rather than reused:
+ *
+ *	2 header + 3 tag + 34 value + 1 end = 40 words = 160 bytes
+ *
+ * TWO RESULTS, NOT ONE, and the distinction is the point.  A board with
+ * no monitor attached runs a firmware default mode and has no EDID to
+ * report; that is a legitimate answer and not a failure of the query.
+ * So the return value says whether the MAILBOX worked, and *fwstatus
+ * carries the firmware's own verdict (0 = a block was returned).
+ * Collapsing the two would make "no monitor" indistinguishable from "the
+ * mailbox is broken", and this tree has already been bitten by a
+ * firmware that answers a tag it does not implement
+ * (doc/open-issues-plan.ms, QEMU fabricating values).
+ */
+int
+mboxedid(int block, uchar *out, u32 *fwstatus)
+{
+	static u32 raw[40+4];
+	u32 *buf;
+	int i;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	for(i = 0; i < 40; i++)
+		buf[i] = 0;
+	buf[0] = 40 * 4;
+	buf[1] = 0;
+	buf[2] = 0x00030020;		/* tag: get EDID block */
+	buf[3] = 136;			/* value buffer: block, status, 128 */
+	buf[4] = 4;			/* request length: the block number */
+	buf[5] = block;
+	buf[39] = 0;			/* end tag */
+	if(mboxprop(buf) < 0)
+		return -1;
+	if((buf[4] & 0x80000000) == 0)
+		return -1;
+	if(fwstatus != nil)
+		*fwstatus = buf[6];
+	/*
+	 * Copy even when the status is nonzero: a caller that wants to
+	 * dump what the firmware put there can, and an untouched buffer
+	 * and a zero-filled one are different pieces of evidence.
+	 */
+	if(out != nil)
+		for(i = 0; i < 128; i++)
+			out[i] = ((uchar*)&buf[7])[i];
+	return 0;
+}
+
+/*
+ * A clock rate WITHOUT collapsing "answered zero" into "failed".
+ *
+ * mboxgetclock() returns -1 both when the firmware does not answer and
+ * when it answers with a rate of zero, which is right for its callers
+ * -- a UART divisor cannot be computed from either -- and wrong for
+ * asking a diagnostic question.  Reading "pixel clock UNREADABLE" tells
+ * you nothing about which of the two happened, and the two mean
+ * opposite things: an unanswered tag is a firmware that does not
+ * implement it, a zero is a firmware saying that clock is not running.
+ *
+ * tag is the caller's: 0x00030002 GET_CLOCK_RATE, 0x00030047
+ * GET_CLOCK_RATE_MEASURED, 0x00030004 GET_MAX_CLOCK_RATE.  Returns 0 if
+ * the firmware answered at all, with the rate it gave (which may be 0),
+ * and -1 only if the mailbox round trip or the response bit failed.
+ */
+int
+mboxclockraw(u32 tag, int clkid, u32 *rate)
+{
+	static u32 raw[8+4];
+	u32 *buf;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf[0] = 8 * 4;
+	buf[1] = 0;
+	buf[2] = tag;
+	buf[3] = 8;
+	buf[4] = 4;
+	buf[5] = clkid;
+	buf[6] = 0;
+	buf[7] = 0;
+	if(mboxprop(buf) < 0)
+		return -1;
+	if((buf[4] & 0x80000000) == 0)
+		return -1;
+	if(rate != nil)
+		*rate = buf[6];
+	return 0;
+}
