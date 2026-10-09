@@ -218,6 +218,20 @@ native kernel, which has no such handler, it is a fault. Whoever merges
 this should keep both tests rather than read them as an accident of
 whichever version arrived second.
 .PP
+.B "The control for that case covers one of the two guards, not both."
+Deleting
+.B "a == H"
+and relinking makes the case fail, so it is sensitive to that guard. The
+length guard is
+.I not
+shown to be necessary by anything here: with it removed,
+.B malloc(0)
+either returns nil, which the existing
+.B "p == nil"
+test catches, or a pointer the caller uses with a count of zero and
+draws nothing. So the length test is defensive rather than demonstrated,
+and the control should not be read as covering it.
+.PP
 It does not cover
 .B Image.line
 beyond using it as an oracle, and it does not cover

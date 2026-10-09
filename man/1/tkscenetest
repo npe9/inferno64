@@ -347,6 +347,25 @@ because it carries no bitmap file either. A case that is dropped is
 reported, because coverage quietly lost is worse than coverage never
 claimed.
 .PP
+.B "Two of the nests are built for their side effect and still have a verdict."
+The nests at depth 2 and at the middle depth are drawn without their
+pictures being kept \(em only the deepest one is compared \(em so there
+is no
+.I report
+on the call. The verdict on them is the tree count: the check that the
+count scales with depth and then caps requires depth 2 to yield 3 trees
+and the middle depth to yield one more than itself, so a nest that fails
+to build scores 0 there and fails that check. Confirmed by making
+.IR paintnest ()
+return nil at each of those two depths in turn, which gives
+.B "depth 2 -> 0 trees"
+and
+.B "depth 5 -> 0"
+respectively, one FAIL and a tally of
+.BR "1 fail" .
+A discarded return in this program is not an unchecked case, but it is
+worth knowing which check is doing the work.
+.PP
 .B "A skipped case prints its reason first and its verdict second."
 The line naming the Tk command that would not run is a
 .I diagnostic
