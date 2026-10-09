@@ -128,13 +128,31 @@ mboxreadto(int chan, u32 *val, uvlong usec)
 
 	t0 = systmrusec();
 	for(i = 0; i < Spins; i++){
-		if(r[Status] & Empty){
-			if(systmrusec() - t0 >= usec){
-				lastwait = -1;
-				return -1;
-			}
-			continue;
+		/*
+		 * THE DEADLINE IS CHECKED EVERY ITERATION, not only when
+		 * the FIFO is empty.  It used to sit inside the Empty
+		 * branch, so a read FIFO holding a word for another channel
+		 * took the r[Read] path below and went round again WITHOUT
+		 * EVER CONSULTING THE CLOCK: the request's own bound was
+		 * ignored and Spins decided.  Measured on silicon by asking
+		 * for 30 s and getting 4.174742 s -- 200e6 iterations at
+		 * about 21 ns -- and then being told COUNTER NOT ADVANCING,
+		 * which is the one fact a caller cannot obtain any other
+		 * way and which was false.  A bound that only applies when
+		 * nothing is happening is not a bound.
+		 *
+		 * This keeps the reason both bounds exist: if the counter is
+		 * dead, systmrusec() - t0 is always zero, the deadline can
+		 * never expire, and Spins remains the only thing that gets
+		 * you out.  A later tidy that deletes "the redundant one"
+		 * would delete the only bound that survives a stopped clock.
+		 */
+		if(systmrusec() - t0 >= usec){
+			lastwait = -1;
+			return -1;
 		}
+		if(r[Status] & Empty)
+			continue;
 		v = r[Read];
 		if((int)(v & 0xf) == chan){
 			*val = v & ~0xfU;
@@ -158,12 +176,38 @@ mboxread(int chan, u32 *val)
  * above.  Returns 0 on success (message code == Respok), -1 otherwise.
  * The response is written back into buf in place.
  */
+/*
+ * ONE EXCHANGE AT A TIME.  The property channel is a request and a
+ * reply with nothing tying them together: two callers that interleave
+ * each take the other's answer, and because the reply is written back
+ * INTO THE REQUEST BUFFER the loser gets a well-formed message with the
+ * success code set and somebody else's value in it -- a GPIO read
+ * returning a clock rate, not a detectable error.
+ *
+ * In THIS kernel the only caller is devv3d.c, so the race needs two
+ * processes using #Q at once rather than two drivers; said plainly
+ * because the hazard is obvious on a branch where btbcm, sdhostbcm,
+ * sdhcibcm, pwmbcm and screenbcm all come back to this channel at
+ * runtime, and this is the branch where it would be easy to conclude
+ * the lock is unnecessary and drop it on the way forward.
+ *
+ * lock() and not ilock(): every caller is a read or a write on a file,
+ * so process context, and an exchange can take up to Waitus -- which is
+ * exactly the serialisation wanted and exactly what must not be held
+ * with interrupts off.  A caller from interrupt context would need
+ * ilock and would then be holding interrupts off for a second, which is
+ * a reason not to add such a caller rather than a reason to change the
+ * lock.
+ */
+static Lock mboxlock;
+
 int
 mboxpropto(u32 *buf, uvlong usec)
 {
 	uintptr pa = (uintptr)buf;	/* RAM is identity-mapped */
 	usize reqlen;
 	u32 resp;
+	int r;
 
 	if(pa & 0xf)
 		panic("mboxprop: buf %#p not 16-byte aligned", buf);
@@ -176,9 +220,14 @@ mboxpropto(u32 *buf, uvlong usec)
 	 * below is ordered after the clean.
 	 */
 	cacheflush(buf, reqlen);
-	if(mboxwrite(Chanprop, (u32)(pa | Busalias)) < 0)
+	lock(&mboxlock);
+	if(mboxwrite(Chanprop, (u32)(pa | Busalias)) < 0){
+		unlock(&mboxlock);
 		return -1;
-	if(mboxreadto(Chanprop, &resp, usec) < 0)
+	}
+	r = mboxreadto(Chanprop, &resp, usec);
+	unlock(&mboxlock);
+	if(r < 0)
 		return -1;
 	USED(resp);
 	/*
