@@ -4,7 +4,7 @@
 /*
  * integrated sbox & p perm
  */
-#pragma rodata spbox		/* never written: see doc/xip.ms */
+#pragma rodata spbox comptab keysh parity	/* see doc/xip.ms */
 
 static u32int spbox[] = {
 

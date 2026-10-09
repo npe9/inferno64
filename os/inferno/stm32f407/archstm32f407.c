@@ -301,21 +301,48 @@ styxsizes(void)
 	 * interrupt budget -- and the part could not get a Block to
 	 * receive into.
 	 *
-	 * TRIED AND BACKED OUT: conf.pipeqsize = 4 * Styxrpc, four
+	 * TRIED AND BACKED OUT ONCE: conf.pipeqsize = 4 * Styxrpc, four
 	 * messages an end instead of 32768.  The satellite went into a
 	 * reboot loop with it -- "no free Blocks" over and over, and
 	 * then poolsize and a fresh banner -- and two things had changed
 	 * in that build, this and the pool reporting in the init, so
 	 * neither was measured.  Backed out rather than kept on a guess.
 	 *
-	 * And the figure it was reaching for was wrong anyway: the pool
-	 * report that did get out says main has 39516 bytes FREE at the
-	 * moment iallocb fails, so the fault is not a shortage of pool.
-	 * It is a shortage of a CONTIGUOUS run, which a queue limit does
-	 * not change.  "no free Blocks" with tens of kilobytes free is a
-	 * fragmentation question, and the next thing to do is find what
-	 * size block is being asked for rather than make the queues
-	 * smaller.
+	 * That note then said the figure was wrong anyway, because main
+	 * had 39516 bytes FREE when iallocb failed, so it was a shortage
+	 * of a CONTIGUOUS run and a queue limit does not change that --
+	 * and that the next thing to do was to find what size block was
+	 * being asked for.  allocb() now says (../port/allocb.c) and so
+	 * does smalloc, and on the keyring-plus-ssl arm what they report
+	 * is not fragmentation: 300 bytes for a Chan in newchan(), with
+	 * the whole free total down in the low thousands.  A shortage of
+	 * everything, not of a run.
+	 *
+	 * SO IT IS SET NOW, and for a different reason than before: not
+	 * to free memory up front, which a cap cannot do, but to stop
+	 * the pipe CONSUMING it.  exportfs answers as fast as it can and
+	 * the relay drains at the speed of the air; the queue is the only
+	 * thing between those two rates, and 32768 an end is more than
+	 * this part owns.  Eight messages is more depth than a link
+	 * carrying 109 bytes a frame can use before the window closes.
+	 *
+	 * TRIED AGAIN AND BACKED OUT AGAIN, this time measured.  With
+	 * conf.pipeqsize = 8 * Styxrpc the keyring-plus-ssl arm behaves
+	 * EXACTLY as without it: the satellite still reaches EXPORTING
+	 * with 2576 bytes free and still returns from export(), and the
+	 * ground still stops at MOUNTING.  Not one number moved.
+	 *
+	 * And it could not be confirmed to have taken effect at all.
+	 * The init prints "relaying a pipe of 65536", which is the
+	 * pipe's IOUNIT and not its queue limit, so the one number on
+	 * the console that looks like this setting is not it.  An
+	 * unverifiable change that moves nothing is worse than no
+	 * change, so it is not here -- which is what the note above
+	 * decided for a worse reason.
+	 *
+	 * The shortage is real but it is not the queue: allocb() and
+	 * smalloc now name what fails, and it was 300 bytes for a Chan
+	 * in newchan() with the free total in the low thousands.
 	 */
 }
 

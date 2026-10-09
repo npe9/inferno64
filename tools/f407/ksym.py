@@ -94,10 +94,43 @@ def symbols(path):
         i = j + 1
     return out
 
+def datareport(syms, top):
+    """The data and bss symbols, biggest first.
+
+    Size is not in the symbol table, so it is the distance to the next
+    symbol: correct for everything but the last of each segment, and
+    that is one row to distrust rather than a reason not to look.
+    Sorting by address first is what makes the subtraction mean
+    anything.
+
+    This exists because "where does the data segment go" is the
+    question on a part that copies its whole data segment into RAM at
+    boot, and nothing in this tree answered it.  Ranking initialised
+    arrays in the SOURCE finds tables; it does not find what the
+    linker actually kept, and it cannot tell one conf from another.
+    """
+    rows = sorted((v, c, n) for v, c, n in syms if c in "DdBb")
+    out = []
+    for i, (v, c, n) in enumerate(rows):
+        nxt = rows[i+1][0] if i+1 < len(rows) else v
+        out.append((max(nxt - v, 0), v, c, n))
+    out.sort(reverse=True)
+    print("%10s  %-10s %s  %s" % ("bytes", "addr", "c", "name"))
+    for sz, v, c, n in out[:top]:
+        print("%10d  %#010x %s  %s" % (sz, v, c, n))
+    print("total over %d symbols: %d bytes" % (len(rows), sum(r[0] for r in out)))
+
+
 def main():
+    if len(sys.argv) < 2:
+        sys.exit("usage: ksym.py <conf> <addr> ...   |   ksym.py <conf> data [n]")
+    conf = sys.argv[1]
+    if len(sys.argv) > 2 and sys.argv[2] == "data":
+        datareport(symbols(relink(conf)),
+                   int(sys.argv[3]) if len(sys.argv) > 3 else 25)
+        return
     if len(sys.argv) < 3:
         sys.exit("usage: ksym.py <conf> <addr> ...")
-    conf = sys.argv[1]
     syms = symbols(relink(conf))
     # T and t are text, L and l are leaf functions; data symbols would
     # make a nearest-preceding lookup answer with a table for a code

@@ -299,15 +299,38 @@ void
 stackcheck(void *frame)
 {
 	static int said;
-	uintptr a;
+	uintptr a, k;
 
 	if(said || frame == nil)
 		return;
 	a = (uintptr)frame;
 	if(a >= (uintptr)stack && a < (uintptr)stack + KSTKSIZE)
 		return;			/* the boot and interrupt stack */
+	/*
+	 * THE RUNNING PROCESS'S OWN STACK FIRST, inline, before the loop
+	 * over all of them.
+	 *
+	 * The first cut called inkstack() straight away, which is the
+	 * expensive arm and is also the one taken almost every tick --
+	 * clockintr runs on a proc's stack whenever a proc is running.
+	 * It cost 76 bytes of frame on the deepest path in the kernel:
+	 * the exporting station's kstack high water went from 3908 of
+	 * 4096 to 3984, so a diagnostic looking for a stack overflow
+	 * took 40% of the remaining margin on the stack it was watching.
+	 * An instrument that consumes what it measures is not an
+	 * instrument.
+	 *
+	 * Two comparisons and no call in the common case; the loop only
+	 * for a frame that is in neither, which is the case worth
+	 * spending on.
+	 */
+	if(up != nil && up->kstack != nil){
+		k = (uintptr)up->kstack;
+		if(a >= k && a < k + KSTACK)
+			return;
+	}
 	if(inkstack(a))
-		return;			/* some process's kernel stack */
+		return;			/* some other process's: a switch */
 	said = 1;
 	iprint("STACK ESCAPED: frame %#p is in no stack;"
 		" boot %#p..%#p headroom %d",

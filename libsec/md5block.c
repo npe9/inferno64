@@ -1,6 +1,9 @@
 #include "os.h"
 #include <libsec.h>
 
+/* Never written; in flash, not SRAM.  See doc/xip.ms. */
+#pragma rodata md5tab
+
 /*
  *  rfc1321 requires that I include this.  The code is new.  The constants
  *  all come from the rfc (hence the copyright).  We trade a table for the

@@ -70,6 +70,15 @@ class PortBoard:
             self.buf = self.buf[-32768:]
         return self.buf
 
+    def clear(self, tries=1):
+        """Forget everything read so far.
+
+        The screen-backed Board has to ask the terminal to discard its
+        scrollback and prove it did; here the buffer IS the record, so
+        emptying it is the whole operation and cannot half-fail.
+        """
+        self.buf = ""
+
     def _send(self, line):
         for ch in line + "\n":
             os.write(self.fd, ch.encode())
@@ -121,6 +130,37 @@ class PortBoard:
 
     # the rest of the interface is identical, so borrow it
     ctl = None
+
+
+def attach(port, name=None, scratch=None):
+    """A board, driven through screen if screen has it and directly if not.
+
+    The rule on this bench is "never open the board's serial device
+    while screen owns it": a second opener wedges the adapter until it
+    is replugged.  The rule is CONDITIONAL, and the condition is
+    checkable -- lsof says who has the device -- so a harness does not
+    have to choose once and be wrong half the time.
+
+    It matters because a power cycle takes the screen session with it.
+    The device node is recreated and screen is gone, and a harness that
+    requires screen then needs a human to start one before any
+    measurement can run.  That happened twice in one session, on two
+    boards, each time after the physical reset that was needed to
+    recover them.
+
+    PortBoard reads the port itself and keeps its own buffer, which is
+    strictly better evidence than a terminal's scrollback: there is no
+    frozen hardcopy file to read by mistake (see session_for) and
+    clear() cannot half-fail.
+    """
+    sess = None
+    try:
+        sess = session_for(port)
+    except Dead:
+        pass
+    if sess is not None:
+        return Board(sess, name=name, scratch=scratch)
+    return PortBoard(port, name=name, scratch=scratch)
 
 
 def session_for(port):

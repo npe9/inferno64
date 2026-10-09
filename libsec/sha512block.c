@@ -1,6 +1,9 @@
 #include "os.h"
 #include <libsec.h>
 
+/* Never written; in flash, not SRAM.  See doc/xip.ms. */
+#pragma rodata sha512const
+
 
 enum {
 	SHA512rounds =  80,

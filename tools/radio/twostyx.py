@@ -23,8 +23,8 @@ SECS = float(sys.argv[3]) if len(sys.argv) > 3 else 420.0
 # path made every screen command a silent no-op and text() kept
 # returning a hardcopy file frozen at whatever time it last worked --
 # see twoboard.session_for().
-ends = [("sat", twoboard.Board(twoboard.session_for(SAT), name="sat")),
-        ("gnd", twoboard.Board(twoboard.session_for(GND), name="gnd"))]
+ends = [("sat", twoboard.attach(SAT, name="sat")),
+        ("gnd", twoboard.attach(GND, name="gnd"))]
 
 # CLEAR THE WINDOW, THEN RESET BOTH, SATELLITE FIRST, so that
 # everything in the scrollback belongs to this run.

@@ -9841,3 +9841,134 @@ this document is the record of what has already been ruled out, and the
 section on the thing being measured said not to measure it.  Reading
 forward from the open item list is not the same as reading the section
 it points into.
+.NH 1
+The keyring-plus-ssl lockup is fixed, and what it was
+.PP
+It was memory after all, and the earlier sections' reasons for saying
+it was not were each true of the build in front of them.
+.PP
+.B "What fixed it:"
+12288 more bytes of core, from marking the rest of libsec's read-only
+tables.
+.CW "#pragma rodata"
+on
+.CW aes.c 's
+eleven tables and
+.CW blowfish.c 's
+.CW pbox
+gave two pages; on
+.CW des.c 's
+.CW comptab ,
+.CW keysh
+and
+.CW parity ,
+.CW md5tab ,
+.CW sha256const
+and
+.CW sha512const
+it gave a third.
+.CW datsize
+31720 to 20680,
+.CW conf.base0
+0x2000c000 to 0x20009000, and the core reaching xalloc 147456 to
+.BR 159744 .
+.PP
+.B "With that the answerer survives."
+It pushes
+.BR sha/rc4_256 ,
+reaches
+.B ARMV7M-STYX-EXPORTING
+with 2576 bytes of core, and runs \- where every build before it locked
+up with SP off the end of SRAM and nothing printed.
+.B "The crash is gone."
+.PP
+.B "And the failure that remains is a reported one:"
+.DS
+.CW "ARMV7M-STYX-EXPORTING"
+.CW "exportproc 7: waiting for memory (406) for request    x11"
+.CW "ARMV7M-STYX-EXPORTDONE"
+.CW "styx: down: i/o on hungup channel"
+.DE
+.PP
+exportfs cannot get one
+.B Styxrpc
+buffer, 406 bytes, so it waits, gives up, and the link hangs up.  The
+ground reaches
+.B ARMV7M-STYX-MOUNTING
+and no further.  So keyring-plus-ssl is still short \- but it now says
+so and stops, instead of locking up.
+.NH 2
+Why the earlier answers were all wrong and all honest
+.PP
+Three sections above ruled out memory.  Each was right about its own
+build and none of them was right about the arm:
+.IP \(bu
+.B "\(lqnot Blocks\(rq"
+was measured on a build with 8192 bytes more core than the one that
+showed the
+.CW "no free Blocks"
+flood.  Give it the core and the flood goes; take it away and it
+returns.  Same arm, two symptoms.
+.IP \(bu
+.B "\(lqnot a process stack\(rq"
+was measured with KSTACK at 4096 and at 4608, and both readings were
+of the arm that
+.I passes .
+.IP \(bu
+.B "\(lqa fast runaway no sampled instrument can see\(rq"
+was true of what it watched, and the thing to watch was the allocator.
+.PP
+.B "The lesson is the one archconfinit's note already wrote down"
+and which I then repeated: it said "two things had changed in that
+build, this and the pool reporting in the init, so neither was
+measured."  I changed the rodata and KSTACK together and read the
+result as being about KSTACK.  The untested combination \- all the
+rodata, KSTACK left alone \- is the one that works.
+.PP
+.B "And the instruments that closed it"
+are the two that say what could not be had:
+.IR allocb ()
+now prints the size it failed on, and
+.I smalloc 's
+own wait named
+.CW newchan+0xf5
+asking for 300 bytes, resolved by
+.IR ksym (1).
+Before those, every out-of-memory death on this board was a bare
+address or a silent lockup.
+.NH 2
+A latent overflow on the SHIPPING arm, found by accident
+.PP
+Running the base conf with the stack guard disabled, to get a control,
+turned up something worse than the thing being controlled for:
+.DS
+.CW "kstack high water 3876   3876   4096 of 4096"
+.DE
+.PP
+.B "4096 of 4096 is the whole stack,"
+and
+.I kstackused ()
+counts from the far end of the 0xbe pattern, so that run wrote the
+first byte of the array.
+.B "It still exported and mounted."
+What lies below a process's kernel stack is other allocated memory, so
+the damage is silent and the run gets away with it.
+.PP
+Across about eleven runs the high water sits between 3788 and 3876 with
+one reading of 4096 \- so the station normally has 200 to 300 bytes of
+margin and has been seen with none.  That is the shipping arm, ssl off,
+nothing to do with keyring.
+.PP
+.B "What is NOT claimed:"
+that it writes past the array.  4096 is the largest number this metric
+can report, so it means "reached the bottom" and not "went further".
+.PP
+.B "The shape of the fix is already in this tree's own precedent."
+.B mem.h
+says of the process count: "The number of processes is NOT here any
+more.  It is nprocwanted in this board's config file, because one board
+has two images that want different numbers and a constant in a header
+cannot say that."  KSTACK is now exactly that: the station wants more
+than 4096 and the keyring image cannot afford more, because raising it
+costs 5632 bytes of core and that is what ssl needs.  Per-conf, as
+data, like the process count.  Not rushed here.
