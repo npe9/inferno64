@@ -287,6 +287,26 @@ context(dst: ref Image): ref Context
 		protocaps = probe(dst.display);
 		haveproto = (protocaps & D3CapMatrix) != 0;
 		probed = 1;
+		#
+		# A WAY TO REACH THE SOFTWARE PATH ON HARDWARE THAT HAS THE
+		# LETTERS.
+		#
+		# The fallback below only runs where /dev/draw lacks the
+		# draw3d extension.  os/inferno/port/devdraw.c implements
+		# NONE of the letters and emu/port/devdraw.c implements
+		# twenty, so on this desk that means the Pi and nothing
+		# else -- and the Pi has no Limbo debugger.  So the one
+		# path with no host coverage is also the one that cannot be
+		# debugged where it fails, which is how a crash in it
+		# survived: castlefrankenstein dies with an array bounds
+		# error on the board and runs for as long as you like on
+		# the host, because the host never takes this branch.
+		#
+		# /env/d3dsoft forces it, so the software renderer can be
+		# exercised and debugged under emu.
+		#
+		if(sys->open("/env/d3dsoft", Sys->OREAD) != nil)
+			haveproto = 0;
 		if(!haveproto)
 			sys->fprint(sys->fildes(2), "draw3ddev: no draw3d letters; software fallback\n");
 	}

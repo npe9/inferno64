@@ -19,6 +19,21 @@ def require(ok: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def code_only(source: str) -> str:
+    """Source with Limbo comment lines removed.
+
+    Structural checks below match on text, and this file's own prose quotes
+    the very calls they look for -- line 461 says "the shifted-w perspective
+    is draw3d->frustumoffset()" and line 460 says "by (z + FOCAL_OFFSET)".
+    Two assertions were therefore satisfied by COMMENTS and passed while the
+    code was mutated out from under them: replacing frustumoffset with
+    frustum, and replacing FOCAL_OFFSET with 0.0, were both accepted.  Found
+    by mutating the source and watching the test not care.
+    """
+    return "\n".join(l for l in source.splitlines()
+                      if not l.lstrip().startswith("#"))
+
+
 def constant(source: str, name: str) -> str:
     match = re.search(rf"^{name}:\s*con\s+([^;]+);", source, re.MULTILINE)
     require(match is not None, f"missing {name} constant")
@@ -52,8 +67,41 @@ def main() -> int:
     require(constant(source, "SCRN_SCALE") == "512", "HolyC projection scale changed")
     require(constant(source, "FOCAL_OFFSET") == "1.0/3.0", "focal offset changed")
     require(constant(source, "EYE_H") == "125.0/512.0", "MAN_HEIGHT conversion changed")
-    require("return Vector(sx / d3c.mx, sy / d3c.my, -rz);" in source,
-            "focal denominator must not replace camera-forward depth")
+    # The projection moved from a per-vertex Limbo closure into real
+    # matrices in 6d573b870 ("the shifted-w perspective is
+    # draw3d->frustumoffset()"), so that devdraw -- and eventually the GPU --
+    # does the transform instead of interpreted bytecode.  That commit deleted
+    # the line this test used to require,
+    #
+    #   return Vector(sx / d3c.mx, sy / d3c.my, -rz);
+    #
+    # and did not update the test, so this file has failed since.  Bisected:
+    # the assertion and the matching source were both present in 6d573b870~1.
+    #
+    # Asserting the new form rather than deleting the check, because the
+    # invariants it was protecting still exist and are still worth pinning --
+    # they are now arguments to one call instead of a formula.
+    code = code_only(source)
+    require("draw3d->frustumoffset(" in code,
+            "the projection must be set up as a matrix, not a per-vertex closure")
+    require("draw3d->settransform(" not in code,
+            "the per-vertex settransform closure must stay gone; it is the "
+            "thing the matrix path replaced")
+    # The shifted-w perspective: dividing by (z + FOCAL_OFFSET) and not by a
+    # bare z is the whole reason frustumoffset exists rather than frustum.
+    require("FOCAL_OFFSET)" in code,
+            "the perspective divide must still be shifted by FOCAL_OFFSET")
+    # Y inversion.  Draw screen Y grows downward and world Y grows upward, and
+    # the original code carried a comment saying the previous sign "put the
+    # floor above the camera" -- so the minus on the sy argument is a bug that
+    # has already happened once.
+    require("-(real SCRN_SCALE/2.0) / d3c.my" in code,
+            "perspective Y must stay inverted, or the floor renders above the camera")
+    # Scale divided by the live viewport half-extent rather than baked in, so
+    # that a resize does not change the field of view.
+    require("(real SCRN_SCALE/2.0) / d3c.mx" in code,
+            "the X scale must divide by the viewport half-extent, as the "
+            "per-vertex code did, so resize is exact")
     require("spawn mon_timer(mtick, 20)" in source, "monster animation is not 20 ms")
     require("for(; step >= 1.0/512.0; step /= 2.0)" in source,
             "movement no longer uses HolyC half-step fallback")
