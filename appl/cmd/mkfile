@@ -48,6 +48,7 @@ TARG=\
 	chmod.dis\
 	cleanname.dis\
 	cmp.dis\
+	cvttest.dis\
 	comm.dis\
 	cook.dis\
 	cprof.dis\

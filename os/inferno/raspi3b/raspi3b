@@ -182,6 +182,8 @@ root
 	/dis/fatstress.dis
 	/dis/ellipsetest.dis
 	/dis/tkscenetest.dis
+	/dis/cvttest.dis
+	/dis/lib/tknode.dis
 	/dis/sh.dis
 	/dis/sh/std.dis
 	/dis/usb/usbd.dis

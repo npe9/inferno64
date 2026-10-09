@@ -244,12 +244,93 @@ of 15 widget types already emit it \(em so "generalised" is nearly
 satisfied already. What is missing is a consumer, and the candidates
 that are framebuffer-compatible and on-goal are:
 .IP \(bu
-.B "Expose the tree."
-Let a Limbo program obtain a widget's node tree, so consumers \(em
+.B "Expose the tree. DONE."
+A Limbo program can obtain a widget's node tree, so consumers \(em
 recording, remote rendering, a 3D backend \(em can be written outside
 libtk. This reads the goal as being about the API rather than about any
-one consumer, and is the only candidate that makes the existing work
-infrastructure rather than an internal detail.
+one consumer, and it was the only candidate that makes the existing
+work infrastructure rather than an internal detail.
+.PP
+.CW "render record 1"
+makes the walk serialise each tree it renders,
+.CW "render tree"
+hands back the last one, and
+.CW tknode (2)
+decodes it into an array of
+.CW Node .
+Off by default: it costs a serialisation on the path every repaint
+takes and nothing in a running system reads it.
+.PP
+Text, one node per line, because the first consumers are recording and
+inspection and both want to be readable, and because a string is what a
+Limbo program can get out of a Tk command. A backend that wants the
+nodes without the parse is a different interface and this does not
+pretend to be it.
+.PP
+.B "Taken at FLUSH time, not kept as nodes."
+The nodes the renderer walks are stack copies whose
+.CW pts
+points into a stack array \(em see
+.CW scalenode() \(em
+so a kept
+.CW TkNode*
+would outlive the scene that owns its strings and its points. A kept
+string owns itself.
+.PP
+.B "Verified positionally, not by round trip."
+Decoding a dump and encoding it again passes for a decoder that stored
+the line verbatim, which is the same shape as the identity transform
+that passed while
+.CW TkNtransform
+did nothing. So the checks assert field values at known places in a
+known fixture \(em a raised frame, borderwidth 2:
+.IP
+.EX
+4 nodes: roundfill colour roundfill border
+the border's box  (58,0)\-(102,24), radius 5, width 2
+its number        Tborder, 3
+its rgba          2425392895
+.EE
+.LP
+and three more fixtures for what that one cannot reach: a label for the
+two quoted strings, with a space in its text; a selected checkbutton
+for the only node in the flat style carrying points; and
+.CW "render record 0"
+for whether the answer after it is empty rather than stale.
+.PP
+.B "The name table has two guards and both were controlled."
+Plan 9 C has no designated initialisers, so the names in
+.CW scene.c
+are positional against the enum and can drift. A nameless type dumps
+.CW unknown\-N ;
+a wrong\-length table emits one
+.CW tablemismatch
+line. Lengthening the table by one entry fires the second and, because
+the diagnostic is the dump's first line, poisons the whole decode \(em
+the right failure, since a drifted table should make a dump unusable
+rather than subtly wrong. Dropping the
+.CW radius
+field makes the decoder answer
+.CW "14 fields, want at least 15"
+instead of reading the points out of the width.
+.PP
+.B "What is NOT shown, and it is the next thing here."
+There is no encoder, so nothing proves a decoded tree is
+.I sufficient
+to reproduce the picture \(em only that every field survives the trip.
+Reproducing it means a consumer that rasterises the primitive subset,
+and that is reachable: every renderer case is
+.CW draw() ,
+.CW ellipse() ,
+.CW fillpoly()
+or
+.CW bezspline() ,
+and the three composite kinds
+.CW ( TkNroundfill ,
+.CW TkNcorners ,
+.CW TkNborder )
+are solid rectangles and a per\-row corner cut. None of it needs
+anything a Limbo program cannot reach.
 .IP \(bu
 .B "Resolution independence. DONE."
 Render a tree at a scale, which pixels cannot do \(em the one capability
@@ -413,13 +494,15 @@ GPU backend would want a texture
 here rather than a path, and that is the one place the node vocabulary
 needs extending for the 3D story rather than for Tk.
 .PP
-Item 1's breadth half is now done and its finding recorded above. What
-remains in item 1 is a decision, not a step: exposing the tree so
-consumers live outside
-.I libtk ,
-and resolution independence. The next
+Item 1 is now done on all three halves \(em breadth, resolution
+independence, and exposing the tree \(em and each one's finding is
+recorded above. The next
 .I work
-in this plan is item 2.
+in this plan is item 2, and the next work in
+.I this
+one is a Limbo consumer that rasterises what it decodes, which is the
+only thing that can show the exposed tree is sufficient rather than
+merely complete.
 .PP
 .B "Superseded: the GPU route as this plan first named it."
 which this plan already named as the alternative and told itself not to

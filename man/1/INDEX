@@ -54,6 +54,7 @@ circletrace circletrace
 cleanname cleanname
 clock wm-misc
 cmp cmp
+cvttest cvttest
 coffee wm-misc
 collab collab-clients
 collab-clients collab-clients
