@@ -225,9 +225,24 @@ if [ -n "$WANT" ] && [ -n "$stamp" ]; then
 	gotd=`dec "$stamp"`
 	if [ "$gotd" != "$WANT" ]; then
 		echo "vmheld: $KERNEL does NOT describe the running kernel" >&2
-		echo "vmheld:   board stamp $gotd, $IMG says $WANT" >&2
+		echo "vmheld:   $IMG says $WANT; the board read $gotd at that" >&2
+		echo "vmheld:   image's kerndate address, which is NOT a stamp" >&2
+		echo "vmheld:   -- see below." >&2
 		echo "vmheld: the addresses below would be read from the wrong" >&2
 		echo "vmheld: places.  Rebuild from the commit the card holds." >&2
+		echo "vmheld:" >&2
+		echo "vmheld: WHY THE NUMBER IS MEANINGLESS, not merely wrong." >&2
+		echo "vmheld: KDADDR comes from \`sym kerndate' on the TREE's image," >&2
+		echo "vmheld: and mdw then reads that address in whatever kernel is" >&2
+		echo "vmheld: actually running.  kerndate moves between builds -- in" >&2
+		echo "vmheld: one afternoon it sat at 0x1e7318, 0x1e7308 and" >&2
+		echo "vmheld: 0x1ec308 in three kernels of the same board, 0x5000" >&2
+		echo "vmheld: apart at the extremes -- so when the images differ the" >&2
+		echo "vmheld: read lands on an unrelated variable.  Two such reads" >&2
+		echo "vmheld: were 2738592 and 4099408436, and 2738592 is 2.74" >&2
+		echo "vmheld: seconds as microseconds, i.e. plausibly a boot-time" >&2
+		echo "vmheld: counter.  Do not try to decode it: it is a different" >&2
+		echo "vmheld: variable, not a corrupted stamp." >&2
 		exit 2
 	fi
 	echo "vmheld: kernel matches the board (stamp $gotd)"
