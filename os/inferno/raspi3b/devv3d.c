@@ -231,6 +231,20 @@ static struct {
 	u32	memhandle;	/* firmware memory handle, 0 = none */
 	u32	membus;		/* ...its bus address once locked */
 	int	memsize;
+	/*
+	 * WHERE membus CAME FROM, because `gpualloc' and `gpufake' set
+	 * the same three fields and the status line read identically for
+	 * both.  H2 asks whether EXECUTE_QPU answers from FIRMWARE
+	 * memory when it never answers from our own alias, and that
+	 * question is only answerable if a second silence can be
+	 * attributed to the exec rather than to an allocation that
+	 * quietly did not happen.  The allocating path has never
+	 * succeeded anywhere -- QEMU refuses it for want of alias bits
+	 * in the returned address -- which is exactly the shape of code
+	 * that is wrong in a way no run has shown.
+	 */
+	int	memsrc;		/* Memnone, Memfirmware, Memfake */
+	int	memlocked;	/* LOCK_MEMORY was answered and gave an address */
 	u32	ctlbus;		/* the control-list address actually sent */
 	u32	blk[6];		/* first words of the block exec wrote */
 	u32	ident[3];	/* V3D_IDENT0..2, if ever read */
@@ -501,6 +515,12 @@ v3dtag(u32 tag, int valbytes, u32 w0, u32 w1, u32 w2, u32 w3, uvlong waitus)
  * across experiments on a 1GB board would eventually look like a
  * firmware fault.
  */
+enum {
+	Memnone = 0,
+	Memfirmware,
+	Memfake,
+};
+
 static int
 v3dgpufree(void)
 {
@@ -517,6 +537,8 @@ v3dgpufree(void)
 	mboxprop(buf);
 	v3d.memhandle = 0;
 	v3d.membus = 0;
+	v3d.memsrc = Memnone;
+	v3d.memlocked = 0;
 	return 0;
 }
 
@@ -544,6 +566,8 @@ v3dgpualloc(int size)
 	}
 	v3d.membus = buf[5];
 	v3d.memsize = size;
+	v3d.memsrc = Memfirmware;
+	v3d.memlocked = v3d.membus != 0;
 	if(v3d.membus == 0){
 		v3dgpufree();
 		error("LOCK_MEMORY returned bus address 0");
@@ -598,6 +622,8 @@ v3dgpufake(void)
 	v3d.memhandle = 0;
 	v3d.membus = (u32)((uintptr)v3dfake | Busalias);
 	v3d.memsize = sizeof v3dfake;
+	v3d.memsrc = Memfake;
+	v3d.memlocked = 0;	/* no firmware was asked anything */
 	return 0;
 }
 
@@ -679,7 +705,7 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			"args %#ux %#ux %#ux %#ux ctlidx %d\n"
 			"exec %s code %#ux tag %#ux %s wrote %ud bytes %llud us\n"
 			"wait %s\n"
-			"gpumem handle %#ux bus %#ux size %d ctlbus %#ux\n"
+			"gpumem %s handle %#ux bus %#ux size %d lock %s ctlbus %#ux\n"
 			"block %#ux %#ux %#ux %#ux %#ux %#ux\n"
 			"ident %s %#ux %#ux %#ux\n"
 			"value %#ux %#ux %#ux %#ux\n",
@@ -698,7 +724,13 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			v3d.lastwait == 0? "answered" :
 			  v3d.lastwait == -1? "OUT OF TIME (no reply)" :
 			  "COUNTER NOT ADVANCING",
-			v3d.memhandle, v3d.membus, v3d.memsize, v3d.ctlbus,
+			v3d.memsrc == Memfirmware? "firmware" :
+			  v3d.memsrc == Memfake? "FAKE (this driver's own block)" :
+			  "none",
+			v3d.memhandle, v3d.membus, v3d.memsize,
+			v3d.memsrc != Memfirmware? "n/a" :
+			  v3d.memlocked? "answered" : "NOT LOCKED",
+			v3d.ctlbus,
 			v3d.blk[0], v3d.blk[1], v3d.blk[2],
 			v3d.blk[3], v3d.blk[4], v3d.blk[5],
 			v3d.identread?
