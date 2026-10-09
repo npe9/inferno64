@@ -44,7 +44,16 @@
 #   H1       tag 0x80000000 PROCESSED wrote 0 bytes   15 us  answered
 #   H3 set   tag 0x80000000 PROCESSED wrote 0 bytes   11 us  answered
 #   H3 read  tag 0x80000000 PROCESSED wrote 0 bytes   14 us  answered
+#   arith    block base+8 and base+24, uniforms zero, no fault
 #   H2       gpualloc REFUSED: no alias bits in the returned address
+#
+# The arithmetic line runs the GPU path against a known-good address
+# instead of a firmware one, so it separates "this driver's offsets are
+# wrong" from "the QPU cannot fetch from there". Without it a silent
+# board would have two possible causes and no way to tell them apart.
+# It is also what found the ARM pointer setting the alias bits instead
+# of clearing them, which would have faulted the board on H2's first
+# success.
 #
 # Two things that baseline already tells us. The control is the only
 # line that writes any bytes, so "wrote N bytes" is the discriminator
@@ -77,6 +86,10 @@ echo tag 0x00038030 8 10 1 >/dev/v3dctl
 cat /dev/v3dctl
 echo tag 0x00030030 8 10 0 >/dev/v3dctl
 cat /dev/v3dctl
+echo '--- arithmetic check: the GPU path with a known-good address'
+echo reset >/dev/v3dctl
+echo gpufake >/dev/v3dctl
+qputry 0x11111111 0x22222222 0x33333333 0x44444444
 echo '--- H2: execute from firmware-allocated memory'
 echo gpualloc 4096 >/dev/v3dctl
 cat /dev/v3dctl
