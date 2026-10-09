@@ -292,6 +292,27 @@ its number        Tborder, 3
 its rgba          2425392895
 .EE
 .LP
+That last line was not decoration. On the Pi 3B kernel it read
+.CW 2147483647
+\(em a saturation, not a wrap \(em because
+.CW "int s"
+in Limbo went through
+.CW strtol() ,
+whose kencc
+.CW long
+is 32 bits, so every value above 2\u31\d\-1 was pinned to
+.CW LONG_MAX
+as
+.CW libkern/strtol.c
+defines it. Fixed with
+.CW strtoll() ,
+and
+.CW cvttest (1)
+now gives the conversion family a test of its own \(em 17 ok 0 fail on
+both. A defect in the one instruction a Limbo program uses to read a
+number was found by a graphics test, on a different machine, because
+nothing in the conversion family had a test at all.
+.LP
 and three more fixtures for what that one cannot reach: a label for the
 two quoted strings, with a space in its text; a selected checkbutton
 for the only node in the flat style carrying points; and

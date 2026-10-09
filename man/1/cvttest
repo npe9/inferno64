@@ -164,6 +164,22 @@ and already used
 so it is the control that says the two conversions
 .B agree
 rather than that both are wrong the same way.
+.SH "WHAT IT READS NOW"
+On the Pi 3B kernel, which is the run that means anything:
+.IP
+.EX
+CVTTEST 17 ok, 0 fail
+int of an rgba above 2^31: 2425392895
+int of 2^32\-1: 4294967295
+int of below \-2^32: \-4294967395
+int of 2^63\-1: 9223372036854775807
+int of \-2^63: \-9223372036854775808
+.EE
+.PP
+The values are printed because the verdict was not enough once
+already: the version before this one answered
+.B "15 ok, 0 fail"
+on the same kernel with three of its fifteen numbers wrong.
 .SH SOURCE
 .B /appl/cmd/cvttest.b
 .SH SEE ALSO
