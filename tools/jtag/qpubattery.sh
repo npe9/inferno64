@@ -32,6 +32,21 @@
 #            effective: a domain that reads back off after being set
 #            on is an answer by itself.
 #
+# H5         The V3D's own IDENT0 register, read directly. Answers a
+#            question the mailbox cannot: is the hardware THERE,
+#            whatever the firmware will say about it. 0x02443356 is
+#            "V3D"; zero means the block is probably powered off,
+#            which would explain everything above it.
+#
+#            IT IS LAST AND IT CAN HANG THE BOARD. A peripheral whose
+#            power domain is off does not politely return zero on this
+#            chip -- the access can stall the bus. So every other
+#            reading is collected first, and it runs after H3 has
+#            asked the domain to come on. If the run ends here with no
+#            further output, that is the answer: the block is not
+#            reachable, and it needs a hardreset rather than a
+#            diagnosis.
+#
 # H2         Firmware-allocated memory, the leading hypothesis. If
 #            EXECUTE_QPU answers from a locked allocation and not from
 #            the kernel's own alias, the alias was the whole fault.
@@ -96,5 +111,8 @@ cat /dev/v3dctl
 echo exec 1 1 0 1 1000 5000 >/dev/v3dctl
 cat /dev/v3dctl
 echo gpufree >/dev/v3dctl
+echo '--- H5: is the V3D block there at all? THIS CAN HANG THE BOARD'
+echo ident >/dev/v3dctl
+cat /dev/v3dctl
 echo QPUBATTERY-END
 CMDS

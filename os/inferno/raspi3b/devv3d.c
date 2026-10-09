@@ -145,6 +145,25 @@ enum {
 	Codemax	= 4096,		/* QPU instructions are 8 bytes; this is 512 */
 	Busalias = 0xc0000000,	/* uncached alias the VideoCore reads through */
 
+	/*
+	 * The V3D register block itself, at the peripheral base plus
+	 * 0xc00000. Reading IDENT0 answers a question the mailbox cannot:
+	 * is the hardware THERE, independent of whether the firmware will
+	 * talk about it. On a Pi it should read 0x02443356 -- "V3D" with a
+	 * version nibble.
+	 *
+	 * READING THIS CAN HANG THE SOC. A peripheral whose power domain
+	 * is off does not politely return zero on this chip; the access
+	 * can stall the bus. So it is a separate command, never part of a
+	 * status read, and the battery puts it LAST and after the domain
+	 * has been asked to come on -- so everything else is collected
+	 * before anything risks the board.
+	 */
+	V3dbase	= 0x3fc00000,
+	V3dident0 = 0,		/* word offsets */
+	V3dident1 = 1,
+	V3dident2 = 2,
+
 	Tagalloc = 0x0003000c,	/* ALLOCATE_MEMORY: size, align, flags */
 	Taglock	= 0x0003000d,	/* LOCK_MEMORY: handle -> bus address */
 	Tagunlock = 0x0003000e,	/* UNLOCK_MEMORY: handle */
@@ -214,6 +233,8 @@ static struct {
 	int	memsize;
 	u32	ctlbus;		/* the control-list address actually sent */
 	u32	blk[6];		/* first words of the block exec wrote */
+	u32	ident[3];	/* V3D_IDENT0..2, if ever read */
+	int	identread;
 } v3d;
 
 static Lock v3dlk;
@@ -580,6 +601,22 @@ v3dgpufake(void)
 	return 0;
 }
 
+/*
+ * Read the V3D's own identity. See the hazard note at V3dbase: this is
+ * deliberately not reachable by accident.
+ */
+static int
+v3dident(void)
+{
+	u32 *r = (u32*)(uintptr)V3dbase;
+
+	v3d.ident[0] = r[V3dident0];
+	v3d.ident[1] = r[V3dident1];
+	v3d.ident[2] = r[V3dident2];
+	v3d.identread = 1;
+	return 0;
+}
+
 static Chan*
 v3dattach(char *spec)
 {
@@ -644,6 +681,7 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			"wait %s\n"
 			"gpumem handle %#ux bus %#ux size %d ctlbus %#ux\n"
 			"block %#ux %#ux %#ux %#ux %#ux %#ux\n"
+			"ident %s %#ux %#ux %#ux\n"
 			"value %#ux %#ux %#ux %#ux\n",
 			v3d.clockok? "hz" : "unknown", v3d.clock,
 			v3d.enabled,
@@ -663,6 +701,11 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			v3d.memhandle, v3d.membus, v3d.memsize, v3d.ctlbus,
 			v3d.blk[0], v3d.blk[1], v3d.blk[2],
 			v3d.blk[3], v3d.blk[4], v3d.blk[5],
+			v3d.identread?
+			  (v3d.ident[0] == 0x02443356? "V3D" :
+			   v3d.ident[0] == 0? "ZERO (block off?)" : "unknown")
+			  : "unread",
+			v3d.ident[0], v3d.ident[1], v3d.ident[2],
 			v3d.lastval[0], v3d.lastval[1],
 			v3d.lastval[2], v3d.lastval[3]);
 		return readstr((ulong)offset, a, n, buf);
@@ -714,6 +757,8 @@ v3dwrite(Chan *c, void *a, int n, vlong offset)
 		}else if(strcmp(cb->f[0], "gpualloc") == 0){
 			v3dgpualloc(cb->nf > 1?
 				strtol(cb->f[1], nil, 0) : 4096);
+		}else if(strcmp(cb->f[0], "ident") == 0){
+			v3dident();
 		}else if(strcmp(cb->f[0], "gpufake") == 0){
 			v3dgpufake();
 		}else if(strcmp(cb->f[0], "gpufree") == 0){

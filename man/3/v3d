@@ -67,6 +67,30 @@ releases the first.
 .TP
 .B gpufree
 Unlock and release it.
+.TP
+.B gpufake
+Point the block at a static buffer of the driver's own instead of a
+firmware allocation, so the GPU path's arithmetic runs with a
+known-good address. It tests this driver's offsets, not whether a QPU
+can fetch from firmware memory \- and it is what found the ARM pointer
+being derived by setting the bus alias bits rather than clearing them,
+which would have faulted the board the first time a real allocation
+succeeded.
+.TP
+.B ident
+Read
+.B V3D_IDENT0..2
+from the register block directly, which answers a question the mailbox
+cannot: whether the hardware is there at all.
+.B 0x02443356
+is
+.RB ` V3D ';
+zero suggests the block is powered off, which would explain a firmware
+that does not answer.
+.B "This can hang the board."
+A peripheral whose power domain is off does not politely return zero on
+this chip; the access can stall the bus. It is a separate command for
+that reason, never part of a status read.
 .PP
 Reading
 .B /dev/v3dctl
