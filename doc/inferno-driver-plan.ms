@@ -130,7 +130,7 @@ the pattern for how to structure it.
 That pattern is
 .CW draw3d .
 The 3-D drawing interface
-.CW ( module/math/draw3d.m )
+.CW module/math/draw3d.m ) (
 has two providers behind one Limbo module:
 .CW draw3d.dis ,
 pure software over
@@ -156,7 +156,7 @@ handled in
 the hosted emu those letters reach
 .CW emu/MacOSX/win-cocoa.m ,
 where a Metal pipeline
-.CW ( mtl_geom3d_pipe ,
+.CW mtl_geom3d_pipe , (
 "the GPU does model*proj+viewport") runs the transform and shading on
 the real GPU and composites over the software screen presented through
 a
@@ -199,7 +199,7 @@ targets.
 Tier two: acceleration (later, and exactly like Metal)
 .PP
 virtio-gpu's 3-D mode
-.CW ( virgl ,
+.CW virgl , (
 or the newer Vulkan-over-virtio
 .CW venus )
 is where the draw3d pattern pays off a second time.  The native
@@ -260,7 +260,7 @@ riscv: supervisor mode, SBI, device tree
 The riscv boards run bare in machine mode.  A real board boots OpenSBI
 and hands the kernel supervisor mode, so the port needs an S-mode
 entry
-.CW ( stvec ,
+.CW stvec , (
 .CW sstatus ) ,
 SBI calls for the timer, console and inter-processor interrupts in
 place of the direct CLINT access, and the PLIC's supervisor contexts.
@@ -724,7 +724,7 @@ QEMU on this machine has one:
 .CW "-device virtio-gpu-gl-pci"
 is \(lqDevice not found\(rq on the packaged 10.1.3, and this tree's own
 patched build
-.CW ( tools/qemu-patches )
+.CW tools/qemu-patches ) (
 is aarch64 only and configured without it.  The 2-D path is done and in
 the suite; the 3-D backing for draw3d has nothing here to run against.
 .IP \(bu
@@ -739,10 +739,10 @@ and
 and with
 .CW "-device qemu-xhci -netdev user,id=n1 -device usb-net,netdev=n1"
 the board finds the controller
-.CW ( "usbxhci: 0x1b36 0xd: port 40000000 size 16384 irq 33" ),
+.CW "usbxhci: 0x1b36 0xd: port 40000000 size 16384 irq 33" ), (
 .CW usbd
 enumerates the CDC ECM device
-.CW ( "vid 0525 did a4a2 class 2" ),
+.CW "vid 0525 did a4a2 class 2" ), (
 .CW etherusb
 serves
 .CW /net.alt/ether
@@ -918,7 +918,7 @@ say the opposite, so the correction belongs here rather than a
 footnote.  It read: the SD-over-SPI handshake was written and exercised
 but no slave ever answered, QEMU wires the card's chip-select to a GPIO
 line
-.CW ( ssi-gpio-cs )
+.CW ssi-gpio-cs ) (
 the SiFive SPI's
 .CW csmode
 never touches, sweeping all sixteen GPIO pins never selected it, and so
@@ -955,7 +955,7 @@ The generic virt platform has neither bus.
 .PP
 The sifive_u board's Cadence GEM ethernet is verified end to end: its
 driver
-.CW ( os/inferno/riscv/ethersifivegem.c )
+.CW os/inferno/riscv/ethersifivegem.c ) (
 was already complete, and the board's init now runs a DHCP exchange
 over it.  A full DISCOVER/OFFER/REQUEST/ACK needs the NIC to transmit,
 receive and take interrupts, so DHCP-OK proves the driver works, not
@@ -1074,7 +1074,7 @@ the board now answers the original I2C/SPI/GPIO question concretely and
 not by assertion.
 .PP
 The I2C driver
-.CW ( i2cbcm.c )
+.CW i2cbcm.c ) (
 drives BSC0 at 0x3f205000 - the only BSC QEMU maps in the ARM address
 space (i2c-bus.0).  The transfers that stalled in round 4 were pinned by
 reading QEMU's
@@ -1086,13 +1086,13 @@ the bytes after - filling the FIFO before ST silently drops the data and
 the transfer never completes, which was the whole of the earlier hang.
 The at24 EEPROM model itself hangs on a data byte, so verification uses a
 ds1338 RTC instead
-.CW ( "-device ds1338,bus=i2c-bus.0,address=0x68" ):
+.CW "-device ds1338,bus=i2c-bus.0,address=0x68" ): (
 write a byte to its NVRAM, read it back, exact match.  With no slave the
 address write NAKs and the driver reports an empty bus; the kernel boots
 either way.
 .PP
 The SPI driver
-.CW ( spibcm.c )
+.CW spibcm.c ) (
 drives SPI0 at 0x3f204000.  QEMU's bcm2835-spi does one full-duplex byte
 per FIFO write while CS_TA is set, storing the MISO byte for the next
 FIFO read, and it asserts the slave chip-select implicitly, so an
@@ -1101,7 +1101,7 @@ attached serial flash answers a JEDEC-id read directly
 gives jedec 20 20 15.
 .PP
 The GPIO driver
-.CW ( gpiobcm.c )
+.CW gpiobcm.c ) (
 drives the block at 0x3f200000: GPFSELn for direction, GPSETn/GPCLRn to
 drive an output, GPLEVn to read it back.  QEMU keeps the level register
 faithful to the set/clear writes, so pin 21 configured as an output
@@ -1112,7 +1112,7 @@ trip, the SPI JEDEC read and the GPIO pin drive together, then the shell.
 Round 6: sifive_u SD-over-SPI - a falsified blocker
 .PP
 Round 6 read block 0 off an SD card over the sifive_u SPI2 controller
-.CW ( sdspisifive.c ),
+.CW sdspisifive.c ), (
 negative-controlled against two images whose first bytes each read back
 exactly.  It also retired a stored conclusion.  The earlier note held
 that the SD was blocked because QEMU wired its chip-select to a GPIO pin

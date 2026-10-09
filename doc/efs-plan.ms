@@ -81,7 +81,7 @@ is reamed today, and is only 7MB.
 The controller is the Arasan SDHCI, polled, no DMA.  Multi-block reads
 and writes work and are checked at every boot against the same block
 read alone
-.CW ( SD-MULTI-OK ).
+.CW SD-MULTI-OK ). (
 Writes are verified by a ctl command that restores the sector it wrote.
 .IP \(bu
 .CW devsd 's

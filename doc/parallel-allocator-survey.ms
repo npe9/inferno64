@@ -52,7 +52,7 @@ So it is MP-safe now.  What it is not is parallel: a
 has a
 .I single
 free list
-.CW ( "Bhdr* root" ,
+.CW "Bhdr* root" , (
 with
 .CW chain
 for the arena list), so two executors allocating at once contend on one lock
@@ -376,7 +376,7 @@ on every quantum, and written on every allocation.  Per-processor counters
 summed on read is the usual answer.  Note that
 .CW memlow()
 is on the hot path of the collector trigger
-.CW ( emu/port/dis.c ,
+.CW emu/port/dis.c , (
 and the kernel's copy), so making
 .CW cursize
 expensive to read would be a poor trade: it wants to stay cheap even if it
@@ -403,7 +403,7 @@ is therefore always 0, and every parallel case in this section is latent.
 .CW propagator
 is an enum constant, 3 \(em not a variable.  Every generator loads it as an
 immediate
-.CW ( "con(propagator, RA2)" ),
+.CW "con(propagator, RA2)" ), (
 so compiled code never reads it.
 .CW Heap.color
 is a plain
@@ -412,7 +412,7 @@ word-sized and aligned.  So two mutators running the barrier on the same object
 write
 .I identical
 bits to an aligned word, and identical bits
-.CW ( 1 )
+.CW 1 ) (
 to
 .CW nprop .
 There is no lost update to lose.

@@ -36,7 +36,7 @@ of the wedged process and from
 .IP \(bu
 every Dis thread is idle \(em seven in
 .CW __psynch_cvwait
-.CW ( osblock ),
+.CW osblock ), (
 one in
 .CW __accept ,
 the rest Cocoa.  No thread holds a lock and none is blocked reading a
@@ -265,7 +265,7 @@ Phase 1 results: both suspects dead, and a confound in the method
 now reports, unconditionally because each is rare and each is the kind
 of thing worth never missing: a socket closed while an accept is in
 flight on it
-.CW ( "CLOSE UNDER ACCEPT" ),
+.CW "CLOSE UNDER ACCEPT" ), (
 a
 .CW protoclone
 that runs out of conversations, an accepted connection refused for want

@@ -197,7 +197,7 @@ says "1=L, 2=M, 4=R".  It is wrong.  The values are
 2 and
 .CW MOUSE_EVENT_MBUTTON
 4
-.CW ( include/ui/console.h ),
+.CW include/ui/console.h ), (
 so 4 is middle and 2 is right.  Injecting 4 and expecting a right-click
 made a correct remap look transposed.
 .IP \(bu
@@ -364,7 +364,7 @@ Verified on a booted kernel
 .CW ( "qemu-system-aarch64 -M raspi3b -m 1G -nographic -kernel iraspi3b
 .CW "-device usb-net,netdev=n0 -netdev user,id=n0" ):
 usbd enumerates the hub and the NIC
-.CW ( "vid 0525 did a4a2 class 2" ),
+.CW "vid 0525 did a4a2 class 2" ), (
 starts
 .CW etherusb ,
 which serves
@@ -385,7 +385,7 @@ Stage 2's code worked before this was found \- DHCP completed and the
 first ping was answered \- and then the whole machine went quiet: the
 clock kept ticking, but no Limbo process ever ran again.  The cause was
 not in the driver.  Each board's soft-timer queue
-.CW ( stubs.c )
+.CW stubs.c ) (
 converted a sleep's nanoseconds to fastticks as
 .CW "(tns * hz) / 1000000000LL" ,
 a signed 64-bit multiply that overflows once
@@ -420,7 +420,7 @@ on the machine permanently, while
 returned the same huge value and let the HZ tick carry on \- which is
 why the console kept printing and nothing else moved.  The fix converts
 in whole seconds plus a scaled remainder
-.CW ( ns2ticks() ),
+.CW ns2ticks() ), (
 which cannot overflow, and makes
 .CW now
 a
@@ -498,7 +498,7 @@ but for the mass-storage branch it kept only the endpoint
 .I numbers
 and dropped the size.  A newly created endpoint starts at devusb's
 default of 8
-.CW ( devusb.c :
+.CW devusb.c : (
 .CW "ep->maxpkt = 8" ),
 so the 31-byte command wrapper went out in 8-byte pieces, QEMU's
 .CW usb-msd
@@ -513,7 +513,7 @@ explicitly and so never hit this; the storage path now carries the two
 bulk endpoints' declared sizes and sets them the same way.
 .PP
 Verified on a booted kernel
-.CW ( "-drive if=none,id=d0,file=<img>,format=raw -device usb-storage,drive=d0" ):
+.CW "-drive if=none,id=d0,file=<img>,format=raw -device usb-storage,drive=d0" ): (
 usbd finds the device, reports
 .CW "disk \(dqQEMU    QEMU HARDDISK   2.5+\(dq 32768 blocks x 512 bytes" ,
 reads block 0 and sees the FAT signature (DISK-BLK-OK), and serves
@@ -628,7 +628,7 @@ hardware would say nothing about the routing.  It stays compiled out,
 and now for two reasons rather than one.
 .PP
 Verified on a booted kernel
-.CW ( "-drive if=sd,format=raw,file=<img>" ),
+.CW "-drive if=sd,format=raw,file=<img>" ), (
 one boot exercising both controllers and the routing in both
 directions:
 .CW sdhcicheck()
@@ -636,7 +636,7 @@ opens
 .CW /dev/sdH0
 first, so the Arasan takes the card, reads block 0 and gets the FAT
 boot sector
-.CW ( "block0 eb3c904d sig 55aa" ),
+.CW "block0 eb3c904d sig 55aa" ), (
 writes block 5 and reads it back byte for byte (SDHCI-WRITE-OK), and
 reports
 .CW "geometry 32768 512" \-
@@ -682,7 +682,7 @@ is corruption, not an error, and nothing reports it.
 .PP
 It is checked by reading it back rather than by assuming the command
 took.  ACMD13
-.CW ( SD_STATUS )
+.CW SD_STATUS ) (
 returns 64 bytes, most significant first, and
 .CW DAT_BUS_WIDTH
 is bits 7:6 of the first: 0 is one bit, 2 is four.  The card reports 2,
@@ -990,7 +990,7 @@ work: Linux carries
 .CW SDHCI_QUIRK_NO_HISPD_BIT
 for
 .CW brcm,bcm2835-sdhci
-.CW ( drivers/mmc/host/sdhci-iproc.c ).
+.CW drivers/mmc/host/sdhci-iproc.c ). (
 So the card is told through CMD6 and the host follows through the
 divider alone, and nothing here touches
 .CW Control0 .
@@ -1007,7 +1007,7 @@ work not yet done.  It is not work at all, and the reason is worth
 recording so nobody spends a week on it.
 .PP
 QEMU models SDMA and ADMA fully
-.CW ( sdhci_sdma_transfer ,
+.CW sdhci_sdma_transfer , (
 .CW get_adma_description
 in
 .CW hw/sd/sdhci.c ),
@@ -1199,7 +1199,7 @@ the Arasan has the Wi-Fi function and not the card.  The memory-card
 probe that
 .CW sdhcicardinit()
 sends is refused by the function
-.CW ( "Unknown CMD8" ),
+.CW "Unknown CMD8" ), (
 which is the model declining to pretend to be a card.
 .PP
 Getting there needed a guest change worth naming:
@@ -1313,7 +1313,7 @@ full-reset, reads back the time remaining, and freezes where it stopped
 .CW bcm2835_wdt
 driver assumes.  Against that model the full arm, count-down and stop
 sequence passes:
-.CW ( "loaded 524288 idle 524288 armed 517731 stopped 517730/517730" ),
+.CW "loaded 524288 idle 524288 armed 517731 stopped 517730/517730" ), (
 and the 6557 ticks lost over a 100ms delay come to 100.03ms, so the
 rate is right and not merely nonzero.
 .PP
@@ -1335,7 +1335,7 @@ back, and checks that it does
 .I not
 move while disarmed \- which is the required behaviour, not a
 deficiency, and passes on stock and patched QEMU alike
-.CW ( WDOG-PRESENT ).
+.CW WDOG-PRESENT ). (
 The arm-and-stop sequence lives behind
 .CW -DWDOGSELFTEST .
 A watchdog whose stop does not take reboots the machine 8 seconds later
@@ -1416,7 +1416,7 @@ was entirely on this side, and each is now brought up and checked at
 boot alongside i2c, spi and the rest.
 .PP
 .B "The system timer"
-.CW ( systmrbcm.c ,
+.CW systmrbcm.c , (
 0x3f003000) is a free-running 64-bit counter at a fixed 1MHz.  It is
 not the timer the scheduler runs on \- that is the ARM generic timer in
 .CW clock.c ,
@@ -1437,7 +1437,7 @@ Without that the timestamp jumps backwards by about 71 minutes, roughly
 once every 71 minutes.
 .PP
 .B "The temperature sensor"
-.CW ( thermbcm.c ,
+.CW thermbcm.c , (
 0x3f212000) returns a 10-bit ADC reading, not a temperature.  The
 conversion has a
 .I negative
@@ -1449,7 +1449,7 @@ millidegrees with integers, since this is a kernel: ADC 719 gives
 matching the fixed 25 degrees the model reports.
 .PP
 .B "The OTP fuses and board identity"
-.CW ( mailbox.c )
+.CW mailbox.c ) (
 come through the firmware mailbox, which is the documented way to reach
 them on a Pi \- the block's MMIO register interface is not implemented
 in QEMU and is not publicly documented, so driving it would have meant
@@ -1468,7 +1468,7 @@ fuses the first time it ran on hardware, so this reads and nothing
 else.  That is a hardware constraint, not an emulator one.
 .PP
 .B "The DMA engine"
-.CW ( dmabcm.c ,
+.CW dmabcm.c , (
 0x3f007000) is how this SoC moves bulk data without the CPU, and it is
 unlike the rest of the board because the engine reads its instructions
 from memory: a 32-byte control block giving transfer info, source,
@@ -1526,7 +1526,7 @@ and the marker now says what it means \-
 .CW "DMA-OK control block fetched on a channel the firmware gave us" .
 .PP
 .B "The AUX mini UART"
-.CW ( auxbcm.c ,
+.CW auxbcm.c , (
 0x3f215000) is the Pi's second serial port, and on a Pi 3B usually the
 console, the PL011 having been given to the Bluetooth part.  Three of
 its habits are worth writing down.  AUX_ENABLES gates the registers and
@@ -1567,7 +1567,7 @@ tier, but only the second actually confirms the rate.
 Blocks QEMU stubbed out, now modelled and driven
 .PP
 .B "The ARM timer"
-.CW ( armtmrbcm.c ,
+.CW armtmrbcm.c , (
 0x3f00b400, and
 .CW tools/qemu-patches/0009 )
 was an unimplemented device in QEMU: reads returned zero, writes were
@@ -1760,7 +1760,7 @@ the same failure as the other two, and it had not bitten yet only
 because nothing on the board has claimed 30.
 .PP
 .B "The I2S/PCM serialiser"
-.CW ( i2sbcm.c ,
+.CW i2sbcm.c , (
 0x3f203000, and
 .CW tools/qemu-patches/0011 )
 was the last of the stubs, and nothing in the tree wanted it either, so
@@ -1834,7 +1834,7 @@ four settings but identical text for 01 and 10 with the fraction
 missing.  The hardware uses quarters, and that is what is implemented.
 .PP
 .B "The AUX SPI masters"
-.CW ( auxspibcm.c ,
+.CW auxspibcm.c , (
 0x3f215080 and 0x3f2150c0, and
 .CW tools/qemu-patches/0012 )
 fell through to "Bad offset" in QEMU, so a guest could not use them at
@@ -1886,7 +1886,7 @@ looks perfect here and reads stale words on a board.  It is written
 from what the silicon does.
 .PP
 .B "The secondary memory interface"
-.CW ( smibcm.c ,
+.CW smibcm.c , (
 0x3f600000, and
 .CW tools/qemu-patches/0014 )
 was recorded in this document as unmodelable, on the grounds that its
@@ -1943,7 +1943,7 @@ under-running the FIFO, and SETERR by writing a settings register
 during a transfer, which needs neither a FIFO nor a device.
 .PP
 .B "The SPI/BSC slave"
-.CW ( bscslbcm.c ,
+.CW bscslbcm.c , (
 0x3f214000, and
 .CW tools/qemu-patches/0015 )
 is the one peripheral here that makes the Pi the
@@ -2113,7 +2113,7 @@ difference is the point.
 .PP
 .B "Which filesystem, and why it decides the fourth marker."
 QEMU's vvfat
-.CW ( file=fat:rw:<directory> )
+.CW file=fat:rw:<directory> ) (
 presents a host directory as a FAT16 volume with no host tool at all.
 It is the convenient one, and it reads only: it gives
 .CW DISK-BLK-OK ,
@@ -2596,7 +2596,7 @@ to 0, the other went from 0x3adb7f0 \- a live heap pointer \- to 0.
 What the checkpoint does
 .I not
 say is where the write happened.  A hit drops its own watch
-.CW ( "track[i].addr = nil" ,
+.CW "track[i].addr = nil" , (
 the last line of the reporting block), so an earlier checkpoint that
 stayed quiet proves nothing unless the watch already existed when it
 ran.  These watches are created when the object is, which is inside
@@ -3361,17 +3361,17 @@ rather than
 .B qemu+patch .
 .PP
 Passing on the board: the hardware RNG
-.CW ( RNG-OK ,
+.CW RNG-OK , (
 two different words), the power-management watchdog
-.CW ( WDOG-PRESENT ,
+.CW WDOG-PRESENT , (
 loaded and holding while disarmed), the 1MHz system timer
-.CW ( SYSTMR-OK ,
+.CW SYSTMR-OK , (
 50001 microseconds measured across a 50ms delay and agreeing with the
 ARM generic timer), the board identity and customer OTP
-.CW ( OTP-OK ,
+.CW OTP-OK , (
 revision 0x00a02082, serial 6289a97b, no fuses set), and the DMA
 controller
-.CW ( DMA-OK ,
+.CW DMA-OK , (
 256 bytes copied by a control block on channel 0, which the firmware's
 channel mask 0x7ff5 grants).  DMA had never moved a byte outside the
 emulator before.
@@ -4935,7 +4935,7 @@ fatstress on real silicon, 19 September 2026
 had never run on the board.  It does now, over the styx mount that
 .I kupdate
 already uses
-.CW ( "mount -A tcp!192.168.8.153!6666 /n/remote" ),
+.CW "mount -A tcp!192.168.8.153!6666 /n/remote" ), (
 so the host's
 .CW /dis
 is available to the board without rebuilding a kernel to carry a test
@@ -6242,12 +6242,12 @@ Where the DMA stall investigation actually stands
 .B "Eliminated, each with the intervention shown active in the dump or
 .B "the test shown running:"
 the stale eMMC interrupt
-.CW ( dmaclearirq :
+.CW dmaclearirq : (
 .CW "interrupt 0x00"
 against
 .CW 0x10 ,
 stall unchanged); stale DMA channel state
-.CW ( dmareset :
+.CW dmareset : (
 .CW "cs 0x8"
 against
 .CW 0xa ,
@@ -6300,7 +6300,7 @@ number of blocks.  The likely reading is that
 is the engine's
 .I current
 source pointer, read after the stall: 1536 bytes delivered
-.CW ( 0x600 ,
+.CW 0x600 , (
 the three blocks the dump also reports) plus one 64-byte burst the
 engine has read ahead into its own FIFO and not yet handed over.  That
 is consistent with every failure and with the page-offset test finding
@@ -6458,7 +6458,7 @@ biotrace 0:  2 of 3 runs had a failure
 .P2
 The one clean run was the base rate not firing.  A 50us delay before
 arming the channel
-.CW ( dmadelay )
+.CW dmadelay ) (
 is the same story: 1 of 3 against 2 of 3, which at this n is not a
 difference.  Seventh candidate out, and the only reason it did not
 join the plan as a finding is that it was repeated before it was
@@ -6701,9 +6701,9 @@ of read-ahead, not a property of the buffer.
 .B "Eight things are eliminated, each with the intervention shown
 .B "active in the dump or the test shown running:"
 the stale eMMC interrupt
-.CW ( dmaclearirq ),
+.CW dmaclearirq ), (
 stale DMA channel state
-.CW ( dmareset ),
+.CW dmareset ), (
 the source buffer's page offset, direction alternation,
 .I dossrv 's
 single-block-read-then-nine-block-write shape, a buffer the CPU has
@@ -6740,7 +6740,7 @@ acknowledges
 .CW Iwriterdy
 and watches the engine's live
 .CW TXFR_LEN
-.CW ( dmachanleft() ).
+.CW dmachanleft() ). (
 If the remaining count moves, the mechanism is proved and the fix is
 to acknowledge during the transfer rather than after it.  If it does
 not, the hypothesis is dead and the dump says so.
@@ -6816,7 +6816,7 @@ It proposed setting
 .CW Ireadrdy|Iwriterdy
 in
 .CW Rirpten
-.CW ( dmairqen ),
+.CW dmairqen ), (
 on the reasoning that the DREQ might be gated on the enable.  The
 production driver clears them, from the mask as well.  What
 .CW dmairqen
@@ -8578,7 +8578,7 @@ The scheduler hang this tree already knows about is not it:
 .CW emu/port/lock.c
 has the release store in
 .CW unlock()
-.CW ( "__atomic_store_n(&l->val, 0, __ATOMIC_RELEASE)" ),
+.CW "__atomic_store_n(&l->val, 0, __ATOMIC_RELEASE)" ), (
 and the lost-wakeup race in
 .CW qlock() 's
 window between
@@ -8607,7 +8607,7 @@ investigation, and nothing on the board is waiting for it.
 .PP
 .B "A local reproducer was claimed and does not hold up."
 A 9P client on the host
-.CW ( styxread.py ,
+.CW styxread.py , (
 .CW styxabort.py
 in the scratch directory) reads the same 1.9MB file the board fetches.
 It does not wedge the server:
@@ -15445,7 +15445,7 @@ has the same symptom \(em
 no truncation \(em and is not fixed, because it is a separate back-end and
 .CW pc64
 does not link at present
-.CW ( "consdebugchar: undefined: archreboot" ,
+.CW "consdebugchar: undefined: archreboot" , (
 uncommitted work in that port), so nothing there could be verified.  The
 .CW libinterp
 workaround stays in place regardless: it is correct on its own, and the tree

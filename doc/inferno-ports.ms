@@ -501,7 +501,7 @@ call sites in
 checked this way so far
 .CW "(ready()'s"
 own, a different function entirely, also read nil); the other two
-.CW ( sleep() ,
+.CW sleep() , (
 .CW pexit() )
 not yet checked.  This does not clear
 .CW runproc()
@@ -6378,7 +6378,7 @@ call, and several captures' immediately preceding boot output was a
 pre-existing
 .CW mountio()
 trace
-.CW ( os/inferno/port/devmnt.c ,
+.CW os/inferno/port/devmnt.c , (
 not new this round).  A jump to
 .CW PC\ 0xB
 is what calling through a garbage function pointer looks like, and
@@ -12232,7 +12232,7 @@ and more tractable.
 alloc:D2B turned out to be the more immediately actionable of the
 two: two independent boots this round produced byte-for-byte
 identical captures
-.CW ( "alloc:D2B:\ 312aa0\ not\ in\ pools\ (from\ 261314/2bf070)" ,
+.CW "alloc:D2B:\ 312aa0\ not\ in\ pools\ (from\ 261314/2bf070)" , (
 twice, and the same shape at a different address with a different
 second pc, also twice), which resolved
 .CW 261314
@@ -12256,7 +12256,7 @@ call sites carried a distinguishing tag the way
 two
 .CW D2BPC
 sites already did earlier this hunt.  All seven
-.CW ( poolimmutable ,
+.CW poolimmutable , (
 .CW poolmutable ,
 .CW free ,
 .CW setmalloctag ,
@@ -12348,7 +12348,7 @@ the one
 incref site in this file with no
 .CW "if(path\ !=\ nil)"
 guard, though every other site
-.CW ( cclone() ,
+.CW cclone() , (
 two direct sites elsewhere in
 .CW chan.c )
 already has one, since
@@ -12694,7 +12694,7 @@ own
 .CW incref(i)
 call is preceded by an unconditional dereference of the same
 .CW i
-.CW ( i->procindex\ =\ ... )
+.CW i->procindex\ =\ ... ) (
 that would need to survive first, plausible on this port only if
 that write lands in identity-mapped low memory rather than faulting
 -- which this kernel does map elsewhere for real-mode AP-bootstrap
@@ -13063,7 +13063,7 @@ a second hit, confirming the previous section's
 fix is already earning its keep by making this lead visible at all.
 Chased it one step further:
 .CW exNomem
-.CW ( "out\ of\ memory:\ main" )
+.CW "out\ of\ memory:\ main" ) (
 is raised from well over a dozen sites across
 .CW libinterp/load.c
 alone (the Dis module loader
@@ -13171,7 +13171,7 @@ itself is asking
 for the requested size directly.  Both live captures had size within
 a small, plausible byte count of
 .CW 2\u32\d
-.CW ( 4294966320 ,
+.CW 4294966320 , (
 then
 .CW 4178666939 )
 against a 251MB pool -- not remotely a real memory need, and not a
@@ -13182,7 +13182,7 @@ was under 100KB both times, essentially the start of boot.
 That immediately explains something else:
 .CW smalloc() 's
 own retry loop
-.CW ( "for(;;)\ {\ v\ =\ poolalloc(...);\ if(v\ !=\ nil)\ break;\ tsleep(...);\ }" )
+.CW "for(;;)\ {\ v\ =\ poolalloc(...);\ if(v\ !=\ nil)\ break;\ tsleep(...);\ }" ) (
 has NO escape at all.  A request this large can never fit regardless
 of what else frees, so this loop retries forever -- a silent,
 permanent kernel hang, not a crash.  Batches across many earlier
@@ -15028,7 +15028,7 @@ Codex's half of this tree: whether the
 non-convergence found on riscv64/virt was architecture-specific or shared
 .CW os/inferno/port
 behavior. pc64 already links a virtio-blk driver
-.CW ( sdvirtio.6 ,
+.CW sdvirtio.6 , (
 already in its device list for unrelated reasons), so the same check --
 same portable
 .CW appl/cmd/dossrv.b ,
@@ -15212,7 +15212,7 @@ a well-formed reply that never shows up as a malformed or misrouted message
 on the native side because it may never show up
 .I at all --
 which would point at delivery through the pipe itself
-.CW ( os/inferno/port/devpipe.c ,
+.CW os/inferno/port/devpipe.c , (
 via
 .CW qio.c 's
 queues) under native scheduling, rather than at anything in
@@ -15412,7 +15412,7 @@ receive.  Two cheap checks, not another boot-and-guess round, settled
 it.
 .PP
 First: is the last print before silence
-.CW ( "dossrv:\ mount\ /n/dos:\ " ,
+.CW "dossrv:\ mount\ /n/dos:\ " , (
 from
 .CW sys->fprint(sys->fildes(2),\ ...) )
 really the last thing that runs, or just the last thing that
@@ -15502,7 +15502,7 @@ supposed to deliver the exception, rather than a separate step after
 it lands.
 .PP
 Reverted: both probes
-.CW ( appl/cmd/dossrv.b ,
+.CW appl/cmd/dossrv.b , (
 .CW os/inferno/init/virtinit.b ) ,
 the pc64 diagnostic init and its root-list line (used a fourth time,
 same discipline).
@@ -15654,7 +15654,7 @@ Genuinely open: whether
 itself correctly finds the entry that should match -- its own logic
 reads clean, so if it is wrong the discrepancy is upstream, in
 whether the compiled handler table
-.CW ( m->m->htab )
+.CW m->m->htab ) (
 is correctly present for a native Prog's loaded module in the first
 place.  That is a loader/compiler question, not a
 .CW vmachine()
@@ -15670,7 +15670,7 @@ like every other command -- not a throwaway probe but a permanent,
 40-line, standing reproducer for a real open bug, verified against
 hosted emu one more time before committing.  Confirmed working
 correctly there
-.CW ( "raisetest:\ received\ caught" )
+.CW "raisetest:\ received\ caught" ) (
 immediately before this was written up.
 .NH 1
 A real bug in schedmod(), and four ruled-out candidates for the raise
@@ -16232,7 +16232,7 @@ board and had to shrink to 256, and a bit flag of exactly 2048
 (mie.MEIE) has to be built in a register rather than as a single
 .CW OR
 immediate; its own register convention
-.CW ( REGSB=26,\ REGSP=27,\ REGLINK=31 )
+.CW REGSB=26,\ REGSP=27,\ REGLINK=31 ) (
 is not
 .CW jc 's
 .CW "(REGSB=3, REGSP=2, REGLINK=1),"
@@ -16314,7 +16314,7 @@ opcode handlers \-
 and four in
 .CW libkern/vlrt-riscv32.c
 itself
-.CW ( _f2v/_v2d/_v2f ,
+.CW _f2v/_v2d/_v2f , (
 plus
 .CW charstod 's
 call to
@@ -16352,13 +16352,13 @@ run and left open alongside it:
 fails
 .CW "MOVW\ $fmt+0(FP),\ R6"
 with "illegal combination" \- a large-offset frame address
-.CW ( C_LACON )
+.CW C_LACON ) (
 has no
 .CW MOVW\ ->\ C_REG
 optab entry, only the small-offset
-.CW ( C_SACON )
+.CW C_SACON ) (
 form does
-.CW ( utils/zl/optab.c ,
+.CW utils/zl/optab.c , (
 case 11, the
 .CW addi
 address form \- what is missing is that same computation's
@@ -16445,7 +16445,7 @@ own
 exactly.
 Checked byte-for-byte against the real RISC-V F/D encoding the same
 way this document has checked every hand-encoded instruction so far
-.CW ( FLD/FSD/FADD.D/FEQ.D/FCVT.D.W/FCVT.W.D ,
+.CW FLD/FSD/FADD.D/FEQ.D/FCVT.D.W/FCVT.W.D , (
 all exact).
 .PP
 Fixing the encoder surfaced a real
@@ -16458,7 +16458,7 @@ a scratch register typed by the
 .CW double
 source instead of the integer destination, so the scratch landed in
 an F register that the very next instruction
-.CW ( MOVW )
+.CW MOVW ) (
 needed as a plain integer \- "illegal combination" every time,
 whether the F register mistake ever reached
 .CW zl
@@ -16884,7 +16884,7 @@ not
 was already claimed tree-wide by the hosted macOS
 .CW emu-cocoa
 build's real Dis JIT
-.CW ( libinterp/comp-arm64.c ,
+.CW libinterp/comp-arm64.c , (
 Apple Silicon, a completely different target that happens to share a
 CPU-family name); giving the new board the same OBJTYPE silently
 linked the JIT file's
@@ -16913,7 +16913,7 @@ silently corrupted the symbol table of any archive holding a
 object, and
 .CW 7l
 reported every real symbol in it
-.CW ( strcmp ,
+.CW strcmp , (
 .CW memmove ,
 .CW quotefmtinstall ,
 ...) as undefined with nothing pointing at
@@ -16961,7 +16961,7 @@ had long-displacement load/store rows for
 in both directions but none for
 .CW MOVBU ,
 breaking every board's own TCP/IP stack
-.CW ( inittcpctl ,
+.CW inittcpctl , (
 .CW ipifcadd ,
 ...) with "illegal combination MOVBU LEXT NONE REG"; added the
 missing rows, and only those \-
@@ -17026,7 +17026,7 @@ was storing the
 old
 value it had just loaded back over itself, throwing away the new
 value it meant to write; the return value
-.CW ( R1 ,
+.CW R1 , (
 never touched by the store) was always the correct "was it free"
 answer, so every caller believed it had acquired the lock while
 .CW l->key
@@ -17038,7 +17038,7 @@ own self-check
 fired on the first
 .CW ilock/iunlock
 pair the board ever took
-.CW ( kmesg.lk ,
+.CW kmesg.lk , (
 from
 .CW print() 's
 own
@@ -17569,7 +17569,7 @@ and the CLINT's
 directly, no SBI.  A VisionFive 2 or an Icicle boots OpenSBI and hands
 the kernel supervisor mode, so before any driver matters the board
 needs an S-mode entry
-.CW ( stvec ,
+.CW stvec , (
 .CW sstatus ,
 SBI calls for the timer, console and IPIs, the PLIC's supervisor
 contexts) and a device-tree reader \- no board under
@@ -17668,7 +17668,7 @@ are new there too, without 9front's queue resizing.
 .CW Bpool ,
 9front's per-driver free list of aligned Blocks.  Here it is only the
 size and alignment
-.CW ( portdat.h )
+.CW portdat.h ) (
 and
 .CW iallocbp()
 in
@@ -17712,7 +17712,7 @@ is exported under 9front's name
 for wifi's CCMP.
 .IP \(bu
 The one thing that does not bridge: 9front's newer MII layer
-.CW ( addmiibus ,
+.CW addmiibus , (
 .CW MiiPhy ,
 clause-45 access).
 .CW ethermii.c
@@ -17743,7 +17743,7 @@ had linked for weeks against a
 whose source was never committed, and the first header change made
 .CW mk
 want to rebuild it.  The six symbols it provided
-.CW ( vesabootscreenconf ,
+.CW vesabootscreenconf , (
 .CW cursorenable ,
 .CW cursordisable ,
 .CW notkilled ,
@@ -17758,7 +17758,7 @@ Taken, linked into
 and tested under QEMU 10.1 on both the default PC and
 .CW q35 ,
 through a console-only init
-.CW ( os/inferno/init/pc64devinit.b ,
+.CW os/inferno/init/pc64devinit.b , (
 configuration
 .CW os/inferno/pc64/pc64dev )
 that binds
@@ -18080,10 +18080,10 @@ compiled with
 .CW jc
 and read back with objdump settled it: every constant that does not
 fit a signed 32-bit word came out as zero
-.CW ( 0x2000000000 ,
+.CW 0x2000000000 , (
 .CW 0x100000000 )
 or minus one
-.CW ( 0xffffffff ).
+.CW 0xffffffff ). (
 Three separate instances of the tree's standing "long is 32 bits" bug,
 each on the path a wide constant takes from
 .CW jc
@@ -18183,7 +18183,7 @@ for the constant.  With
 The narrowing is therefore in
 .CW 7c 's
 optimiser passes
-.CW ( peep.c ,
+.CW peep.c , (
 .CW reg.c ),
 not in
 .CW gmove() 's
@@ -18357,7 +18357,7 @@ enumerates through it \- the xHCI controller, the modern-only virtio
 NIC, and the NVMe unit, which reads back its host-written sector; on
 the default PC machine, which has no MCFG, the port path runs as
 before.  The other half, MSI: none of the drivers taken from 9front
-.CW ( sdnvme ,
+.CW sdnvme , (
 .CW usbxhci ,
 .CW virtio10 )
 asks for MSI in 9front's own versions either \- they use INTx and
@@ -18900,7 +18900,7 @@ toolchain step, not by guessing at addresses.
 .PP
 Second, three arm64 driver pieces landed clean this round and are
 verified: a portable device-tree reader
-.CW ( os/inferno/port/fdt.c ,
+.CW os/inferno/port/fdt.c , (
 riscv64 finds its UART in QEMU's DTB; arm64 under
 .CW -kernel
 gets no DTB pointer, inert but correct), PSCI reboot and power-off over
@@ -21949,7 +21949,7 @@ memmove(pp->spec, &x[1], 4);
 which copies a byte at a time.  A byte read of a device register is
 not the same bus transaction as a word read of the word containing it.
 The protocol version came out right, because that is read as a word
-.CW ( "x[0]>>16" ,
+.CW "x[0]>>16" , (
 and 0x300 and 0x200 in the dump are correct), but the name string read
 back as
 .CW U ,

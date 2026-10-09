@@ -388,7 +388,7 @@ remaining experiments target the transfer, not the namespace.
 .IP "E3."
 .I "Single-step the fault."
 Boot under the QEMU gdbstub
-.CW ( "-s -S" )
+.CW "-s -S" ) (
 with lldb (the pc64 heisenbug work,
 .CW doc/inferno-ports.ms ,
 has the recipe).  Put a hardware watchpoint on the failing proc's Chan

@@ -250,9 +250,9 @@ A nine-block DMA write still stops after three blocks with the engine
 waiting on a DREQ the controller has stopped raising, while that
 controller's status says it has room.  Eliminated so far, each with
 the intervention shown active in the dump: the stale eMMC interrupt
-.CW ( dmaclearirq ),
+.CW dmaclearirq ), (
 stale DMA channel state
-.CW ( dmareset ),
+.CW dmareset ), (
 and the source buffer's page offset \(em all seven collected failures
 were at offset 0x640, which turned out to be where
 .I dossrv 's

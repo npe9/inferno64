@@ -45,6 +45,34 @@
 # respected -- a quoted "a b" is one argument, and so is an escaped `a\ b',
 # which is why a naive whitespace split over-reports by hundreds.
 #
+# AND THE CLASS THIS CHECK WAS BLIND TO, which is the mirror image of that
+# exemption and 144 sites across nine of this tree's documents.
+#
+# The note above is right that `.CW x , (' is deliberate: with the prefix LAST,
+# third+first+second puts it in front and the line renders `(x,'.  Written the
+# other way round it is a defect, and that is how most of these documents write
+# it:
+#
+#	.CW ( 3810cbdc2 ):	3 args -> ):(3810cbdc2     BACKWARDS
+#	.CW 3810cbdc2 ): (	3 args -> (3810cbdc2):     what was meant
+#	.CW "(3810cbdc2):"	1 arg  -> (3810cbdc2):     also fine
+#
+# Both were measured by rendering, not by reading the rule.  The first shape
+# puts the OPENING paren in the third slot, so it lands after the text, and the
+# closing paren lands in front.
+#
+# The old rule exempted it twice over: the third argument of `.CW ( x ):' is
+# `):', pure punctuation, so the "deliberate prefix" test accepted it -- and
+# four-argument lines are the only ones troff warns about, so groff was silent
+# too.  THREE TROFF TESTS PASSED ON 144 BACKWARDS LINES.  That is the same
+# failure as a guard built for a case it was never shown, and this tree already
+# has the rule: an instrument has to be given a case it must catch.
+#
+# So: a FIRST argument that is pure punctuation, on a line with three or more
+# arguments, is now reported too.  Two arguments is still fine -- `.CW ( foo'
+# renders `(foo', in the right order, with only the font of `foo' wrong, and
+# there are 46 of those left alone deliberately.
+#
 # EXIT: 0 nothing found, 1 sites found (this is a report, not a verdict on
 # whether each one is wrong -- a human decides, because "(x," really is
 # sometimes what the author wanted).
@@ -140,19 +168,43 @@ for f in sys.argv[1:]:
         if not m: continue
         a = args(m.group(2))
         if len(a) < 3: continue
-        third = a[2]
-        if not wordy.search(third): continue      # a punctuation prefix is fine
-        hits.append((i, l))
+        #
+        # Class 1: a punctuation-only FIRST argument.  third+first+second
+        # moves everything after it in front, so `.CW ( x ):' renders
+        # `):(x'.  Reported regardless of what the third argument is.
+        #
+        # Class 2: a third argument containing a letter or digit, which is
+        # real text landing in front of the rest.  A punctuation-only third
+        # argument is the deliberate prefix idiom and stays exempt.
+        #
+        if not wordy.search(a[0]) and '"' not in a[0] and '\\' not in a[0]:
+            #
+            # The quote and backslash exclusions are not cosmetic.  This
+            # tokeniser is an approximation of troff's, and on two lines in
+            # these documents it gets the split wrong in a way that produces
+            # a punctuation-only first argument out of nothing:
+            #
+            #   .CW "\"bflag\", 1"   -> ['"\\"', 'bflag\\",', '"', '1']
+            #   .CW exception\ e\ ... -> ['"*"', 'exception\\ e\\ ...', '}']
+            #
+            # Both are single troff arguments really.  A first argument that
+            # is punctuation AND free of quotes and backslashes is the shape
+            # this check is about, and excluding the other two costs nothing:
+            # neither is reorderable, so there is nothing to report.
+            #
+            hits.append((i, l, 'leading punctuation moves the rest in front'))
+        elif wordy.search(a[2]):
+            hits.append((i, l, 'a word in the third argument comes out first'))
     if hits:
         print("=== %s (%d)" % (f, len(hits)))
-        for i, l in hits:
-            print("  %6d  %s" % (i, l[:90]))
+        for i, l, why in hits:
+            print("  %6d  %-62s  %s" % (i, l[:62], why))
         total += len(hits)
 
 print()
 if total == 0:
-    print("troff-argorder: none -- no .CW/.I/.B line has a word in its third")
-    print("troff-argorder: argument, so none is being reordered.")
+    print("troff-argorder: none -- no .CW/.I/.B line leads with punctuation or")
+    print("troff-argorder: has a word in its third argument, so none is reordered.")
 else:
     print("troff-argorder: %d site(s).  troff renders these as" % total)
     print("troff-argorder:   third + FONT(first) + second")
