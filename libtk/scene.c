@@ -324,6 +324,93 @@ tksceneborderon(TkScene *s, Rectangle r, int radius, int width, ulong rgba, ulon
  * The string is copied for the same reason the name is.
  */
 /*
+ * A transform over the nodes that follow, closed by
+ * tkscenetransformend().  Translate and uniform scale only -- see the
+ * note at TkNtransformend in tk.h for why there is no rotation.
+ *
+ * A num or den of zero would silently erase everything inside the
+ * span, so it is refused here rather than at render time: a tree that
+ * cannot be rendered is better not built.
+ */
+/*
+ * AT THE HEAD, not the tail.  A bracketing node has to precede the span
+ * it brackets, and every other emitter here appends -- so appending
+ * this one put the transform AFTER everything it was meant to affect
+ * and it did nothing at all. The picture came out identical to the
+ * untransformed one, which is a result that looks like "the transform
+ * is wrong" and is instead "the transform was never open".
+ *
+ * Caught by comparing a transform of 2 against a global scale of 2:
+ * the difference was exactly the 1:1-versus-2:1 difference, which is
+ * the signature of having rendered the unscaled tree. The identity
+ * case could not have caught it -- an identity that never opens looks
+ * exactly like an identity that does.
+ */
+void
+tkscenetransform(TkScene *s, Point translate, int num, int den)
+{
+	TkNode *n;
+
+	if(num <= 0 || den <= 0)
+		return;
+	if((n = newnode(s, TkNtransform)) == nil)
+		return;
+	n->r.min = translate;
+	n->r.max = translate;
+	n->sp.x = num;
+	n->sp.y = den;
+	/*
+	 * newnode appended it; move it to the front. The list is singly
+	 * linked and this is the only emitter that needs to, so it is
+	 * done here rather than by giving newnode a mode.
+	 */
+	if(s->head != n){
+		TkNode *p;
+
+		for(p = s->head; p != nil && p->next != n; p = p->next)
+			;
+		if(p != nil){
+			p->next = nil;
+			s->tail = p;
+			n->next = s->head;
+			s->head = n;
+		}
+	}
+}
+
+void
+tkscenetransformend(TkScene *s)
+{
+	newnode(s, TkNtransformend);
+}
+
+/*
+ * The transform the WALK wraps each tree in, set by `render xform'.
+ * One by one is every running system; this exists so the transform
+ * node has a producer to be compared through -- against `render
+ * scaled', which does the same arithmetic in a different place.
+ */
+static int xnum = 1, xden = 1;
+
+void
+tkscenesetxform(int num, int den)
+{
+	if(num <= 0 || den <= 0)
+		return;
+	xnum = num;
+	xden = den;
+}
+
+void
+tkscenegetxform(int *num, int *den)
+{
+	if(num != nil)
+		*num = xnum;
+	if(den != nil)
+		*den = xden;
+}
+
+/*
  * An image, named by the file it came from.  mask says whether it is
  * painted THROUGH - a one-bit icon in the foreground colour, which is
  * how the chrome's artwork is drawn - or drawn as it stands.
@@ -879,6 +966,16 @@ tkwalkflush(void)
 			}else
 				combinerect(&walk.bounds, b);
 		}
+	}
+	/*
+	 * If `render xform' asked for one, the tree is wrapped in a
+	 * transform node before it is rendered. That gives TkNtransform a
+	 * producer, which is the only way it can be compared against the
+	 * global scale that does the same arithmetic elsewhere.
+	 */
+	if(xnum != xden){
+		tkscenetransform(s, w->dst->r.min, xnum, xden);
+		tkscenetransformend(s);
 	}
 	tkscenerenderscaled(s, w->ctxt, w->dst, scalenum, scaleden);
 	tkscenefree(s);
@@ -1564,8 +1661,9 @@ static int
 renderscene(TkScene *s, TkCtxt *c, Image *dst, int num, int den)
 {
 	TkNode *n, *nx, *open;
-	TkNode sd, sopen;
-	Point scratch[Nscratch], o;
+	TkNode sd, sd2, sopen;
+	TkNode *xf;		/* the open transform, or nil */
+	Point scratch[Nscratch], scratch2[Nscratch], o;
 	Image *col, *target, *saved, *t, *img, *clipped;
 	Rectangle oclipr, clipr;
 	Font *fnt;
@@ -1574,6 +1672,7 @@ renderscene(TkScene *s, TkCtxt *c, Image *dst, int num, int den)
 	if(s == nil || c == nil || dst == nil)
 		return 0;
 	drawn = 0;
+	xf = nil;
 	o = dst->r.min;
 	target = dst;
 	saved = nil;
@@ -1586,8 +1685,46 @@ renderscene(TkScene *s, TkCtxt *c, Image *dst, int num, int den)
 		 * the twelve cases below need no knowledge of the scale.
 		 * At num == den nothing is copied at all.
 		 */
+		/*
+		 * A TkNtransform opens a span; TkNtransformend closes it.
+		 * Like a clip and a layer these do not nest -- the same
+		 * flat-list limitation, and the same choice as the rest of
+		 * this renderer rather than a new one.
+		 */
+		if(nx->type == TkNtransform){
+			xf = nx;
+			drawn++;
+			continue;
+		}
+		if(nx->type == TkNtransformend){
+			xf = nil;
+			drawn++;
+			continue;
+		}
 		n = nx;
-		if(num != den){
+		/*
+		 * The node transform first, about its own origin, then the
+		 * global scale. Two applications of one helper rather than
+		 * a composed matrix, which costs a second rounding and buys
+		 * an obvious correctness argument: each step is the
+		 * arithmetic already tested by `render scaled'.
+		 *
+		 * The double rounding is why tkscenetest(1) compares a
+		 * transform of 2 against a global scale of 2 instead of
+		 * assuming they agree.
+		 */
+		if(xf != nil){
+			walk.approx += scalenode(&sd, nx, xf->r.min,
+				xf->sp.x, xf->sp.y, scratch);
+			walk.scalednodes++;
+			n = &sd;
+			if(num != den){
+				walk.approx += scalenode(&sd2, n, o, num, den,
+					scratch2);
+				walk.scalednodes++;
+				n = &sd2;
+			}
+		}else if(num != den){
 			walk.approx += scalenode(&sd, nx, o, num, den, scratch);
 			walk.scalednodes++;
 			n = &sd;

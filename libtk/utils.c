@@ -1410,6 +1410,33 @@ tkrendercmd(TkTop *t, char *arg, char **ret)
 	 * many of those were approximated, and a caller can tell an exact
 	 * enlargement from an approximate one.
 	 */
+	/*
+	 * `render xform ?NUM ?DEN??' wraps each tree in a TkNtransform
+	 * instead of scaling at render time. The two do the same
+	 * arithmetic in different places, which is the point: one is the
+	 * control for the other, and tkscenetest(1) compares their
+	 * pixels rather than assuming they agree.
+	 */
+	if(strcmp(buf, "xform") == 0){
+		int num, den;
+
+		arg = tkword(t, arg, buf, buf+sizeof(buf), nil);
+		arg = tkword(t, arg, buf, buf+sizeof(buf), nil);
+		if(buf[0] == '\0'){
+			tkscenegetxform(&num, &den);
+			if(ret != nil)
+				return tkvalue(ret, "%d %d", num, den);
+			return nil;
+		}
+		num = atoi(buf);
+		tkword(t, arg, buf, buf+sizeof(buf), nil);
+		den = buf[0] == '\0' ? 1 : atoi(buf);
+		if(num <= 0 || den <= 0)
+			return TkBadvl;
+		tkscenesetxform(num, den);
+		tkwalkreset();
+		return nil;
+	}
 	if(strcmp(buf, "scaled") == 0){
 		int num, den, nodes, approx;
 

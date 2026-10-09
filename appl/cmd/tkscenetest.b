@@ -1065,6 +1065,41 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	report(approxa > 0,
 		sys->sprint("a glyph run at 2:1 is reported approximate: `%s\'", ra));
 
+	#
+	# A TRANSFORM NODE AGAINST THE GLOBAL SCALE. The two do the same
+	# arithmetic in different places -- `render scaled' scales every
+	# node as it renders, `render xform' wraps the tree in a
+	# TkNtransform the renderer then applies -- so each is the other's
+	# control, and comparing their pixels is the only way to find out
+	# whether they agree. They need not: the transform path rounds
+	# twice when a global scale is also set, and this says so with a
+	# number rather than assuming either way.
+	#
+	tk->cmd(tk->toplevel(disp, ""), "render scaled 1");
+	tk->cmd(tk->toplevel(disp, ""), "render xform 2");
+	sx := paint(disp, "transform 2:1", scaleframe);
+	rx := tk->cmd(tk->toplevel(disp, ""), "render xform");
+	report(rx != nil && rx == "2 1",
+		sys->sprint("render xform reports its transform: `%s\'", rx));
+	if(sx != nil && s2 != nil){
+		d := differ(sx, s2);
+		report(d == 0,
+			sys->sprint("a transform of 2 == a global scale of 2 (%d bytes differ)", d));
+	}else
+		report(0, "both the transform and the scale rendered");
+
+	# And a transform of 1:1 must change nothing, which is the
+	# identity case the node has to satisfy before anything else it
+	# does can be trusted.
+	tk->cmd(tk->toplevel(disp, ""), "render xform 1");
+	sx1 := paint(disp, "transform 1:1", scaleframe);
+	if(sx1 != nil && s1 != nil)
+		report(differ(sx1, s1) == 0,
+			sys->sprint("a transform of 1 is the identity (%d differ)",
+				differ(sx1, s1)));
+	else
+		report(0, "the identity transform rendered");
+
 	# Reversibility: putting the scale back must reproduce the 1:1
 	# picture exactly. A scale that leaks state would pass everything
 	# above and fail here.

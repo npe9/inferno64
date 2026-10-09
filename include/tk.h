@@ -588,7 +588,26 @@ enum {
 	 * which is what the text widget does to the window by hand.
 	 * Clips do not nest, again as layers do not.
 	 */
-	TkNclipend
+	TkNclipend,
+
+	/*
+	 * A TRANSFORM over a SPAN of nodes, bracketed like a clip and a
+	 * layer and for the same reason: it is a property of a run rather
+	 * than of one node, and a flat list has nowhere else to put it.
+	 * Appended here rather than beside TkNtransform because a node
+	 * type's number must not move once a backend has seen it -- the
+	 * same reason TkNclipend is not next to TkNclip.
+	 *
+	 * TRANSLATE AND UNIFORM SCALE ONLY, and the fields say so: r.min
+	 * is the translation and sp is the scale as num/den. There is
+	 * deliberately no rotation and no non-uniform scale. A rotation
+	 * maps a rectangle to something that is not one, and this
+	 * renderer draws fills, borders and glyph runs as rectangles
+	 * through memdraw -- supporting it would mean resampling, which
+	 * is the thing a description exists to avoid. What is here is
+	 * what HiDPI and zoom need, exactly, with no interpolation.
+	 */
+	TkNtransformend
 };
 
 struct TkNode
@@ -883,6 +902,10 @@ extern	int		tkscenerender(TkScene*, TkCtxt*, Image*);
 extern	int		tkscenerenderscaled(TkScene*, TkCtxt*, Image*, int, int);
 extern	void		tkwalkscaled(int*, int*);
 extern	void		tkscenesetscale(int, int);
+extern	void		tkscenetransform(TkScene*, Point, int, int);
+extern	void		tkscenetransformend(TkScene*);
+extern	void		tkscenesetxform(int, int);
+extern	void		tkscenegetxform(int*, int*);
 extern	void		tkscenegetscale(int*, int*);
 extern	int		tkscenecount(TkScene*);
 extern	TkSpace*	tkspace(Tk*);
