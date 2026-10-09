@@ -899,7 +899,7 @@ duplicate RETURN       77   0.57       1  none    HIGH   NO, see below
 shift fold (shiftprop)164   1.21     ~30  flow    med    DONE, ported
 branch to next instr  153   1.13      ~8  none    low    LISTING only
 adjacent spill/reload  69   0.51      ~8  none    low    marginal
-width-aware copyprop   5231  38.66     ~55  flow    HIGH   built, UNPROVEN
+width-aware copyprop   5231  38.66     ~55  flow    HIGH   bndstest ok
 MUL+ADD -> MADD        18   0.13     ~20  flow    med    NO -- too rare
 extension pair         14   0.10       1  none    med    DONE (see below)
 switch -> arithmetic    -      -    ~300  SSA     high   NO
@@ -1269,7 +1269,49 @@ Three runs of
 chase over a flow graph the register allocator had already built, which is
 exactly the tier-one property this document set out to exploit.
 .LP
-.B "NOT YET RUN ON THE BOARD, and this is the one thing still owed."
+.B "RUN ON THE BOARD, and a control stopped me reporting a regression that"
+.B "was not one."
+Installed as build 1791504169 and running from the card,
+.CW bndstest
+gives 11 ok, 0 fail.
+.B "But drawink printed NOTHING,"
+where on the previous kernel it had printed seven PASS lines with pixel
+verification \(em and
+.CW /dev/screen
+was 0 bytes, so there was no framebuffer at all.  5231 rewritten sites in the
+kernel's integer arithmetic makes a broken draw path entirely plausible.
+.LP
+.B "The control says otherwise."
+Reinstalling the PREVIOUS kernel, build 1791496543, the one whose drawink had
+passed earlier the same day:
+.CW /dev/screen
+is 0 bytes there too and drawink is equally silent.
+.B "So the framebuffer is absent on both kernels and drawink cannot"
+.B "distinguish them."
+What changed between the working run and the failing one was not the compiler
+but a
+.B "cold power cycle"
+of the board, which the wedge above had made necessary.  The VideoCore
+allocates the framebuffer at firmware start and a warm reboot inherits one a
+previous boot obtained; a cold start without that does not produce one, and
+nothing on the ARM side reports it.
+.LP
+.B "Two things to take from it."
+The compiler change is exonerated, by a control and not by argument.  And
+.B "a board-level test can stop being a test without saying so:"
+drawink exits 0 and prints nothing when it has no screen, so in a suite that
+checks only exit status it would have read as a pass on every kernel from here
+on.  The gate it was supposed to be is gone until the board is warm-booted
+again.
+.LP
+.B "Still owed:"
+drawink and a styx throughput number on a board with a framebuffer.
+.CW bndstest
+passing 11 of 11 exercises the Dis bounds path and is real; it is not the draw
+path.
+.LP
+.B "(The earlier text of this paragraph said the install had refused twice and"
+.B "needed a power cycle, which it did.)"
 The install refused twice.  The first attempt hit
 .CW DSCR.ERR=1 ,
 which
