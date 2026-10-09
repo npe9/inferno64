@@ -103,7 +103,37 @@ idle() {
 	fi
 	printf 'load std; echo BR-IDLE-%s\n' "`date +%s`" > "$CMD"
 }
-trap 'idle' 0 1 2 15
+#
+# ONE OPERATOR ON THE COMMAND CHANNEL TOO.
+#
+# boardlock.sh was added for openocd and for the scripts that hold the
+# adapter, and boardrun was deliberately left out of it because boardrun
+# never starts openocd.  That was the wrong line to draw, and it cost an
+# install the same day: kinstall.sh does not call boardrun -- it writes
+# board.cmd itself through runcmd() -- so an unrelated boardrun during
+# its pre-flight overwrote the marker kinstall was waiting for, and
+# kinstall reported
+#
+#	kinstall: KI-ALIVE did not appear within 300s
+#	kinstall: build 1791548940 boots but its command poller never answered
+#	kinstall: THE CARD WAS NOT CHANGED.
+#
+# which reads exactly like a broken kernel and was a second writer.  The
+# card was correctly left alone, so the ordering did its job; but the
+# diagnosis it invites is wrong, and that is worse than the lost run.
+#
+# What matters is not who drives the ADAPTER, it is who owns
+# board.cmd -- a single file, one command deep, with no way for a reader
+# to tell whose marker it is holding.  So anything that writes it takes
+# the lock.  A boardrun invoked BY a holder inherits it (see
+# boardlock.sh), so kinstall's and efsbatch's own use is unaffected.
+#
+. "$HERE/boardlock.sh"
+boardlock boardrun || {
+	echo "boardrun: another board operation owns the command channel" >&2
+	exit 1
+}
+trap 'idle; boardunlock' 0 1 2 15
 
 #
 # PREFIXED "boardrun-note:" AND NOT "boardrun:", because the latter collides

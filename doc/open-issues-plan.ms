@@ -3879,7 +3879,7 @@ filled spline                0 pixels        932
 .CW drawink
 all checks passed on the fixed kernel, so nothing else moved.
 .PP
-.B "A SEPARATE FINDING, OPEN: the host emu cannot validate draw work at all."
+.B "A SEPARATE FINDING, NOW DIAGNOSED AND FIXED \(em and my first attribution of it was wrong."
 An emu built from the tree now draws a 30x22 rectangle as TEN pixels \(em with
 the fix and with HEAD's
 .CW draw.c
@@ -3888,11 +3888,71 @@ binary, which predates the committed
 .CW libmemdraw
 AArch64 cast work, drew the correct 660.  The recently rebuilt
 .CW emu-cocoa
-is also wrong.  That localises a host-side regression to
+is also wrong.
+.PP
+I reported that to
+.CW inferno-rio-71
+as a probable regression in
+.CW libmemdraw 's
+committed AArch64 cast work, since the one binary that drew 660 predated it.
+.B "They refuted it by measuring:"
+.CW rio-pi-tk
+has all three of those commits
+.CW 8cf938ded , (
+.CW 230c4153a ,
+.CW c0e2c4861 ),
+renders the rectangle as 660 after rebuilding
 .CW libmemdraw
-and it is why the A/B above is on the board.  Reported, not diagnosed, and it
-matters beyond this item: any draw oracle taken under host emu right now is
-unreliable.
+from source, and has
+.I no
+.CW "memfillcolor: HIGH"
+diagnostic anywhere \(em so the difference had to be local to this tree, and
+the three cast commits were innocent.
+.PP
+.B "It was the instrument added alongside them."
+.CW memfillcolor()
+in this tree carries a local check for the AArch64 fault, and its comment
+states the test exactly \(em "does the destination lie in the same 4GB as
+bdata" \(em while the code did something else:
+.P1
+if(((uintptr)dp >> 32) != 0 || ((uintptr)i->data->bdata >> 32) != 0){
+	... print ...
+	return;
+}
+.P2
+That is "both in the LOW 4GB", an absolute test.  It is true on a board with
+1GB of RAM and FALSE FOR EVERY IMAGE ON A 64-BIT HOST, so under emu the branch
+was taken on every call and
+.CW memfillcolor
+.I "returned without filling."
+The 1x1 replicated source image was never filled white and the draw painted
+black on black, which is where ten pixels came from.
+.PP
+Fixed in
+.CW 4aca57792
+by implementing the relative test the comment asked for.  Controlled against
+the values recorded in that same comment rather than argued:
+.P1
+case                            dp            bdata        absolute relative
+board fault (recorded)          0x1008c6c40   0x8c6c40     fires    fires
+board fault, pre-byteaddr fix   0x3008c6c40   0x8c6c40     fires    fires
+board, healthy                  0x8c6c40      0x8c6c40     -        -
+host emu (measured)             0x10ca78230   0x10ca78230  fires    -
+.P2
+so the diagnostic still catches what it was built for.  Host emu now gives
+660 and
+.CW polytest
+13 ok 0 fail; the board is unaffected, as the table predicts and as kernel
+1791548940 confirms.
+.PP
+.B "The lesson, which is bigger than the bug:"
+a diagnostic that
+.CW return s
+is not a diagnostic, it is a behaviour change \(em and this one was invisible
+on the only target it was written for.  It also says something about
+attribution: I blamed three commits because one binary predating them behaved
+differently, which is a correlation and not a cause, and the peer's single
+measurement in a tree that HAS those commits settled it in one step.
 .NH 2
 H1a.  OPEN.  It tears, and nothing here separates drawing from scanout
 .LP
