@@ -1496,6 +1496,64 @@ it is a yacc parser plus
 .CW cgen ,
 and making it faster is a restructuring rather than an optimisation.
 .NH 2
+The same sweep is in every compiler, and fixing it helps only 7c
+.LP
+.B "All eleven compilers have the clear."
+.CW "grep 'active = 0;' utils/*c/peep.c"
+finds it once in each of 0c, 6c, 8c, jc, kc, qc, tc, vc and zc, and twice in
+5c, which has
+.CW finduse
+as well.  So the quadratic is a family property, not a 7c defect.
+.LP
+.B "But 6c does not blow up, and the reason is instructive."
+Applying the identical generation counter to
+.CW utils/6c/peep.c
+and measuring with 21 samples an arm, interleaved:
+.P1
+                  base min/med/max      gen min/med/max   overlap
+640 stmts /1 fn   10.9  11.5  12.1      11.0  11.4  12.1    YES
+640 stmts /4 fn    3.7   4.0   4.6       3.8   4.0   4.5    YES
+.P2
+.LP
+.B "Indistinguishable."
+A first pass at five samples an arm had reported 0.71x and 0.95x, which looked
+like a regression and was sampling noise \(em
+.B "the ranges answer a question five samples cannot."
+.LP
+The cause is the candidate set.
+.CW 6c 's
+.CW copyprop
+is reached only for
+.CW AMOVQ ,
+.CW AMOVSS
+and
+.CW AMOVSD ,
+because
+.CW AMOVL
+is deliberately excluded \(em on amd64 a 32-bit move zeroes the upper half and
+is a truncation, the same family of exclusion 7c has for
+.CW AMOVW .
+7c's candidate set includes
+.CW AMOV
+AND, since this document's width-aware change,
+.CW AMOVW
+and
+.CW AMOVWU ,
+which is thousands of extra calls per kernel.
+.B "The sweep only costs what it is called."
+.LP
+.B "So the 6c change was reverted,"
+because a change with no measured benefit should not ship even when its output
+is byte-identical \(em which it was, 98 of 98 pc64 objects.
+.B "What is worth recording is the conditional:"
+if width-aware propagation is ever done for 6c \(em and
+.CW peep.c 's
+own comment invites it, saying the cost of the exclusion is a redundant
+.CW MOVL
+\(em then the candidate set grows the way 7c's did and
+.B "the generation counter has to come with it,"
+or the new pass pays for itself in sweep time.
+.NH 2
 The shiftprop kernel on silicon
 .LP
 .B "Installed to the card and exercised, which the port's commit said was"
