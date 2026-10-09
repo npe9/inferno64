@@ -4,6 +4,30 @@ int xtramodes(Reg*, Adr*);
 
 static int	extcopy(Reg*);
 
+/*
+ * peepgen -- a generation counter in place of clearing Reg.active.
+ *
+ * copyprop() and finduse() each used to clear `active' on EVERY instruction in
+ * the function before each attempt, and each is attempted once per candidate
+ * instruction, so the clears alone were O(n^2) in function size.  MEASURED, at
+ * a constant 640 statements spread over a varying number of functions:
+ *
+ *	stmts/fn      10      40     160     640
+ *	peep (us)    390     641    1888   49450
+ *
+ * which is about n^2.4 -- a single 640-statement function spent 49ms in peep,
+ * eight times a whole average compile.
+ *
+ * The idiom is already used in this file's neighbour: reg.c's paint1() tests
+ * `r->active == head'.  The one requirement is that no stale value can equal
+ * a live generation, so `active' is cleared ONCE per function here, below,
+ * and peepgen only ever increases.
+ *
+ * finduse()/findu1() can share the counter because finduse is called only
+ * from xtramodes(), never from inside copy1() -- checked, not assumed.
+ */
+long peepgen;
+
 void
 peep(void)
 {
@@ -42,6 +66,10 @@ peep(void)
 			p = p->link;
 		}
 	}
+
+	for(r=firstr; r!=R; r=r->link)
+		r->active = 0;
+	peepgen = 0;
 
 loop1:
 	t = 0;
@@ -662,15 +690,13 @@ copyprop(Reg *r0)
 {
 	Prog *p;
 	Adr *v1, *v2;
-	Reg *r;
 
 	p = r0->prog;
 	v1 = &p->from;
 	v2 = &p->to;
 	if(copyas(v1, v2))
 		return 1;
-	for(r=firstr; r!=R; r=r->link)
-		r->active = 0;
+	peepgen++;
 	return copy1(v1, v2, r0->s1, 0);
 }
 
@@ -680,12 +706,12 @@ copy1(Adr *v1, Adr *v2, Reg *r, int f)
 	int t;
 	Prog *p;
 
-	if(r->active) {
+	if(r->active == peepgen) {
 		if(debug['P'])
 			print("act set; return 1\n");
 		return 1;
 	}
-	r->active = 1;
+	r->active = peepgen;
 	if(debug['P'])
 		print("copy %D->%D f=%d\n", v1, v2, f);
 	for(; r != R; r = r->s1) {
@@ -1005,9 +1031,9 @@ int
 findu1(Reg *r, Adr *v)
 {
 	for(; r != R; r = r->s1) {
-		if(r->active)
+		if(r->active == peepgen)
 			return 0;
-		r->active = 1;
+		r->active = peepgen;
 		switch(copyu(r->prog, v, A)) {
 		case 1: /* used */
 		case 2: /* read-alter-rewrite */
@@ -1026,10 +1052,7 @@ findu1(Reg *r, Adr *v)
 int
 finduse(Reg *r, Adr *v)
 {
-	Reg *r1;
-
-	for(r1=firstr; r1!=R; r1=r1->link)
-		r1->active = 0;
+	peepgen++;
 	return findu1(r, v);
 }
 

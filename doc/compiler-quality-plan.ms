@@ -1317,6 +1317,142 @@ pre-existing warnings printed twice because 41 more compiles ran in that build.
 .B "also wrong to,"
 for the opposite reason: dedup hides a count change.  Only the per-text counts
 answered it.
+.NH 1
+Making the compiler itself faster
+.LP
+A separate question from everything above, which is about the code 7c emits.
+.B "7c already compiles about 5.4 times faster than clang -O0"
+(6.3 ms against 34.2 ms, measured earlier in this document), so the question is
+where its own time goes and whether any of it is recoverable.
+.NH 2
+Where the time actually goes
+.LP
+.CW -N
+turns off
+.CW regopt
+and
+.CW peep ,
+which splits the compile for free: on
+.CW ../ip/tcp.c
+11.6 ms becomes 5.3 ms, and on
+.CW sdhcibcm.c
+7.4 ms becomes 5.2 ms.
+.B "So the optimiser is 30 to 54 per cent and the front end is the rest."
+.LP
+Timers around each phase of
+.CW regopt ,
+five real sources:
+.P1
+                 tcp.c   chan.c  proc.c  sdhci  devusb
+peep               65%      37%     41%    31%     45%
+liveness-prop      19%      32%     27%    39%     28%
+allreg-paint        3%       6%      7%     7%      6%
+synch, loopit,      -        -       -      -       -
+  paint1 costs    <10% between them on every file
+.P2
+.LP
+.B "Register allocation is 3 to 7 per cent."
+The phase with the reputation for being expensive is not worth touching here.
+.B "peep is the cost,"
+and the first guess about why was wrong: counting its
+.CW loop1
+iterations gives about 2 per function on every file, so it is not
+iteration-bound and a worklist would buy at most half of it.
+.NH 2
+peep was quadratic in function size
+.LP
+.B "A controlled experiment: 640 statements, held constant, spread over a"
+.B "varying number of functions."
+Same total work, different function sizes.
+.P1
+stmts/fn      10      40     160     640
+peep (us)    390     641    1888   49450
+liveness      112     124     218     316
+.P2
+.LP
+That is about
+.B "n to the 2.4"
+in function size: one 640-statement function spent
+.B "49 ms in peep alone,"
+eight times an entire average compile, while liveness over the same code stayed
+nearly flat.
+.LP
+.B "The cause is two O(n) sweeps performed once per CANDIDATE instruction."
+.CW copyprop()
+and
+.CW finduse()
+each began with
+.P1
+	for(r=firstr; r!=R; r=r->link)
+		r->active = 0;
+.P2
+.LP
+and each is attempted once per candidate, so the clears alone are O(n squared)
+in function size before either of the recursive walks they precede.
+.NH 2
+The fix, and what it is worth
+.LP
+.B "A generation counter."
+.CW Reg.active
+is a
+.CW long ,
+so instead of clearing n flags, bump a counter and compare equality.
+.B "The idiom is already used in the neighbouring file:"
+.CW reg.c 's
+.CW paint1()
+tests
+.CW "r->active == head" .
+.CW active
+is cleared
+.I once
+per function and the counter only increases, so no stale value can equal a live
+generation \(em and
+.CW finduse()
+can share the counter because it is called only from
+.CW xtramodes() ,
+never from inside
+.CW copy1() ,
+which was checked rather than assumed.
+.P1
+                            v3 (sweep)   generation   speedup
+640 stmts in  1 function      54.2 ms       4.7 ms     11.5x
+640 stmts in  4 functions      6.0 ms       4.1 ms      1.45x
+640 stmts in 16 functions      4.2 ms       3.7 ms      1.11x
+640 stmts in 64 functions      3.9 ms       3.7 ms      1.05x
+
+tcp.c                         12.0 ms       9.1 ms      1.31x
+six real kernel sources       43.1 ms      39.0 ms      1.10x
+full kernel build              6.0 s         5.7 s      1.05x
+.P2
+.LP
+.B "And the output is byte-identical,"
+which is the only acceptable result for a change that is purely about speed:
+152 of 152 kernel objects compare equal, and the two linked
+.CW iraspi3b
+images differ in
+.B "one byte,"
+the build stamp.
+.LP
+.B "So the honest value is 5 per cent end to end and a cliff removed."
+Typical kernel functions are small enough that the quadratic barely shows; the
+file with the largest functions gains 31 per cent, and a single large generated
+function gains an order of magnitude.
+.B "The 5 per cent is not the reason to do it \(em the removed cliff is,"
+because nothing warns you when you cross it and the symptom is a compiler that
+feels fine until one file takes a second.
+.LP
+.B "What is NOT worth doing, measured rather than assumed:"
+a peep worklist (about 2 iterations per function, so at most a halving of what
+remains), anything in register allocation (3 to 7 per cent), and anything in
+.CW synch ,
+.CW loopit
+or the
+.CW paint1
+cost pass (under 10 per cent between them).
+.B "The front end is 50 to 70 per cent and is the real floor;"
+it is a yacc parser plus
+.CW cgen ,
+and making it faster is a restructuring rather than an optimisation.
 .NH 2
 The shiftprop kernel on silicon
 .LP
