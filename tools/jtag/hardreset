@@ -93,7 +93,22 @@ PMBASE=0x3f100000
 RSTC=0x3f10001c
 WDOG=0x3f100024
 TMP=${TMPDIR:-/tmp}/hardreset.$$
-trap 'rm -f "$TMP"' 0 1 2 15
+
+#
+# One operator.  This reboots the board, so it belongs with kinstall.sh
+# and boot.sh on the guarded side of boardlock.sh rather than with the
+# read-only probes: a reset arriving in the middle of someone else's
+# card write is how the card got corrupted in the first place, and
+# nothing on the other end can tell a deliberate reset from a crash.
+#
+# Nothing invokes this script -- boot.sh and raspi3b.cfg only name it in
+# comments -- so there is no nested call to inherit the lock, and the
+# inheritance rule in boardlock.sh covers it if that ever changes.
+#
+. "$HERE/boardlock.sh"
+boardfree || { echo "hardreset: not resetting while another openocd holds the adapter" >&2; exit 1; }
+boardlock hardreset || { echo "hardreset: not resetting while another board operation runs" >&2; exit 1; }
+trap 'rm -f "$TMP"; boardunlock' 0 1 2 15
 
 #
 # Read Rstc first and preserve the bits outside WRCFG, because the field is

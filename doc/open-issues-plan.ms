@@ -2484,6 +2484,81 @@ without touching the board, printed
 .P1
 boot: confirming the boot on console 32543.ttys006.Noethikoma
 .P2
+.PP
+.B "And a second bug in the fix, which only zsh could show."
+.CW boardtty
+first found the adapter with
+.P1
+BOARDTTYPAT='/dev/cu.PL2303G-*'
+for d in $BOARDTTYPAT; do [ -e "$d" ] || continue; ...
+.P2
+which relies on an unquoted variable being glob-expanded.
+.CW sh ,
+.CW bash
+and
+.CW dash
+do that.
+.B "zsh does not"
+\(em it yields the pattern itself, so the loop tested a literal
+.CW /dev/cu.PL2303G-*
+for existence, found none, and announced that the Pi's adapter was
+unplugged while it was plugged in and held by screen 32543.  The tools all
+begin
+.CW #!/bin/sh
+so nothing in production was affected; it surfaced because the user's shell is
+zsh and
+.CW tools/jtag/README
+now tells people to source the file interactively, and every automated test had
+run it under
+.CW sh .
+.PP
+.CW "case $d in ($PAT)"
+does not fix it either: zsh does not treat the result of a parameter expansion
+as a pattern there without
+.CW GLOB_SUBST ,
+and that form matched nothing as well.  What works everywhere is a literal
+prefix,
+.CW "${d#$BOARDTTYPRE}" ,
+which is also enough \(em the thing being selected is "devices belonging to
+this adapter model".  The
+.CW G
+in the prefix is load-bearing: without it the prefix also matches the radio
+bench's plain PL2303 and
+.CW boardtty
+refuses as ambiguous (measured: "2 devices under /dev/cu.PL2303") rather than
+picking a board.
+.PP
+.B Verified.
+.CW tests/boardsess.sh
+runs the helper under
+.CW sh ,
+.CW dash ,
+.CW bash
+and
+.CW zsh
+and requires them to
+.I agree ,
+then requires the device it names to exist and the session to be one
+.CW "screen -ls"
+lists.  Restoring the old form makes zsh return empty and the test print
+DEFECT and exit 2.  The first attempt at that mutation did
+.I not
+reproduce it \(em
+.CW "${PRE}*"
+keeps the
+.CW *
+in the source text, which zsh does expand, so the glob character has to come
+from
+.I inside
+the variable.  A mutation that does not reproduce the bug is not a test of the
+fix, and the difference between those two spellings is the whole bug.
+.PP
+.B "The rule worth keeping:"
+a file that is
+.I sourced
+by whatever shell the reader happens to use must be tested in each of those
+shells.  A one-shell test cannot see a one-shell bug, and this one passed
+cleanly while the helper was broken for the user's own shell.
 .NH 2
 C3.  DONE.  Nothing enforced one-operator, and the card paid for it
 .LP
@@ -2608,6 +2683,60 @@ build that passed bndstest 11 of 11 and drawink all-checks), that its first
 words are the
 .CW "aa0003f3 d53800b5 92401eb5 34000175"
 the board failed to find, and that fsck now reports the volume clean.
+.PP
+.B "WHICH TOOLS ARE GUARDED."
+A heading that says one operator and DONE would otherwise be read as all of
+them, and it is not all of them.
+Eight scripts in
+.CW tools/jtag
+start
+.CW openocd .
+Three now take the lock:
+.CW kinstall.sh ,
+.CW boot.sh
+and
+.CW hardreset
+\(em the two that hold the adapter for minutes and the one that reboots the
+board.  A reset arriving in the middle of someone else's card write is how this
+started, and nothing at the other end can tell a deliberate reset from a crash.
+.PP
+Five are deliberately
+.I not
+guarded:
+.CW alive ,
+.CW kmesg ,
+.CW kstack ,
+.CW vmheld ,
+.CW where
+and
+.CW unwedge .
+They are one-shot read-only probes, several are invoked by the guarded tools
+(
+.CW boot.sh
+calls
+.CW kmesg
+and
+.CW unwedge ;
+.CW wedgediag
+calls
+.CW alive ,
+.CW kmesg
+and
+.CW where ;
+.CW efsbatch
+calls
+.CW kmesg
+and
+.CW vmheld
+), and a probe that fails because the adapter is busy announces itself and
+changes nothing.  The hazard they carry is legibility, not damage:
+.CW LIBUSB_ERROR_ACCESS
+reads as a dead board, which cost a session once already.  Closing that means
+checking only when the probe is the top-level operation, because a nested call
+must trust its parent \(em worth doing, not done here, and NOT to be done by
+making the probes refuse unconditionally, which would break
+.CW boot.sh 's
+own recovery path.
 
 .NH 1
 D.  Housekeeping

@@ -51,14 +51,40 @@
 # freshly loaded kernel zeroes its BSS and the ring holds only this
 # boot.
 #
-# $BOARDTTY names the device outright.  $BOARDTTYPAT is the glob used to
-# find it, and defaults to this desk's Pi adapter: a Prolific PL2303G,
-# which is a different model from the plain PL2303 on the radio bench,
-# so the "G" is doing real work in that pattern.  Replug the adapter
-# into another port and the serial-number suffix stays, because it comes
-# from the adapter.
+# $BOARDTTY names the device outright.  $BOARDTTYPRE is the path prefix
+# used to find it, and defaults to this desk's Pi adapter: a Prolific
+# PL2303G, which is a DIFFERENT MODEL from the plain PL2303 on the radio
+# bench, so the "G" is load-bearing -- without it the prefix also
+# matches cu.PL2303-USBtoUART22430 and boardtty refuses as ambiguous
+# rather than picking the wrong board.  Replug the adapter into another
+# port and the serial-number suffix stays, because it comes from the
+# adapter; swap the adapter and it changes, which is why nothing here
+# hardcodes a whole device path.
 #
-BOARDTTYPAT=${BOARDTTYPAT:-'/dev/cu.PL2303G-*'}
+# A PREFIX, NOT A GLOB, and that is not a style choice.
+#
+# This was `BOARDTTYPAT='/dev/cu.PL2303G-*'` matched with
+# `for d in $BOARDTTYPAT`, which relies on an unquoted variable being
+# glob-expanded.  sh, bash and dash do that.  ZSH DOES NOT -- it yields
+# the pattern itself, unexpanded, so the loop tested a literal
+# "/dev/cu.PL2303G-*" for existence, found none, and reported
+#
+#	boardsess: no device matching /dev/cu.PL2303G-* -- is the Pi's
+#	adapter plugged in?
+#
+# while the adapter was plugged in and held by screen 32543.  It was
+# caught only because the user's shell is zsh and this file was sourced
+# interactively, which is exactly what tools/jtag/README now tells
+# people to do.  Every automated test had run it under sh and passed.
+# `case $d in ($PAT)` does not fix it: zsh does not treat the result of
+# a parameter expansion as a pattern there either (it needs GLOB_SUBST),
+# so that form matched 0 as well.
+#
+# ${d#$PRE} compares a literal prefix and behaves identically in sh,
+# dash, bash and zsh.  It is also enough: the thing being selected is
+# "devices belonging to this adapter model", which is a prefix.
+#
+BOARDTTYPRE=${BOARDTTYPRE:-/dev/cu.PL2303G-}
 
 #
 # Print the Pi's serial device, or nothing.
@@ -74,14 +100,16 @@ boardtty() {
 	fi
 
 	_bs_n=0
-	for _bs_d in $BOARDTTYPAT; do
+	_bs_found=
+	for _bs_d in /dev/cu.*; do
 		[ -e "$_bs_d" ] || continue
+		[ "${_bs_d#$BOARDTTYPRE}" != "$_bs_d" ] || continue
 		_bs_found=$_bs_d
 		_bs_n=`expr $_bs_n + 1`
 	done
 
 	if [ "$_bs_n" = 0 ]; then
-		echo "boardsess: no device matching $BOARDTTYPAT -- is the Pi's adapter plugged in?" >&2
+		echo "boardsess: no device under $BOARDTTYPRE -- is the Pi's adapter plugged in?" >&2
 		return 1
 	fi
 	#
@@ -89,7 +117,7 @@ boardtty() {
 	# picking one, which is the entire bug being fixed here.
 	#
 	if [ "$_bs_n" -gt 1 ]; then
-		echo "boardsess: $_bs_n devices match $BOARDTTYPAT; set BOARDTTY to choose" >&2
+		echo "boardsess: $_bs_n devices under $BOARDTTYPRE; set BOARDTTY to choose" >&2
 		return 1
 	fi
 	echo "$_bs_found"
