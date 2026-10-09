@@ -579,3 +579,26 @@ os/inferno/*/i*.acid
 # committing them: mk makes them before anything includes them.
 #
 libinterp/w[0-9]/
+
+# --- Font subfonts share suffixes with object files (added 2026-10-09) ---
+#
+# .gitignore:2 is *.[8qkv5967o] and line 376 is *.j, meant for kencc output
+# -- but fonts/ is full of files whose last component is a POINT SIZE:
+#
+#	fonts/misc/greek.8   fonts/courier/latin1.5   fonts/lucida/*.10.0
+#
+# Those are subfont DATA, not 8c or jc objects.  The 3366 already tracked
+# are unaffected, because an ignore rule does not apply to a tracked file
+# -- but a NEW one would be skipped by `git add' without a word.  Measured,
+# not supposed: a copy at fonts/misc/zzprobe.8 came back
+#
+#	.gitignore:2:*.[8qkv5967o]	fonts/misc/zzprobe.8
+#
+# from git check-ignore, and the same for fonts/courier/zzprobe.5.
+#
+# Re-including the whole directory is safe because nothing under fonts/ is
+# ever compiled: of 3366 tracked files, ZERO are .c, .s or .h, so there is
+# no object there for this to un-ignore.  Last matching rule wins, so this
+# must stay after the globs above.
+#
+!fonts/**
