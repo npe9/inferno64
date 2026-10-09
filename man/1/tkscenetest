@@ -166,6 +166,14 @@ opacity 0     0 bytes inked
 opacity 128   272256 of 525088, wanted 263573 +\-13178
 .EE
 .PP
+The same three figures on the host and on the Pi 3B kernel, not merely
+both within tolerance: the two share
+.B libtk/scene.c
+and
+.I libmemdraw
+and differ only in the compiler, so anything but equality would have
+been the question.
+.PP
 The last line is the load\-bearing one, and it is
 .B ink
 \(em the summed distance of every channel from white \(em not inked

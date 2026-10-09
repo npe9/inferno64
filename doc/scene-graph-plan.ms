@@ -346,6 +346,17 @@ opacity 0     0 bytes inked
 opacity 128   272256 of 525088, wanted 263573 +\-13178
 .EE
 .LP
+The same three figures on the host and on the Pi 3B kernel \(em
+.CW "272256 of 525088"
+on both, not merely both within tolerance \(em which is what it should
+be, since the two share
+.CW libtk/scene.c
+and
+.I libmemdraw
+and differ only in the compiler. 115 ok 0 fail hosted, 109 ok 0 fail 2
+skipped on the kernel, the skips being a font file and a bitmap absent
+from the kernel root.
+.PP
 The third line is
 .B ink
 \(em the summed distance of every channel from white, not inked
