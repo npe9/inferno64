@@ -1360,6 +1360,81 @@ pre-existing warnings printed twice because 41 more compiles ran in that build.
 for the opposite reason: dedup hides a count change.  Only the per-text counts
 answered it.
 .NH 1
+7c against clang on real code, before and after
+.LP
+The 1.27x median earlier in this document is
+.CW 6c
+against clang on 333 files of
+.CW 9front/src .
+This repeats it for
+.CW 7c ,
+which is where this session's two passes are, and adds the arm a comparison
+like this usually lacks:
+.B "the same corpus compiled by the SAME compiler with the passes switched off."
+Both toolchains are given the same aarch64 headers so they see identical
+declarations.
+.P1
+332 files compiled by BOTH, nonzero code
+
+                        passes OFF     shipped
+7c instructions              69812       68655
+clang -O1                    47457       47457
+aggregate ratio              1.47x       1.45x
+median per file              1.42x       1.40x
+clang worse than 7c         44/332      45/332
+
+deciles, shipped: 0.18 0.92 1.03 1.13 1.24 1.40 1.53 1.70 1.86 2.26
+.P2
+.LP
+.B "So kencc emits about 40 per cent more instructions than clang -O1 at the"
+.B "median, and FEWER on one file in seven."
+The spread is the interesting part and the median hides it: the bottom third is
+at parity or better and the top decile is near 2.3x.
+.LP
+.B "And the two passes closed about a twentieth of the distance."
+The excess over clang was 22355 instructions and is now 21198, so 1157 of it
+went \(em
+.B "5.2 per cent of the gap,"
+for 1.66 per cent of kencc's own output on this corpus.
+.B "That is much less than the 4.0 per cent they removed from the raspi3b"
+.B "kernel,"
+and the difference is the code mix rather than an inconsistency: both passes
+target array indexing and int-to-pointer arithmetic, which a kernel is full of
+and which
+.CW libc 's
+string and byte routines do comparatively little of.
+.B "An optimisation's worth is a property of the code it is pointed at,"
+so quoting one figure for both would have been wrong in whichever direction it
+was quoted.
+.NH 2
+A flaw found in the method, and then deflated
+.LP
+.B "clang recognises libc names as builtins and discards the bodies."
+.CW strlen
+in
+.CW 9front/src/libc/port/strlen.c
+compiles to a
+.I single
+.CW ret
+\(em one instruction against ten with
+.CW -fno-builtin ,
+which restores the body.  Since this corpus is mostly
+.CW libc ,
+that looked like a systematic bias in clang's favour affecting every ratio
+here.
+.LP
+.B "It is not.  Across 332 files -fno-builtin moves clang by 92 instructions"
+.B "out of 47457,"
+and the median from 1.40x to 1.38x.  Only a handful of files define a name
+clang has a builtin for.
+.B "Real in kind, negligible in magnitude,"
+and the honest thing is to say so rather than leave a dramatic-looking finding
+standing \(em the
+.I selftest
+that printed the listing is the only reason it was seen at all, and the same
+selftest is why it did not become a correction to the 6c number that did not
+need correcting.
+.NH 1
 Making the compiler itself faster
 .LP
 A separate question from everything above, which is about the code 7c emits.
