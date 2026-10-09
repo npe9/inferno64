@@ -294,6 +294,20 @@ static int	vsclosed;	/* the window filled up before it was read */
  *
  * 640x480 at 60 in standard DMT timing is 480 active + 10 front porch + 2
  * vsync + 33 back porch = 525 lines at 31.75us, so blanking is 1429us.  The
+ *
+ * REFUTED ON THIS HARDWARE, and the whole paragraph below is kept only as the
+ * reasoning that led to the measurement.  edidtimings() now asks the firmware:
+ * the framebuffer is 640x480 but the firmware SCALES it into the display's
+ * mode, and the measured live pixel clock is 148500kHz -- 1920x1080 at 60Hz,
+ * whose blanking is 45 lines of 14.81us = 667us, not 1429us.  Cross-checked:
+ * pixclk times the measured frame period gives 2474901 pixels a frame against
+ * 1080p60's 2475000.  So the worst case below, 902us, DOES NOT FIT, and the
+ * conclusion this comment reaches is false here.  Every standard CEA 60Hz mode
+ * puts vertical blanking at about 4 per cent of the frame; the 640x480 DMT mode
+ * assumed below is the outlier at 8.6.  See doc/open-issues-plan.ms, "H1a
+ * REFUTED on this hardware".  Flippace is 0, so nothing shipping depends on it;
+ * what is refuted is the case for turning it on.
+ *
  * pacing window below is fpperiod/32, 521us.  Therefore:
  *
  *	vsync event meaning     window spans     inside the 1429us blank?
@@ -359,9 +373,13 @@ static int	vsclosed;	/* the window filled up before it was read */
  * is tear-free.  Phase zero is the instant mboxvsync() returned, which is at a
  * vertical blank plus whatever latency the firmware's signalling adds, and that
  * latency is not knowable from here.  640x480 has 525 total lines for 480
- * active, so the blank is about 8.6 per cent of a frame -- 1428us, wider than
- * one bucket -- but whether phase zero sits inside it is a claim about what the
- * scanout showed, and every instrument in this file is a readback.
+ * active, so the blank WOULD BE about 8.6 per cent of a frame -- 1428us, wider
+ * than one bucket -- but that is the framebuffer's mode and NOT the mode being
+ * scanned out: measured, the firmware drives 1080p60 and the blank is 4.0 per
+ * cent, 667us, NARROWER than the 902us worst case.  So the margin this
+ * paragraph relies on does not exist.  And whether phase zero sits inside the
+ * blank is still a claim about what the scanout showed, which no instrument in
+ * this file can see, because every one of them is a readback.
  *
  * AND IT IS NOT A SHIPPABLE MECHANISM, deliberately.  The spin runs with
  * drawlock held and waits up to a whole frame, which is exactly what the
