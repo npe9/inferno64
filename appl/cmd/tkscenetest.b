@@ -137,6 +137,133 @@ paint(disp: ref Display, name: string, cmds: list of string): array of byte
 # at their identities, or the two sides are not rendering the same
 # description.
 #
+#
+# Render a decoded tree into a fresh W x H image and hand back its
+# pixels.  Shared by replay() and modify() so that the two cannot
+# disagree about size, channel or initial colour.
+#
+rendered(disp: ref Display, nodes: array of ref Node): (array of byte, int, string)
+{
+	off := disp.newimage(Rect((0,0),(W,H)), draw->RGB24, 0, Draw->White);
+	if(off == nil)
+		return (nil, 0, "newimage");
+	(nil, unsup, rerr) := tkrender->draw(off, nodes);
+	if(rerr != nil)
+		return (nil, unsup, rerr);
+	b := array[W*H*3] of byte;
+	if(off.readpixels(off.r, b) != len b)
+		return (nil, unsup, sys->sprint("readpixels: %r"));
+	return (b, unsup, nil);
+}
+
+#
+# A tree read out of libtk, changed, written back to text, read again
+# and drawn.  This is the capability the plan asked for: before the
+# encoder a dump could be read but not written, so nothing outside
+# libtk could alter a tree and have the alteration drawn.
+#
+modify(disp: ref Display)
+{
+	if(tkrender == nil){
+		report(0, "modify: tkrender(2) loaded");
+		return;
+	}
+	# Its own init, so this case does not depend on running after the
+	# replay section.  init() only rebinds the modules and clears the
+	# font and image caches, so calling it twice costs a reload and
+	# changes nothing.
+	tkrender->init(disp);
+	if(paint(disp, "modify/base", list of {
+		"frame .w -width 60 -height 24 -relief raised -borderwidth 2",
+		"pack .w"}) == nil){
+		report(0, "modify: libtk drew the base frame");
+		return;
+	}
+	dump := tk->cmd(tk->toplevel(disp, ""), "render tree");
+	(nodes, derr) := tknode->decode(dump);
+	if(derr != nil || len nodes == 0){
+		report(0, sys->sprint("modify: the tree decodes (%s, %d nodes)",
+			errstr(derr), len nodes));
+		return;
+	}
+	(base, nil, berr) := rendered(disp, nodes);
+	if(base == nil){
+		report(0, "modify: " + berr);
+		return;
+	}
+
+	# Text in, text out, nothing touched: the round trip must not
+	# perturb the tree.  Blind to a symmetric encoding error by
+	# construction -- see the note at the call site -- so this bounds
+	# the round trip's stability and leaves correctness to the
+	# byte-identity check against libtk's own text.
+	(again, aerr) := tknode->decode(tknode->encode(nodes));
+	if(aerr != nil || len again != len nodes){
+		report(0, sys->sprint("modify: a plain round trip keeps the tree (%s, %d of %d nodes)",
+			errstr(aerr), len again, len nodes));
+		return;
+	}
+	(rt, nil, rterr) := rendered(disp, again);
+	if(rt == nil){
+		report(0, "modify: " + rterr);
+		return;
+	}
+	report(differ(base, rt) == 0,
+		sys->sprint("a tree through encode and decode draws the same picture (%d bytes differ)",
+			differ(base, rt)));
+
+	# Now change one node's colour.  A frame's fill is a roundfill,
+	# and its rgba is the one field whose effect on the picture needs
+	# no font and no geometry.
+	ri := -1;
+	for(i := 0; i < len nodes; i++)
+		if(nodes[i].name() == "roundfill" && ri < 0)
+			ri = i;
+	if(ri < 0){
+		report(0, "modify: the frame has a roundfill to recolour");
+		return;
+	}
+	was := nodes[ri].rgba;
+	# Opaque mid-grey, and not whatever it already was.
+	#
+	# Two traps in writing this constant, both of which this case hit
+	# before it worked.  16r808080ff cannot be written as a literal:
+	# a hex literal past 2^31 is typed `big' and rgba is an int.  And
+	# shifting a literal does not help either, because the compiler
+	# FOLDS it in 32 bits -- (16r808080 << 8) | 16rff came out as
+	# -2139062017, the same bits read signed, and compared unequal to
+	# the 2155905279 the decoder produced.  The shift distance has to
+	# be a variable so the arithmetic happens at runtime, where an
+	# int is 64 bits.  The check that caught this is the one printing
+	# BOTH values; `edited[ri].rgba == want' alone would have been a
+	# bare FAIL with nothing to see.
+	sh := 8;
+	want := (16r808080 << sh) | 16rff;
+	if(was == want)
+		want = (16r404040 << sh) | 16rff;
+	nodes[ri].rgba = want;
+	(edited, eerr) := tknode->decode(tknode->encode(nodes));
+	if(eerr != nil || len edited != len nodes){
+		report(0, sys->sprint("modify: the edited tree decodes (%s)", errstr(eerr)));
+		return;
+	}
+	report(edited[ri].rgba == want,
+		sys->sprint("an edited rgba survives the text form: %bd (want %bd, was %bd)",
+			big edited[ri].rgba, big want, big was));
+	(after, nil, afterr) := rendered(disp, edited);
+	if(after == nil){
+		report(0, "modify: " + afterr);
+		return;
+	}
+	# It must actually reach the picture.  With the control above
+	# showing the round trip is faithful, a difference here can only
+	# be the edit.
+	report(differ(base, after) > 0,
+		sys->sprint("and the edit reaches the picture (%d bytes differ from the original)",
+			differ(base, after)));
+	nodes[ri].rgba = was;
+}
+
 replay(disp: ref Display, name: string, cmds: list of string)
 {
 	lib := paint(disp, "replay/" + name, cmds);
@@ -151,6 +278,30 @@ replay(disp: ref Display, name: string, cmds: list of string)
 			name, errstr(derr), len nodes));
 		return;
 	}
+	#
+	# The encoder is held to LIBTK'S OWN TEXT, not to its own round
+	# trip: dump came out of the C serialiser in libtk/scene.c, so a
+	# byte-for-byte match is agreement between two independent
+	# implementations.  encode(decode(x)) == x compared against
+	# nothing but itself would pass with both halves wrong the same
+	# way, which is the trap a symmetric fixture always sets.
+	#
+	enc := tknode->encode(nodes);
+	if(enc != dump){
+		w := len dump;
+		if(len enc < w)
+			w = len enc;
+		at := w;
+		for(k := 0; k < w; k++)
+			if(enc[k] != dump[k]){
+				at = k;
+				break;
+			}
+		report(0, sys->sprint("replay %s: encode != libtk's text (%d vs %d bytes, first differs at %d)",
+			name, len enc, len dump, at));
+	}else
+		report(1, sys->sprint("replay %s: encode reproduces libtk's own text (%d bytes)",
+			name, len enc));
 	# The same size and channel as paint()'s, and the same initial
 	# colour, so anything the tree does not cover is equal by
 	# construction rather than by accident.
@@ -1497,6 +1648,24 @@ init(ctxt: ref Draw->Context, argv: list of string)
 				sys->sprint("the spline's %d points decode, first (%d,%d)",
 					len cnodes[sp].pts,
 					cnodes[sp].pts[0].x, cnodes[sp].pts[0].y));
+
+		# MODIFYING A TREE OUTSIDE LIBTK AND HANDING IT BACK,
+		# which is what the encoder is for and the last piece of
+		# item 1.
+		#
+		# What licenses this is the byte-identity check in
+		# replay(), not anything in here: encode(decode(d)) == d
+		# against libtk's OWN text compares two independent
+		# implementations.  The round trip inside modify() is
+		# SYMMETRIC and cannot see an encoding error -- measured,
+		# not assumed: with rgba written as %d instead of %ud, all
+		# six byte-identity checks fail and `draws the same
+		# picture' still reports 0 bytes differ, because a wrong
+		# value written and read the same way renders the same
+		# twice.  It is a check that the round trip does not
+		# PERTURB a tree, which is worth having and is not a check
+		# that it is correct.
+		modify(disp);
 
 		# IS A DUMP SCALED? The renderer writes every scaled node
 		# into a stack copy and never touches the list, and

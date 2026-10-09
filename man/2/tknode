@@ -25,12 +25,14 @@ Node: adt {
     pts:      array of Draw\->Point;
     fontname: string;
     text:     string;
+    rawname:  string;
 
     name: fn(n: self ref Node): string;
 };
 
 init:     fn();
 decode:   fn(dump: string): (array of ref Node, string);
+encode:   fn(nodes: array of ref Node): string;
 typename: fn(t: int): string;
 typeof:   fn(name: string): int;
 .EE
@@ -156,6 +158,74 @@ says how the image is used: 1 for a
 with
 .B rgba
 the colour painted through it, and 0 for a source drawn as it stands.
+.SH "WRITING A TREE BACK"
+.I Encode
+writes an array of
+.B Node
+out in the same form
+.I decode
+reads, so a tree can be read out of
+.IR libtk ,
+changed, and drawn by something else \(em
+.IR tkrender (2),
+or any backend that takes the same text. Before it, a dump could be
+read and not written.
+.PP
+.B "It is held to libtk's own output, not to its own round trip."
+.I "encode(decode(d))"
+must equal
+.I d
+byte for byte where
+.I d
+came from the C serialiser in
+.B libtk/scene.c ,
+which makes the comparison one between two independent
+implementations.
+.IR Tkscenetest (1)
+does this for six widgets \(em a raised frame, a label, a selected
+checkbutton, a flat scrollbar, a button and an entry \(em at 221 to 360
+bytes each.
+.PP
+.B "A round trip against itself would not have been a test."
+Measured, not argued: with
+.B rgba
+written as
+.B %d
+instead of
+.BR %ud ,
+all six byte-identity checks fail and the separate check that a tree
+through
+.I encode
+and
+.I decode
+draws the same picture still reports
+.B "0 bytes differ"
+\(em because a wrong value written and read the same way renders the
+same twice. That check bounds whether the round trip PERTURBS a tree,
+and says nothing about whether it is right.
+.PP
+.B rawname
+is the type name exactly as
+.I libtk
+wrote it, and exists so that a node this module does not know \(em which
+.I libtk
+emits as
+.BR unknown- N
+\(em survives a decode and encode unchanged.
+.B ntype
+is
+.B \-1
+for those and loses the
+.IR N ,
+so without
+.B rawname
+such a tree could not be written back as it was read. A
+.B Node
+built by hand leaves
+.B rawname
+nil and is named from
+.B ntype
+instead.
 .SH "SPANS"
 .BR Tclip ,
 .B Ttransform
@@ -209,6 +279,33 @@ for a number it does not know. That is what a tree from a newer
 looks like, and a consumer should treat an unknown node as something to
 skip rather than as a corrupt dump.
 .SH BUGS
+.I Libtk
+cannot be handed a tree back.
+.I Encode
+produces the text
+.I libtk
+produces, but there is no command that makes
+.I libtk
+RENDER a tree it did not build, so "handed back" means handed to another
+consumer such as
+.IR tkrender (2),
+not returned to
+.IR libtk .
+Nothing in the tree needs that yet, and it would be a new entry point
+rather than a change to this module.
+.PP
+.I Encode
+is not tested on a tree holding a node type this module does not know.
+.B rawname
+is written and the path is one line, but no
+.I libtk
+in this tree emits an
+.BR unknown- N
+\(em
+.IR tkscenetest (1)
+checks that no dump contains one \(em so the case is reasoned and not
+run.
+.PP
 It does not cover
 .B Tgroup ,
 .B Tlinear

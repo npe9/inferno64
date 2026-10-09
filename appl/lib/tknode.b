@@ -118,7 +118,8 @@ decodeline(l: string): (ref Node, string)
 		return (nil, sys->sprint("%d fields, want at least %d",
 			nt, 1 + Nfixed));
 	n := ref Node;
-	n.ntype = typeof(hd toks);
+	n.rawname = hd toks;
+	n.ntype = typeof(n.rawname);
 	toks = tl toks;
 	f := array[nt-1] of int;
 	for(i = 0; i < nt-1; i++){
@@ -183,4 +184,71 @@ decode(dump: string): (array of ref Node, string)
 		nodes = tl nodes;
 	}
 	return (a, err);
+}
+
+#
+# The inverse of dumpstr() in libtk/scene.c, escape for escape.  The
+# four it escapes are the only four: everything else goes out as itself,
+# including bytes above 127, because libtk writes `%c' per byte and a
+# UTF-8 sequence survives that unchanged.
+#
+quotestr(st: string): string
+{
+	o := " \"";
+	for(i := 0; i < len st; i++){
+		case st[i] {
+		'\\' =>	o += "\\\\";
+		'"' =>	o += "\\\"";
+		'\n' =>	o += "\\n";
+		'\t' =>	o += "\\t";
+		* =>	o[len o] = st[i];
+		}
+	}
+	return o + "\"";
+}
+
+encodeline(n: ref Node): string
+{
+	nm := n.rawname;
+	if(nm == nil){
+		#
+		# Built by hand rather than decoded.  A type we know has a
+		# name; one we do not gets libtk's own spelling for it, so
+		# the line is still something libtk could have written.
+		#
+		if(n.ntype >= 0 && n.ntype < len names)
+			nm = names[n.ntype];
+		else
+			nm = sys->sprint("unknown-%d", n.ntype);
+	}
+	#
+	# rgba is the ONE unsigned field -- libtk writes it with %lud --
+	# and Limbo's %d prints the low 32 bits SIGNED, so an alpha of
+	# 0xff000000 would come out as -16777216 and a backend reading it
+	# would get a negative colour.  %ud prints 4278190080, which is
+	# what the C side wrote.  Every other field is a signed
+	# coordinate and uses %d.
+	#
+	l := sys->sprint("%s %d %d %d %d %d %d %d %d %d %d %ud %d %d %d",
+		nm,
+		n.r.min.x, n.r.min.y, n.r.max.x, n.r.max.y,
+		n.dstr.min.x, n.dstr.min.y, n.dstr.max.x, n.dstr.max.y,
+		n.sp.x, n.sp.y,
+		n.rgba, n.radius, n.width, len n.pts);
+	for(i := 0; i < len n.pts; i++)
+		l += sys->sprint(" %d %d", n.pts[i].x, n.pts[i].y);
+	l += quotestr(n.fontname);
+	l += quotestr(n.text);
+	return l + "\n";
+}
+
+encode(nodes: array of ref Node): string
+{
+	if(sys == nil)
+		init();
+	o := "";
+	for(i := 0; i < len nodes; i++)
+		if(nodes[i] != nil)
+			o += encodeline(nodes[i]);
+	return o;
 }

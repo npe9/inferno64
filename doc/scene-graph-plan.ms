@@ -392,12 +392,81 @@ spline in the tree was drawing the wrong shape. See
 had fixed the same four casts a week earlier with no test, and 36 of
 the 38 worktrees on this machine still carry them.
 .PP
-.B "What is left is an encoder,"
-which nothing yet needs: a dump can be read but not written back, so a
-tree cannot be modified outside
+.B "The encoder. DONE."
+.CW tknode->encode()
+writes an array of
+.CW Node
+back out in the form
+.CW decode
+reads, so a tree can now be read out of
+.I libtk ,
+changed, and drawn \(em which it could not be before: a dump could be
+read and not written.
+.PP
+.B "Held to libtk's own text, not to its own round trip."
+.CW "encode(decode(d))"
+equals
+.CW d
+byte for byte where
+.CW d
+came from the C serialiser in
+.CW libtk/scene.c ,
+so the comparison is between two independent implementations. Six
+widgets, 221 to 360 bytes each, in
+.CW tkscenetest (1);
+149 ok 0 fail hosted.
+.PP
+.B "And the symmetric check is blind, which was measured rather than
+.B "assumed."
+There is also a check that a tree through
+.CW encode
+and
+.CW decode
+draws the same picture. With
+.CW rgba
+written as
+.CW %d
+instead of
+.CW %ud
+all six byte-identity checks fail and that one still reports
+.CW "0 bytes differ" ,
+because a wrong value written and read the same way renders the same
+twice. It bounds whether the round trip PERTURBS a tree and says
+nothing about whether it is right \(em so the licence for the
+modification case comes from the byte-identity check and not from it.
+.PP
+.B "Two traps in the encoder itself,"
+both caught by checks that print their inputs rather than just a
+verdict.
+.CW rgba
+is the one unsigned field \(em libtk writes it
+.CW %lud
+\(em and Limbo's
+.CW %d
+prints the LOW 32 BITS SIGNED, so an alpha of
+.CW 0xff000000
+came out as
+.CW \-16777216 .
+And the constant to compare it against cannot be written as a literal:
+.CW 16r808080ff
+is typed
+.CW big
+(past 2^31) and
+.CW "(16r808080 << 8) | 16rff"
+is FOLDED IN 32 BITS, giving
+.CW \-2139062017
+against the decoder's
+.CW 2155905279 .
+The shift distance has to be a variable so the arithmetic happens at
+runtime, where an int is 64 bits.
+.PP
+.B "What is left is not in this module:"
 .I libtk
-and handed back. Reading is what recording, remote rendering and a
-geometry\-consuming backend all want, and all three are now writable.
+cannot be handed a tree back. There is no command that makes it render
+a tree it did not build, so "handed back" means handed to
+.CW tkrender (2)
+or another consumer. That would be a new entry point and nothing needs
+it.
 .IP \(bu
 .B "Resolution independence. DONE."
 Render a tree at a scale, which pixels cannot do \(em the one capability

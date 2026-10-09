@@ -64,6 +64,15 @@ Tknode: module
 		fontname:	string;
 		text:		string;
 
+		#
+		# The type name exactly as libtk wrote it, kept so that a
+		# node this module does not know -- which libtk emits as
+		# `unknown-N' -- survives a decode and encode unchanged.
+		# Without it ntype -1 loses the N and the tree could not be
+		# written back as it was read.
+		#
+		rawname:	string;
+
 		name:	fn(n: self ref Node): string;
 	};
 
@@ -74,6 +83,17 @@ Tknode: module
 	# error, because a truncated tree is more use than nothing when
 	# the question is what went wrong.
 	decode:	fn(dump: string): (array of ref Node, string);
+
+	# Write nodes back out in the same form decode reads, so a tree
+	# can be modified outside libtk.  This is the other half of item 1
+	# of doc/scene-graph-plan.ms.
+	#
+	# It is held to libtk's own output, not to its own round trip:
+	# encode(decode(d)) must equal d byte for byte where d came from
+	# libtk's C serialiser, which is an independent producer.  A
+	# round trip against itself would pass with both halves wrong the
+	# same way.
+	encode:	fn(nodes: array of ref Node): string;
 
 	# The name for a type, and the type for a name.  typeof returns
 	# -1 for a name this module does not know, which is what a tree
