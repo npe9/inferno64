@@ -689,26 +689,88 @@ Image_lineop(void *fp)
 	drawline(fp, f->op);
 }
 
+/*
+ * A Limbo `array of Point' is NOT a C Point array, and four call sites
+ * here used to say it was, under a comment claiming they had the same
+ * shape:
+ *
+ *	fillpolyop(d, (Point*)f->p->data, f->p->len, ...)
+ *
+ * A Limbo int is a WORD, which is intptr, so libinterp/w8/runt.h gives
+ * Draw_Point_size 16 while the C Point in include/draw.h is two s32 and
+ * is 8.  Three points stored as the words 2 7 13 3 13 10 therefore
+ * arrived as (2,0) (7,0) (13,0) -- a triangle flattened onto one row,
+ * enclosing nothing.  Measured before this fix, with tests/polytest:
+ * fillpoly of a rectangle drew 0 pixels where draw() of the same
+ * rectangle drew 660, and poly of a segment drew 1 where line() drew
+ * 55.  Every polygon and spline in the tree went through one of the
+ * four casts -- Image.poly, Image.bezspline, Image.fillpoly,
+ * Image.fillbezspline, which is all of them -- for as long as the
+ * 64-bit port has existed.
+ *
+ * THE TREE ALREADY KNEW, which is the part worth keeping: the
+ * reinterpreting macros in include/draw.h are commented out and
+ * replaced with field-by-field conversions, IPOINT(p) being
+ * ((Point){(s32)((p).x),(s32)((p).y)}).  Somebody fixed the scalar path
+ * and left the array casts behind with the comment that justified them
+ * still attached, so the file contained both the bug and its own
+ * refutation.  On a 32-bit build (w4, Draw_Point_size 8) the cast is
+ * harmless, which is why it survived the port rather than the port
+ * introducing it.
+ *
+ * The conversion allocates, because the two layouts are different sizes
+ * and there is nowhere in the Limbo array to put the narrower form.
+ * free() is called immediately after the drawing op and before
+ * checkflush(), which keeps the window in which a raise could leak down
+ * to the rasteriser itself -- that is libmemdraw, which does not raise.
+ */
+static Point*
+cvtpoints(Array *a, int *np)
+{
+	Draw_Point *dp;
+	Point *p;
+	int i, n;
+
+	*np = 0;
+	if(a == (Array*)H || a == nil)
+		return nil;
+	n = a->len;
+	if(n <= 0)
+		return nil;
+	p = malloc(n*sizeof(Point));
+	if(p == nil)
+		error(exNomem);
+	dp = (Draw_Point*)a->data;
+	for(i = 0; i < n; i++)
+		p[i] = IPOINT(dp[i]);
+	*np = n;
+	return p;
+}
+
 static void
 drawsplinepoly(void *fp, int smooth, int op)
 {
 	F_Image_poly *f;
 	Image *d, *s;
-	int locked;
+	Point *p;
+	int locked, np;
 
 	f = fp;
 	d = checkimage(f->dst);
 	s = checkimage(f->src);
 	if(d->display != s->display|| f->radius < 0)
 		return;
+	p = cvtpoints(f->p, &np);
+	if(p == nil)
+		return;
 	locked = lockdisplay(d->display);
-	/* sleazy: we know that Draw_Points have same shape as Points */
 	if(smooth)
-		bezsplineop(d, (Point*)f->p->data, f->p->len,
+		bezsplineop(d, p, np,
 			f->end0, f->end1, f->radius, s, IPOINT(f->sp), op);
 	else
-		polyop(d, (Point*)f->p->data, f->p->len, f->end0,
+		polyop(d, p, np, f->end0,
 			f->end1, f->radius, s, IPOINT(f->sp), op);
+	free(p);
 	checkflush(f->dst);
 	if(locked)
 		unlockdisplay(d->display);
@@ -819,21 +881,25 @@ drawfillsplinepoly(void *fp, int smooth, int op)
 {
 	F_Image_fillpoly *f;
 	Image *d, *s;
-	int locked;
+	Point *p;
+	int locked, np;
 
 	f = fp;
 	d = checkimage(f->dst);
 	s = checkimage(f->src);
 	if(d->display != s->display)
 		return;
+	p = cvtpoints(f->p, &np);		/* see cvtpoints above */
+	if(p == nil)
+		return;
 	locked = lockdisplay(d->display);
-	/* sleazy: we know that Draw_Points have same shape as Points */
 	if(smooth)
-		fillbezsplineop(d, (Point*)f->p->data, f->p->len,
+		fillbezsplineop(d, p, np,
 			f->wind, s, IPOINT(f->sp), op);
 	else
-		fillpolyop(d, (Point*)f->p->data, f->p->len,
+		fillpolyop(d, p, np,
 			f->wind, s, IPOINT(f->sp), op);
+	free(p);
 	checkflush(f->dst);
 	if(locked)
 		unlockdisplay(d->display);

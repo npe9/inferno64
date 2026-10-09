@@ -121,6 +121,7 @@ TARG=\
 	ns.dis\
 	nsbuild.dis\
 	os.dis\
+	polytest.dis\
 	p.dis\
 	pause.dis\
 	plumb.dis\
