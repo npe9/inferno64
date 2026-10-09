@@ -203,12 +203,124 @@ def link(hz, level="-10"):
     st.close()
 
 
+def airtest(hz, bursts):
+    """Does this board's transmitter reach the tinySA?  With a control.
+
+    doc/radio-plan.ms leaves this open: "board 2 hears nothing from a
+    transmitter now known to work, and the tinySA on its own antenna
+    heard nothing from it either".  Answering it needs a transmit that
+    really happens and a measurement that cannot be ambient noise.
+
+    HOW NOT TO DO IT, learned here.  "carrier on" is NOT keying: it is
+    carrier SENSE, listen-before-transmit, which man/3/radio says in
+    one line -- and "power <dbm>" is not a verb this driver has at all,
+    it answers "bad process or channel control request".  A ladder
+    built on those two commanded nothing, and the peaks it printed
+    wandered 11dB with no relation to the power asked for because they
+    were ambient signals: this band has something at -83dBm sitting in
+    it.  Taking the maximum anywhere in a span and calling it the
+    transmitter is how that passes for a measurement.
+
+    What DOES transmit is a read of /dev/radio0/txtest -- devradio.c
+    says "every open and read sends one packet" -- which puts a 125
+    byte packet on the air and reports marc 0x40, TX finished.  At 9600
+    baud that is about 105ms, far shorter than a sweep, so single
+    bursts fall between sweeps.  Hence max hold: "calc maxh" keeps the
+    highest level each bin has seen, so a burst anywhere in the window
+    registers.
+
+    AND THE CONTROL IS MAX HOLD TOO.  Max held noise is higher than
+    one sweep of noise, so comparing a held transmit against a single
+    idle sweep would show a rise that is only the holding.  Both arms
+    hold, for the same number of sweeps; the only difference is whether
+    the board is transmitting.
+    """
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    "..", "tinysa"))
+    import tinysa
+    c = board.Console(os.environ.get("CLAUDE_JOB_DIR", "/tmp") + "/tmp")
+    c.run("bind -a \'#W\' /dev", wait=20)
+    st = c.stream()
+    if not st.ok:
+        sys.exit("txpin: the board is not running commands")
+    st.send("freq %d" % hz, wait=40)
+    st.send("rate 9600", wait=40)
+    fd = tinysa.open_port(wait=30)
+    span = 150000
+    tinysa.cmd(fd, "sweep %d %d" % (hz - span, hz + span))
+    freqs = None
+
+    def heldarm(transmit):
+        nonlocal freqs
+        tinysa.cmd(fd, "calc off")
+        tinysa.onesweep(fd)
+        tinysa.cmd(fd, "calc maxh")
+        tinysa.cmd(fd, "resume")
+        # AND THE CONTROL RUNS THE SAME NUMBER OF SHELL COMMANDS.
+        #
+        # st.send writes ctl VERBS into /dev/radio0/ctl; a shell command
+        # has to go through c.run.  The first version of this sent "cat
+        # /dev/radio0/txtest" to the ctl file, where it was rejected as
+        # a bad request -- 0 of 24 bursts reported marc 0x40 and the
+        # burst count is the only reason that did not read as a clean
+        # negative result.
+        #
+        # The idle arm reads stats, which is the same shape of work --
+        # a shell command, an open, a read of the same device -- and
+        # does not transmit.  A sleep instead would hold for a
+        # different length of time than two dozen shell commands take,
+        # and max held noise grows with the holding.
+        sent = 0
+        for _ in range(bursts):
+            r = c.run("cat /dev/radio0/%s"
+                      % ("txtest" if transmit else "stats"), wait=40) or ""
+            if transmit and "marc 0x40" in r:
+                sent += 1
+        tinysa.cmd(fd, "pause")
+        if freqs is None:
+            freqs = tinysa.numbers(fd, "frequencies")
+        lv = tinysa.numbers(fd, "data 0", want=len(freqs))
+        tinysa.cmd(fd, "calc off")
+        if lv is None:
+            return None, sent
+        return list(zip((int(x) for x in freqs), (float(x) for x in lv))), sent
+
+    idle, _ = heldarm(False)
+    hot, sent = heldarm(True)
+    if idle is None or hot is None:
+        sys.exit("txpin: the tinySA returned no trace")
+    print("%d bursts commanded, %d reported marc 0x40 (TX finished)"
+          % (bursts, sent))
+    if sent == 0:
+        print("NOTHING TRANSMITTED, so the sweep below says nothing about"
+              " the antenna path")
+    def at(pts, f):
+        return min(pts, key=lambda p: abs(p[0] - f))
+    for nm, pts in (("idle ", idle), ("keyed", hot)):
+        f, v = max(pts, key=lambda p: p[1])
+        c0 = at(pts, hz)
+        print("%s  peak %.1f dBm at %.4f MHz   at %.4f MHz: %.1f dBm"
+              % (nm, v, f / 1e6, c0[0] / 1e6, c0[1]))
+    d = at(hot, hz)[1] - at(idle, hz)[1]
+    print("rise at the commanded frequency: %+.1f dB" % d)
+    print("VERDICT: %s" % ("the tinySA hears this transmitter"
+          if d >= 6.0 else
+          "no rise at the commanded frequency -- the transmit path does"
+          " not reach this antenna, which is the open item"))
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "link":
         hz = int(sys.argv[2]) if len(sys.argv) > 2 else 915000000
         if not 902000000 <= hz <= 928000000:
             sys.exit("txpin: %d is outside 902-928MHz" % hz)
         link(hz)
+        return
+    if len(sys.argv) > 1 and sys.argv[1] == "airtest":
+        hz = int(sys.argv[2]) if len(sys.argv) > 2 else 915000000
+        if not 902000000 <= hz <= 928000000:
+            sys.exit("txpin: %d is outside 902-928MHz" % hz)
+        airtest(hz, int(sys.argv[3]) if len(sys.argv) > 3 else 30)
         return
     if len(sys.argv) > 1 and sys.argv[1] == "spectrum":
         hz = int(sys.argv[2]) if len(sys.argv) > 2 else 915000000

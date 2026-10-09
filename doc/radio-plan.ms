@@ -9672,3 +9672,125 @@ session.  Confirming a failure that reproduces in ninety seconds
 without hardware is not worth wedging a board for.  The boards are back
 on the shipping arm, ssl off by
 .BR /lib/radio .
+.NH 1
+The tinySA leg: two verbs that do not do what the bench assumed
+.PP
+With a tinySA on the bench the two remaining items looked reachable.
+What came out instead is that the tool meant to make them was measuring
+nothing, and it is worth having that written down before anybody trusts
+its output again.
+.PP
+.B "A baseline first, which is sound."
+.B tools/tinysa/tinysa.py
+driven over the ISM band, 450 points, ultra mode on:
+.DS
+.CW "902-928MHz   floor -112.9dBm   mean -101.9   peak -82.9 at 910.98"
+.DE
+So the band is quiet and there is one ambient signal in it at
+.BR -82.9dBm .
+Across 80 to 1000MHz the floor is -100.6 with ambient broadcast at
+-42dBm, which is how it is known the instrument is on an
+.I antenna
+and not a sealed cable \- and that matters for what may safely be keyed
+into it.
+.NH 2
+.CW "carrier on"
+is carrier SENSE, and
+.CW power
+is not a verb
+.PP
+.B tools/radio/txpin.py
+has a
+.CW spectrum
+mode whose comment calls it "the one measurement on this bench that
+needs nothing from anybody else: a transmitter we control, an analyser
+we control".  It keys with
+.CW "carrier on" .
+.PP
+.B "That is not keying."
+.IR Man (3)
+.I radio
+describes
+.CW "carrier on|off"
+in one line as "Listen before transmitting" \- it is
+listen-before-talk, carrier
+.IR sense .
+And
+.CW "power <dbm>" ,
+which this document's author reached for next, is not in the driver's
+ctl table at all; the board answers
+.DS
+.CW "cat: write error: bad process or channel control request"
+.DE
+.PP
+A power ladder built on those two commanded nothing, and the levels it
+printed wandered 11dB with no relation to the power asked for:
+.DS
+.CW "want   peak     rise measured   rise commanded"
+.CW " -10   -95.9    -                -"
+.CW "  -4   -97.8    -1.9 dB          +6.0 dB"
+.CW "   2   -94.8    +1.1 dB         +12.0 dB"
+.CW "   8   -86.8    +9.1 dB         +18.0 dB"
+.CW "  14   -95.3    +0.6 dB         +24.0 dB"
+.DE
+.PP
+.B "Those are ambient signals."
+The band has something at -82.9dBm in it, and taking the maximum
+anywhere in a span and calling it the transmitter will find it every
+time.
+.B "WITHDRAWN:"
+an earlier reading in this session, "the tinySA hears the board at -90
+to -95dBm", said the transmit path radiates and the plan's open item
+was answered.  It said nothing of the kind.  Nothing was transmitting.
+.NH 2
+What does transmit, and the control that goes with it
+.PP
+.B os/inferno/radio/devradio.c
+offers a
+.B txtest
+file and says of it "txtest transmits... every open and read sends one
+packet".  A read of
+.B /dev/radio0/txtest
+answers
+.DS
+.CW "txtest 125 var staged 126 trace 1 0 0 0 2 0 left 0 marc 0x40"
+.DE
+and
+.B marc
+.B 0x40
+is MARC_STATUS1 saying TX finished.  That is the transmit, and it is a
+125-byte packet \- about 105ms at 9600 baud, far shorter than a sweep,
+so single bursts fall between sweeps.  Hence
+.CW "calc maxh" :
+max hold keeps the highest level each bin has seen, so a burst anywhere
+in the window registers.
+.PP
+.B "And the control has to hold too."
+Max held noise is higher than one sweep of noise, so a held transmit
+against a single idle sweep shows a rise that is only the holding.  The
+.CW airtest
+mode holds in both arms, for the same number of shell commands \- the
+idle arm reads
+.B stats
+instead of
+.BR txtest ,
+which is the same shape of work and does not transmit.
+.PP
+.B "It counts the bursts that reported marc 0x40, and that is what saved it."
+The first run of it sent "cat /dev/radio0/txtest" through
+.IR board.stream (),
+which writes ctl
+.I verbs
+into
+.BR /dev/radio0/ctl ,
+so every one was rejected as a bad request.
+.B "0 of 24 transmitted,"
+and the sweep showed -1.0dB at the commanded frequency \- a clean
+negative result, and false.  The burst count is the only reason it was
+not written down as one.
+.PP
+.B "What is NOT claimed:"
+anything about the antenna path.  The measurement was not completed:
+board 1 stopped answering a software reset before the corrected run \-
+six attempts, console silent, no bootloader \- and wants a power cycle.
+The tool is right and the reading is missing.
