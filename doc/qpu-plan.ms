@@ -31,6 +31,82 @@ measuring a spin loop in
 rather than the firmware. That loop is now bounded by time, which is
 what makes the hypotheses below separable at all.
 .NH 1
+One EXECUTE_QPU attempt kills the property channel until a reboot
+.PP
+.B "This invalidates every multi-question run of the battery,"
+including the ordering this document argued for, and it is not fixable
+by reordering. Measured on silicon, one fresh JTAG boot, the same tag
+before and after, by the session that owns the board:
+.DS
+.CW
+control GET_CLOCK_RATE   PROCESSED, 8 bytes,      25 us
+EXECUTE_QPU              UNTOUCHED, no reply,  200004 us
+THE SAME control again   UNTOUCHED, no reply, 1000004 us
+.DE
+.PP
+Not slower.
+.B "Not at all,"
+at any bound, and it stays dead across separate board runs within the
+same boot. Only a reboot brings it back.
+.PP
+.B "So the exec has to be the last thing a boot does."
+The battery was one run, ordered so that an early failure would make
+the later lines meaningful \(em which is right for independent
+questions and wrong for these, because
+.CW H1
+is the exec and everything after it was reading a dead mailbox rather
+than its own hypothesis.
+.PP
+It nearly produced a false finding. A
+.CW H3
+run after an exec came back
+.CW "OUT OF TIME"
+and would have read as "the V3D power domain is unreadable". The good
+.CW H3
+result \(em domain 0xa, state 1, answered in 23 us \(em is good only
+because it ran before any exec.
+.PP
+.CW tools/jtag/qpubattery.sh
+is one question per invocation now, one boot each, and
+.B "every question prints the control before AND after it,"
+so a verdict carries its own evidence that the channel was alive when
+the question was asked and whether the question killed it. A verdict
+from an unbracketed run cannot tell its own failure from a channel that
+was already gone.
+.PP
+.B "And it explains the wedge better than the lock did."
+A dead property channel blocks every driver that comes back to it at
+runtime \(em
+.CW btbcm
+and
+.CW thermbcm
+here, and
+.CW sdhostbcm ,
+.CW sdhcibcm ,
+.CW pwmbcm
+and
+.CW screenbcm
+on branches that have them. A thirty-second spinlock hold made that
+worse by occupying the lock as well, but the channel was already
+unrecoverable, and a shorter bound only loses the board more slowly.
+Capping and yielding the mailbox wait is right for the kernel's own
+sake \(em a user program must not be able to make the kernel spin \(em
+and it does
+.B not
+make an exec safe to run.
+.PP
+.B "What is established and what is not."
+That an exec poisons the channel is established. WHICH call poisons it
+is not: the first poisoned run showed two timeouts and the first had
+five-argument shape, which means a submission happened before the
+explicit exec. A boot doing control, then
+.CW enable
+alone with no exec, then the control again separates those, and it is
+the
+.CW enable
+question in the script.
+
+.NH 1
 The hypotheses, each with the test that kills it
 .LP
 .B "H1 \(em the firmware replies, later than we waited."
