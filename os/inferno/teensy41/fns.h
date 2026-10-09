@@ -13,6 +13,7 @@ uvlong	fastticks(uvlong*);
 int	mspheadroom(void);
 int	mspspan(void);
 void	mspwatchinit(void);
+void	mspwatchreport(void);
 ulong	tk2ms(ulong);
 void	coherence(void);
 ulong	fpr1test(void);	/* ../armv7m/l.s */

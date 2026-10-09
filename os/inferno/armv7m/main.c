@@ -172,9 +172,8 @@ enum {
 
 extern uchar stack[];		/* l.s: the boot and interrupt stack */
 
-static void serialputhex(uintptr);
-
 static uchar *msplo;		/* lowest address painted */
+static uchar *mspsp;		/* where SP was when the paint ran */
 static uchar *msphi;		/* highest address painted */
 
 void
@@ -202,20 +201,38 @@ mspwatchinit(void)
 	 */
 	lo = stack;
 	hi = (uchar*)&here - Mspslack;
-	serialputs("msp stack ", -1);
-	serialputhex((uintptr)lo);
-	serialputs("..", -1);
-	serialputhex((uintptr)stack + KSTKSIZE);
-	serialputs(" sp ", -1);
-	serialputhex((uintptr)&here);
-	serialputs("\n", -1);
-	if(hi <= lo || hi > stack + KSTKSIZE){
-		serialputs("msp stack: sp is not in it, not watching\n", -1);
-		return;
-	}
+	mspsp = (uchar*)&here;
+	if(hi <= lo || hi > stack + KSTKSIZE)
+		return;			/* mspwatchreport() says so */
 	msplo = lo;
 	msphi = hi;
 	memset(lo, Msppat, hi - lo);
+}
+
+/*
+ * SAYS WHAT IT FOUND, INCLUDING WHEN IT DECLINED, and says it where a
+ * board can hear.
+ *
+ * The painting has to happen before anything has used the stack, which
+ * is before the uart exists -- and the first cut reported from there
+ * with serialputs.  Under qemu that works and on silicon it does not:
+ * the line went nowhere, so the board printed no geometry at all and
+ * the DECLINING case would have been completely silent.  An instrument
+ * that cannot report on the hardware it is for is not an instrument.
+ *
+ * So the paint stays early and the report moves to after printinit().
+ */
+void
+mspwatchreport(void)
+{
+	if(msplo == nil){
+		print("msp stack %#p..%#p sp %#p: sp is not in it,"
+			" not watching\n",
+			stack, stack + KSTKSIZE, mspsp);
+		return;
+	}
+	print("msp stack %#p..%#p sp %#p, watching %d bytes\n",
+		stack, stack + KSTKSIZE, mspsp, (int)(msphi - msplo));
 }
 
 /*
@@ -252,24 +269,6 @@ mspspan(void)
 	return KSTKSIZE;
 }
 
-/*
- * Eight hex digits down the board's uart before printinit() exists.
- * The geometry above is three addresses and nothing else in the kernel
- * can say them this early.
- */
-static void
-serialputhex(uintptr v)
-{
-	char b[9];
-	int i;
-
-	for(i = 7; i >= 0; i--){
-		b[i] = "0123456789abcdef"[v & 0xf];
-		v >>= 4;
-	}
-	b[8] = 0;
-	serialputs(b, -1);
-}
 
 void
 machinit(void)
@@ -335,6 +334,7 @@ main(void)
 	clockinit();
 	quotefmtinstall();
 	printinit();
+	mspwatchreport();
 
 	procinit();
 	links();

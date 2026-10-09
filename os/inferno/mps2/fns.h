@@ -13,6 +13,7 @@ void	clockcheck(void);
 int	mspheadroom(void);
 int	mspspan(void);
 void	mspwatchinit(void);
+void	mspwatchreport(void);
 void	spipl022link(void);
 void	clockinit(void);
 void	clockintr(Ureg*);
