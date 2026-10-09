@@ -183,7 +183,9 @@ root
 	/dis/ellipsetest.dis
 	/dis/tkscenetest.dis
 	/dis/cvttest.dis
+	/dis/polytest.dis
 	/dis/lib/tknode.dis
+	/dis/lib/tkrender.dis
 	/dis/sh.dis
 	/dis/sh/std.dis
 	/dis/usb/usbd.dis

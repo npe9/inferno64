@@ -335,23 +335,69 @@ field makes the decoder answer
 .CW "14 fields, want at least 15"
 instead of reading the points out of the width.
 .PP
-.B "What is NOT shown, and it is the next thing here."
-There is no encoder, so nothing proves a decoded tree is
-.I sufficient
-to reproduce the picture \(em only that every field survives the trip.
-Reproducing it means a consumer that rasterises the primitive subset,
-and that is reachable: every renderer case is
-.CW draw() ,
-.CW ellipse() ,
-.CW fillpoly()
-or
-.CW bezspline() ,
-and the three composite kinds
-.CW ( TkNroundfill ,
-.CW TkNcorners ,
-.CW TkNborder )
-are solid rectangles and a per\-row corner cut. None of it needs
-anything a Limbo program cannot reach.
+.B "And the tree is SUFFICIENT, not merely complete. DONE."
+Every check above asks whether a
+.I field
+survived the trip.
+.CW tkrender (2)
+asks whether what comes out is enough to reproduce the picture: it
+rasterises a
+.CW tknode (2)\-decoded
+tree using nothing but
+.CW draw (2),
+and
+.CW tkscenetest (1)
+compares its output against
+.I libtk 's
+own C render of the same tree.
+.PP
+.B "Six fixtures match BYTE FOR BYTE"
+\(em a raised frame, a label, a selected checkbutton, a flat scrollbar,
+a button and an entry, between them rectangles, rounded corners,
+borders, layers, glyph runs, a filled polygon and a spline. So a
+consumer outside
+.I libtk
+reproduces
+.I libtk
+exactly, which is the claim this item was for and which no
+field\-by\-field check could have established.
+.PP
+Two things a node does not carry, and both had to be reproduced rather
+than read: the corner arithmetic, which is a function of the radius and
+not a field, and a layer's
+.B fill
+\(em its
+.CW rgba
+is what the surface STARTS as, and its composite is
+.B shaped
+by its radius the way a
+.CW TkNroundfill
+is. Allocating the surface unfilled made every fixture with a layer
+differ, the entry by 13332 bytes with no glyph in it at all, which is
+what named the layer rather than the text.
+.PP
+.B "And it found a defect in draw(2) itself."
+The last two fixtures to disagree were the scrollbar's arrows and the
+checkbutton's tick \(em the only two with a polygon and a spline \(em
+because
+.CW libinterp/draw.c
+reinterpreted a Limbo
+.CW "array of Point"
+as C
+.CW Point s,
+which are a different size on this build. Every Limbo polygon and
+spline in the tree was drawing the wrong shape. See
+.CW polytest (1);
+.CW infernode
+had fixed the same four casts a week earlier with no test, and 36 of
+the 38 worktrees on this machine still carry them.
+.PP
+.B "What is left is an encoder,"
+which nothing yet needs: a dump can be read but not written back, so a
+tree cannot be modified outside
+.I libtk
+and handed back. Reading is what recording, remote rendering and a
+geometry\-consuming backend all want, and all three are now writable.
 .IP \(bu
 .B "Resolution independence. DONE."
 Render a tree at a scale, which pixels cannot do \(em the one capability
