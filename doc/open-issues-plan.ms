@@ -52,8 +52,30 @@ outranks extending the fix to another architecture.
 .NH 1
 STATE OF THE BOARD, read before picking anything (9 October 2026)
 .LP
-.B "THE SD CARD IS NOT IN THE PI."
-It was repaired in a card reader and ejected, and only a person can put it
+.B "THE CARD IS BACK IN THE PI AND IT BOOTS."
+Confirmed 9 October 2026.  What follows was written while the card was out and
+is kept because the verification it asks for is the one that was then done.
+.P1
+Inferno/arm64 raspi3b build 1791512303
+CPU1 alive: mpidr 0x80000001 ...  CPU2 alive ...  CPU3 alive ...
+BNDSTEST 11 ok, 0 fail
+drawink: all checks passed
+.P2
+.B "The discriminator was the CPU count, not the build stamp."
+The card's image is byte-identical to the tree's, so a card boot and the JTAG
+boot that preceded it report the SAME stamp and the stamp cannot tell them
+apart.  Four processors reporting in can: a JTAG boot holds cores 1-3.  The
+console scrollback was emptied to 0 non-blank lines before the reset
+.CW "screen -X scrollback 0" , (
+so nothing read afterwards could be from the previous boot \(em and that
+mattered, because
+.CW "screen -X clear"
+alone does NOT drop the history.
+.CW tools/jtag/hardreset
+arms the PM watchdog and the firmware reloads from the card.
+.PP
+.B "THE SD CARD WAS NOT IN THE PI, and the rest of this section is why that mattered."
+It was repaired in a card reader and ejected, and only a person could put it
 back.  Two overlapping
 .CW kinstall
 runs had left its
@@ -5493,8 +5515,68 @@ That the root walk is why the board stops answering inside 600s.  The holds
 were observed; their
 .I frequency
 was not, and one 0.91s hold a minute is a different system from one a second.
-Until that number exists, "the root walk makes the board slow" is a hypothesis
-with a measured upper bound on one of its two terms.
+.NH 2
+H4 residue, MEASURED on an idle four-core card boot \(em and both terms exist
+.LP
+Taken 9 October 2026 on the card-booted kernel, 36 Dis processes in
+.CW /prog ,
+no workload beyond the poller.  Two samples of
+.CW "echo sched > /dev/sysctl"
+124 seconds apart, the scrollback dropped before each so that no reading could
+be a previous one:
+.P1
+rungc runs    1685271 -> 2157359    3807 /s
+gc sweeps       15551 ->   19518      32 /s
+gc EPOCHS        4604 ->    5703       8.9 /s   (a third sample gave 12.5)
+.P2
+.B "So the root walk runs about ten times a second when the board is idle,"
+and that single number refutes the reading the plan invited.  A walk costing
+53 to 91 ticks CANNOT happen ten times a second: the two terms are inversely
+coupled, because a walk that takes 0.9s caps the epoch rate near 1/s by
+arithmetic alone.
+.PP
+.B "And the second term turned out to be instrumented already."
+.CW SCHED-COUNTS ,
+printed by the same
+.CW sched
+write, carries the collector's own hold times:
+.P1
+gc 1/489 max 1,  idlegc 2412 max 5 ticks
+.P2
+One tick for a collection inside the scheduler and at most FIVE for an idle
+one, against the 53 to 91 recorded under load.  So the cost does scale with
+the root set as predicted \(em this board has 36 processes where the holds were
+seen at seventy-odd, and the hold is ten to ninety times smaller.
+.PP
+.B "What the same reading says about the other H4 counters, on four processors rather than one:"
+.P1
+broken-chains 0        bad-ptrs-rejected 0     bad-color-rejected 0
+resumed-stale ok 0 brk 0 idle 0                cursor-out-of-arena 0
+ptr-repaired 7         quantum-open 0          stw 2157359 waited 0 gaveup 0
+.P2
+The sweep-cursor fix holds on a real card boot with all four cores running, the
+markheap guard has still never rejected a word, and
+.CW ptr-repaired
+7 is the mutator swallows that would have been broken chains.
+.PP
+.B "What is still missing is one number, and it is now a short job rather than an open question."
+The fraction of wall time the token is held by the walk, under the LOADED
+condition that produced the 53-to-91-tick holds \(em epochs per second and max
+hold ticks read from the same
+.CW sched
+write while a suite is running.  Both terms come from one command, so this is a
+measurement and not a build.  Until it exists, "the root walk makes the board
+slow" has one term measured idle and neither measured under load.
+.PP
+.B "One unexplained diagnostic appeared in the same window, recorded and not diagnosed:"
+.P1
+devprog: progpid touched pid 386 live inside its own delprog close window
+.P2
+It is a race report from
+.CW devprog
+on a boot that was otherwise clean, it is not connected to anything above, and
+it is written down here so that the next sighting is a second one rather than a
+first.
 .NH 2
 H1a correction.  "The expensive case needs no copy" assumed the wrong frame
 .LP
