@@ -488,6 +488,7 @@ timers timers
 tk tk
 tkclient tkclient
 tknode tknode
+tkrender tkrender
 Node tknode
 typename tknode
 typeof tknode

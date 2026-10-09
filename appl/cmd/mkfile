@@ -49,6 +49,7 @@ TARG=\
 	cleanname.dis\
 	cmp.dis\
 	cvttest.dis\
+	polytest.dis\
 	comm.dis\
 	cook.dis\
 	cprof.dis\

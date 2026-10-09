@@ -689,29 +689,86 @@ Image_lineop(void *fp)
 	drawline(fp, f->op);
 }
 
+/*
+ * A Limbo `array of Point' as C Points.
+ *
+ * THE CAST THAT WAS HERE WAS WRONG ON THIS BUILD.  Four call sites did
+ *
+ *		sleazy: we know that Draw_Points have same shape as Points
+ *		fillpolyop(d, (Point*)f->p->data, f->p->len, ...)
+ *
+ * and they do not have the same shape.  A Limbo int is a WORD, which is
+ * intptr here, so `#define Draw_Point_size 16' -- two 64-bit fields --
+ * against a C Point of two s32, eight bytes.  Reinterpreting the array
+ * reads every coordinate from the wrong place: for three points stored
+ * as the words 2 7 13 3 13 10, the C side sees (2,0) (7,0) (13,0), a
+ * triangle flattened onto one row.
+ *
+ * The same tree already knows this.  The reinterpreting macros in
+ * include/draw.h are COMMENTED OUT and replaced by field-by-field
+ * conversions -- IPOINT is `((Point){(s32)((p).x),(s32)((p).y)})' --
+ * so the scalar path was fixed and the four array casts were left
+ * behind with the comment that justified them still attached.
+ *
+ * Affects Image.poly, Image.bezspline, Image.fillpoly and
+ * Image.fillbezspline, which is every Limbo polygon and spline.  Found
+ * by rasterising a libtk render-node tree from Limbo and comparing it
+ * against libtk's own C render of the same tree: the rectangles and
+ * the text matched to the byte and the two polygon shapes did not.
+ *
+ * Returns nil on no points or no memory, and the caller draws nothing
+ * rather than drawing garbage.
+ */
+static Point*
+ipoints(Array *a, int *np)
+{
+	Draw_Point *dp;
+	Point *p;
+	int i, n;
+
+	*np = 0;
+	if(a == H || a->len <= 0)
+		return nil;
+	n = a->len;
+	p = malloc(n*sizeof(Point));
+	if(p == nil)
+		return nil;
+	dp = (Draw_Point*)a->data;
+	for(i = 0; i < n; i++){
+		p[i].x = (s32)dp[i].x;
+		p[i].y = (s32)dp[i].y;
+	}
+	*np = n;
+	return p;
+}
+
 static void
 drawsplinepoly(void *fp, int smooth, int op)
 {
 	F_Image_poly *f;
 	Image *d, *s;
-	int locked;
+	Point *pts;
+	int locked, np;
 
 	f = fp;
 	d = checkimage(f->dst);
 	s = checkimage(f->src);
 	if(d->display != s->display|| f->radius < 0)
 		return;
+	pts = ipoints(f->p, &np);
+	if(pts == nil)
+		return;
 	locked = lockdisplay(d->display);
-	/* sleazy: we know that Draw_Points have same shape as Points */
 	if(smooth)
-		bezsplineop(d, (Point*)f->p->data, f->p->len,
+		bezsplineop(d, pts, np,
 			f->end0, f->end1, f->radius, s, IPOINT(f->sp), op);
 	else
-		polyop(d, (Point*)f->p->data, f->p->len, f->end0,
+		polyop(d, pts, np, f->end0,
 			f->end1, f->radius, s, IPOINT(f->sp), op);
 	checkflush(f->dst);
 	if(locked)
 		unlockdisplay(d->display);
+	free(pts);
 }
 
 void
@@ -819,24 +876,28 @@ drawfillsplinepoly(void *fp, int smooth, int op)
 {
 	F_Image_fillpoly *f;
 	Image *d, *s;
-	int locked;
+	Point *pts;
+	int locked, np;
 
 	f = fp;
 	d = checkimage(f->dst);
 	s = checkimage(f->src);
 	if(d->display != s->display)
 		return;
+	pts = ipoints(f->p, &np);
+	if(pts == nil)
+		return;
 	locked = lockdisplay(d->display);
-	/* sleazy: we know that Draw_Points have same shape as Points */
 	if(smooth)
-		fillbezsplineop(d, (Point*)f->p->data, f->p->len,
+		fillbezsplineop(d, pts, np,
 			f->wind, s, IPOINT(f->sp), op);
 	else
-		fillpolyop(d, (Point*)f->p->data, f->p->len,
+		fillpolyop(d, pts, np,
 			f->wind, s, IPOINT(f->sp), op);
 	checkflush(f->dst);
 	if(locked)
 		unlockdisplay(d->display);
+	free(pts);
 }
 
 void

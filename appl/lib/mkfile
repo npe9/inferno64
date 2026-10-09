@@ -17,6 +17,7 @@ DIRS=\
 TARG=\
 	arg.dis\
 	tknode.dis\
+	tkrender.dis\
 	arrays.dis\
 	asn1.dis\
 	attrdb.dis\

@@ -35,6 +35,8 @@ include "tk.m";
 include "tknode.m";
 	tknode: Tknode;
 	Node: import tknode;
+include "tkrender.m";
+	tkrender: Tkrender;
 
 Tkscenetest: module
 {
@@ -124,6 +126,78 @@ paint(disp: ref Display, name: string, cmds: list of string): array of byte
 		return nil;
 	}
 	return b;
+}
+
+#
+# Render one widget through libtk's node path, read the tree out, and
+# rasterise it again from Limbo with tkrender(2).  The two images must
+# be byte-identical: same nodes, same primitives, same pixels.
+#
+# Recording must already be on, and `render scaled'/`xform'/`opacity'
+# at their identities, or the two sides are not rendering the same
+# description.
+#
+replay(disp: ref Display, name: string, cmds: list of string)
+{
+	lib := paint(disp, "replay/" + name, cmds);
+	if(lib == nil){
+		report(0, "replay " + name + ": libtk rendered it");
+		return;
+	}
+	dump := tk->cmd(tk->toplevel(disp, ""), "render tree");
+	(nodes, derr) := tknode->decode(dump);
+	if(derr != nil || len nodes == 0){
+		report(0, sys->sprint("replay %s: the tree decodes (%s, %d nodes)",
+			name, errstr(derr), len nodes));
+		return;
+	}
+	# The same size and channel as paint()'s, and the same initial
+	# colour, so anything the tree does not cover is equal by
+	# construction rather than by accident.
+	off := disp.newimage(Rect((0,0),(W,H)), draw->RGB24, 0, Draw->White);
+	if(off == nil){
+		report(0, "replay " + name + ": newimage");
+		return;
+	}
+	(drawn, unsup, rerr) := tkrender->draw(off, nodes);
+	if(rerr != nil){
+		report(0, sys->sprint("replay %s: %s", name, rerr));
+		return;
+	}
+	b := array[W*H*3] of byte;
+	if(off.readpixels(off.r, b) != len b){
+		report(0, sys->sprint("replay %s: readpixels: %r", name));
+		return;
+	}
+	d := differ(lib, b);
+	# unsup must be zero as well as the pixels matching: a tree whose
+	# nodes were all skipped would compare equal against a libtk
+	# render that drew nothing either, and that is the same shape as
+	# the identity transform that passed while doing nothing.
+	# The node TYPES are named on a failure, because "2456 bytes
+	# differ" says nothing about which primitive disagrees and the
+	# tree is right there.
+	kinds := "";
+	for(k := 0; k < len nodes; k++){
+		nm := nodes[k].name();
+		if(!contains(kinds, nm))
+			kinds += nm + " ";
+	}
+	good := d == 0 && unsup == 0;
+	report(good,
+		sys->sprint("replay %s: %d of %d nodes drawn, %d unsupported, %d bytes differ [%s]",
+			name, drawn, len nodes, unsup, d, kinds));
+	# The tree itself when it does not match and -v is on: a byte
+	# count says which fixture disagrees and the nodes say why.
+	if(!good){
+		(bb, np, f1) := differbox(lib, b);
+		sys->print("     %d pixels differ in (%d,%d)-(%d,%d); first at (%d,%d) libtk %s replay %s\n",
+			np, bb.min.x, bb.min.y, bb.max.x, bb.max.y,
+			f1.x, f1.y,
+			pixat(lib, f1.x, f1.y), pixat(b, f1.x, f1.y));
+		if(verbose)
+			sys->print("     tree: %s", dump);
+	}
 }
 
 #
@@ -375,6 +449,53 @@ errstr(e: string): string
 	return e;
 }
 
+#
+# WHERE two renders differ, not how much.  A byte count cannot tell a
+# wrong colour over a whole region from a one-pixel edge, and those have
+# completely different causes -- the first is a fill or a channel, the
+# second is an off-by-one in a bound.  Returns the bounding box of
+# differing pixels and how many pixels differ.
+#
+# Also the FIRST differing pixel, which is not the bounding box's
+# corner: the corner need not itself differ, and reporting its colour
+# printed `libtk 3d6a9a replay 3d6a9a' for a real difference, which
+# reads as a broken test rather than a real one.
+differbox(a, b: array of byte): (Rect, int, Point)
+{
+	x0 := W; y0 := H; x1 := -1; y1 := -1;
+	first := Point(-1, -1);
+	n := 0;
+	if(a == nil || b == nil || len a != len b)
+		return (Rect((0,0),(0,0)), -1, first);
+	for(y := 0; y < H; y++){
+		for(x := 0; x < W; x++){
+			o := (y*W + x)*3;
+			if(a[o] != b[o] || a[o+1] != b[o+1] || a[o+2] != b[o+2]){
+				if(n == 0)
+					first = (x, y);
+				n++;
+				if(x < x0) x0 = x;
+				if(y < y0) y0 = y;
+				if(x > x1) x1 = x;
+				if(y > y1) y1 = y;
+			}
+		}
+	}
+	if(x1 < 0)
+		return (Rect((0,0),(0,0)), 0, first);
+	return (Rect((x0,y0),(x1+1,y1+1)), n, first);
+}
+
+# The two pixels at one point, for naming a disagreement rather than
+# counting it.
+pixat(a: array of byte, x, y: int): string
+{
+	o := (y*W + x)*3;
+	if(a == nil || o+2 >= len a)
+		return "?";
+	return sys->sprint("%02x%02x%02x", int a[o+2], int a[o+1], int a[o]);
+}
+
 # Is `sub' anywhere in `s'?  For the two guards the dump emits about
 # its own name table, which must be checked rather than trusted.
 contains(s, sub: string): int
@@ -505,6 +626,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	tknode = load Tknode Tknode->PATH;
 	if(tknode != nil)
 		tknode->init();
+	tkrender = load Tkrender Tkrender->PATH;
 	if(tk == nil){
 		sys->print("tkscenetest: load $Tk: %r\n");
 		raise "fail:load";
@@ -1398,6 +1520,37 @@ init(ctxt: ref Draw->Context, argv: list of string)
 					sb.r.max.x, sb.r.max.y));
 		}else
 			report(0, sys->sprint("the 2:1 tree is 4 nodes (%d)", len snodes));
+
+		#
+		# AND THE THING THAT SAYS THE TREE IS SUFFICIENT, not
+		# merely complete. tkrender(2) rasterises a decoded tree
+		# with draw(2) and nothing else -- no libtk at all -- and
+		# the result is compared against libtk's own render of the
+		# same tree, pixel for pixel.
+		#
+		# Every check above this one asks whether a FIELD survived
+		# the trip. This asks whether what comes out is enough to
+		# reproduce the picture, which is the claim
+		# doc/scene-graph-plan.ms makes for exposing the tree and
+		# the only one a field-by-field check cannot reach.
+		#
+		# The fixtures are driven per widget kind rather than in one
+		# go, so a kind that cannot be reproduced is NAMED instead
+		# of being averaged into a total.
+		#
+		if(tkrender == nil)
+			report(0, "tkrender(2) loaded");
+		else{
+			tkrender->init(disp);
+			replay(disp, "a raised frame", scaleframe);
+			replay(disp, "a label", list of {"label .w -text Hi", "pack .w"});
+			replay(disp, "a selected checkbutton", list of {
+				"checkbutton .w -text x", "pack .w", ".w select"});
+			replay(disp, "a flat scrollbar", list of {
+				"scrollbar .w -orient horizontal", "pack .w"});
+			replay(disp, "a button", list of {"button .w -text Go", "pack .w"});
+			replay(disp, "an entry", list of {"entry .w", "pack .w"});
+		}
 
 		# And off again. An empty answer here is the only thing that
 		# distinguishes recording from a dump that was never cleared.
