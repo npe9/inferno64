@@ -91,12 +91,12 @@ paint(disp: ref Display, name: string, cmds: list of string): array of byte
 {
 	off := disp.newimage(Rect((0,0),(W,H)), draw->RGB24, 0, Draw->White);
 	if(off == nil){
-		sys->print("FAIL newimage: %r\n");
+		sys->print("tkscenetest: %s: newimage: %r\n", name);
 		return nil;
 	}
 	top := tk->toplevel(disp, "");
 	if(top == nil){
-		sys->print("FAIL toplevel: %r\n");
+		sys->print("tkscenetest: %s: toplevel: %r\n", name);
 		return nil;
 	}
 	#
@@ -110,19 +110,19 @@ paint(disp: ref Display, name: string, cmds: list of string): array of byte
 	for(l := cmds; l != nil; l = tl l){
 		c := tk->cmd(top, hd l);
 		if(c != nil && len c > 0 && c[0] == '!'){
-			sys->print("FAIL %s: `%s\' -> %s\n", name, hd l, c);
+			sys->print("tkscenetest: %s: `%s\' -> %s\n", name, hd l, c);
 			return nil;
 		}
 	}
 	pc := tk->putimage(top, ". -1", off, nil);
 	if(pc != nil && len pc > 0){
-		sys->print("FAIL putimage: %s\n", pc);
+		sys->print("tkscenetest: %s: putimage: %s\n", name, pc);
 		return nil;
 	}
 	tk->cmd(top, "update");
 	b := array[W*H*3] of byte;
 	if(off.readpixels(off.r, b) != len b){
-		sys->print("FAIL readpixels: %r\n");
+		sys->print("tkscenetest: %s: readpixels: %r\n", name);
 		return nil;
 	}
 	return b;
@@ -228,18 +228,18 @@ paintmenu(disp: ref Display, post: int): array of byte
 {
 	off := disp.newimage(Rect((0,0),(W,H)), draw->RGB24, 0, Draw->White);
 	if(off == nil){
-		sys->print("FAIL menu: newimage: %r\n");
+		sys->print("tkscenetest: menu: newimage: %r\n");
 		return nil;
 	}
 	scr := Screen.allocate(off, disp.color(Draw->White), 0);
 	if(scr == nil){
-		sys->print("FAIL menu: Screen.allocate: %r\n");
+		sys->print("tkscenetest: menu: Screen.allocate: %r\n");
 		return nil;
 	}
 	win := scr.newwindow(off.r, Draw->Refbackup, Draw->Nofill);
 	top := tk->toplevel(disp, "");
 	if(win == nil || top == nil){
-		sys->print("FAIL menu: no window or toplevel: %r\n");
+		sys->print("tkscenetest: menu: no window or toplevel: %r\n");
 		return nil;
 	}
 	for(l := list of {"menu .mn", ".mn add command -label {Open}",
@@ -247,12 +247,12 @@ paintmenu(disp: ref Display, post: int): array of byte
 	    ".mn add command -label {Close}"}; l != nil; l = tl l){
 		c := tk->cmd(top, hd l);
 		if(c != nil && len c > 0 && c[0] == '!'){
-			sys->print("FAIL menu: `%s\' -> %s\n", hd l, c);
+			sys->print("tkscenetest: menu: `%s\' -> %s\n", hd l, c);
 			return nil;
 		}
 	}
 	if((e := tk->putimage(top, ". -1", win, nil)) != nil && len e > 0){
-		sys->print("FAIL menu: putimage toplevel: %s\n", e);
+		sys->print("tkscenetest: menu: putimage toplevel: %s\n", e);
 		return nil;
 	}
 	#
@@ -267,12 +267,12 @@ paintmenu(disp: ref Display, post: int): array of byte
 	if(post){
 		mw := scr.newwindow(Rect((4,2),(W-4,H-2)), Draw->Refbackup, Draw->Nofill);
 		if(mw == nil){
-			sys->print("FAIL menu: no window for the menu itself: %r\n");
+			sys->print("tkscenetest: menu: no window for the menu itself: %r\n");
 			return nil;
 		}
 		tk->cmd(top, ".mn post 4 2");
 		if((e = tk->putimage(top, ".mn -1", mw, nil)) != nil && len e > 0){
-			sys->print("FAIL menu: putimage menu: %s\n", e);
+			sys->print("tkscenetest: menu: putimage menu: %s\n", e);
 			return nil;
 		}
 		tk->cmd(top, ".mn activate 1");
@@ -280,7 +280,7 @@ paintmenu(disp: ref Display, post: int): array of byte
 	tk->cmd(top, "update");
 	b := array[W*H*3] of byte;
 	if(off.readpixels(off.r, b) != len b){
-		sys->print("FAIL menu: readpixels: %r\n");
+		sys->print("tkscenetest: menu: readpixels: %r\n");
 		return nil;
 	}
 	if(post)
@@ -310,7 +310,7 @@ paintnest(disp: ref Display, depth: int): array of byte
 	off := disp.newimage(Rect((0,0),(W,H)), draw->RGB24, 0, Draw->White);
 	top := tk->toplevel(disp, "");
 	if(off == nil || top == nil){
-		sys->print("FAIL nest: no image or toplevel: %r\n");
+		sys->print("tkscenetest: nest: no image or toplevel: %r\n");
 		return nil;
 	}
 	# canvas .c, then frame .c.f in a window item, then canvas .c.f.c in
@@ -339,19 +339,19 @@ paintnest(disp: ref Display, depth: int): array of byte
 	for(l = ord; l != nil; l = tl l){
 		c := tk->cmd(top, hd l);
 		if(c != nil && len c > 0 && c[0] == '!'){
-			sys->print("FAIL nest depth %d: `%s\' -> %s\n", depth, hd l, c);
+			sys->print("tkscenetest: nest depth %d: `%s\' -> %s\n", depth, hd l, c);
 			return nil;
 		}
 	}
 	e := tk->putimage(top, ". -1", off, nil);
 	if(e != nil && len e > 0){
-		sys->print("FAIL nest: putimage: %s\n", e);
+		sys->print("tkscenetest: nest: putimage: %s\n", e);
 		return nil;
 	}
 	tk->cmd(top, "update");
 	b := array[W*H*3] of byte;
 	if(off.readpixels(off.r, b) != len b){
-		sys->print("FAIL nest: readpixels: %r\n");
+		sys->print("tkscenetest: nest: readpixels: %r\n");
 		return nil;
 	}
 	return b;
@@ -383,7 +383,7 @@ painttwo(disp: ref Display): (array of byte, array of byte)
 	topa := tk->toplevel(disp, "");
 	topb := tk->toplevel(disp, "");
 	if(offa == nil || offb == nil || topa == nil || topb == nil){
-		sys->print("FAIL two: no images or toplevels: %r\n");
+		sys->print("tkscenetest: two: no images or toplevels: %r\n");
 		return (nil, nil);
 	}
 	cmds := array[] of {
@@ -396,16 +396,16 @@ painttwo(disp: ref Display): (array of byte, array of byte)
 		(t, c) := cmds[i];
 		r := tk->cmd(t, c);
 		if(r != nil && len r > 0 && r[0] == '!'){
-			sys->print("FAIL two: `%s\' -> %s\n", c, r);
+			sys->print("tkscenetest: two: `%s\' -> %s\n", c, r);
 			return (nil, nil);
 		}
 	}
 	if((e := tk->putimage(topa, ". -1", offa, nil)) != nil && len e > 0){
-		sys->print("FAIL two: putimage a: %s\n", e);
+		sys->print("tkscenetest: two: putimage a: %s\n", e);
 		return (nil, nil);
 	}
 	if((e = tk->putimage(topb, ". -1", offb, nil)) != nil && len e > 0){
-		sys->print("FAIL two: putimage b: %s\n", e);
+		sys->print("tkscenetest: two: putimage b: %s\n", e);
 		return (nil, nil);
 	}
 	#
@@ -431,7 +431,7 @@ painttwo(disp: ref Display): (array of byte, array of byte)
 	ba := array[W*H*3] of byte;
 	bb := array[W*H*3] of byte;
 	if(offa.readpixels(offa.r, ba) != len ba || offb.readpixels(offb.r, bb) != len bb){
-		sys->print("FAIL two: readpixels: %r\n");
+		sys->print("tkscenetest: two: readpixels: %r\n");
 		return (nil, nil);
 	}
 	return (ba, bb);

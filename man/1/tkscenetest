@@ -339,10 +339,31 @@ widgets are compared as well, and must differ.
 A case may be
 .BR skipped ,
 counted separately from a pass and a failure, when the environment cannot
-distinguish it from the case it is meant to differ from \(em the only such
-case is the non-default font, and the Pi 3B kernel's root carries exactly
-one font, which is also Tk's default. A case that is dropped is reported,
-because coverage quietly lost is worse than coverage never claimed.
+distinguish it from the case it is meant to differ from. On the Pi 3B
+kernel there are two: the non-default font, because that root carries
+exactly one font and it is also Tk's default, and
+.BR "label -bitmap" ,
+because it carries no bitmap file either. A case that is dropped is
+reported, because coverage quietly lost is worse than coverage never
+claimed.
+.PP
+.B "A skipped case prints its reason first and its verdict second."
+The line naming the Tk command that would not run is a
+.I diagnostic
+and begins with
+.BR tkscenetest: ;
+the verdict on the next line begins with
+.B SKIP
+and is what the tally counts. The painting helpers used to print that
+diagnostic as
+.B FAIL
+themselves, so a kernel log showed two
+.B FAIL
+lines above a tally that said
+.BR "0 fail" ,
+and a reader had to know which number to believe. Only
+.I report
+and the tally label anything now.
 .PP
 Two further properties of the description are checked, because a tree that
 draws correctly can still be useless to a backend: every node that marks

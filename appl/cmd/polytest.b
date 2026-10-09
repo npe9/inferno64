@@ -197,6 +197,26 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	report(np > 150 && np < 250,
 		sys->sprint("and covers about half its box: %d pixels (want 150..250)", np));
 
+	#
+	# A nil point array, and an empty one.  Limbo passes nil as H,
+	# which is ((void*)(-1)), so the conversion has to test the array
+	# BEFORE reading a->data -- a version that takes the pointer at
+	# the call site dereferences -1 instead.  Nothing should be drawn
+	# and the process should still be here afterwards; if it faults
+	# the run dies without printing a tally, which is the failure.
+	#
+	empt := array[0] of Point;
+	n1 := fresh();
+	n1.fillpoly(nil, ~0, black, (0,0));
+	n1.poly(nil, Draw->Endsquare, Draw->Endsquare, 0, black, (0,0));
+	n1.fillbezspline(nil, ~0, black, (0,0));
+	n1.bezspline(nil, Draw->Endsquare, Draw->Endsquare, 0, black, (0,0));
+	n1.fillpoly(empt, ~0, black, (0,0));
+	n1.poly(empt, Draw->Endsquare, Draw->Endsquare, 0, black, (0,0));
+	report(inked(pixels(n1)) == 0,
+		sys->sprint("nil and empty point arrays draw nothing, and do not fault (%d bytes of ink)",
+			inked(pixels(n1))));
+
 	sys->print("POLYTEST %d ok, %d fail\n", ok, fail);
 }
 

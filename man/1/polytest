@@ -135,6 +135,20 @@ so moving every point moves some of the shape and not the rest.
 invariance is also satisfied by a shape that is wrong in a
 position\-independent way. Loose enough to survive the edge rule, tight
 enough that a one\-row collapse and a filled bounding box both fail.
+.TP
+.B "nil and empty point arrays"
+Nothing drawn, and the program still running afterwards. Limbo passes a
+nil array as
+.BR H ,
+which is
+.B ((void*)(\-1)),
+so the conversion has to test the array before it reads
+.BR a->data .
+This is the one case whose failure is not a
+.B FAIL
+line: unguarded, the run dies with
+.B "dereference of nil"
+and prints no tally at all, which is how it was seen to fail.
 .PP
 .B "And SYMMETRY was the wrong property, tried first."
 Points mirrored about a vertical axis do
@@ -179,6 +193,30 @@ rather than reinterpreting, so a polygon now draws nothing at all if
 .I malloc
 fails, where before it drew garbage; which of those is better is not
 in question, but neither is tested.
+.PP
+.B "The guards in"
+.IR ipoints ()
+.B "are deliberate, not incidental."
+It tests
+.B "a == H"
+and
+.B "a->len <= 0"
+and returns nil for both, and the callers then draw nothing. The
+equivalent function in the trees this fix did not come from \(em
+.IR cvtpoints (),
+in
+.B infernode
+and
+.B raspi3b\-port
+\(em has neither test, and is reached as
+.B "cvtpoints((Draw_Point*)f->p->data, f->p->len)"
+with the dereference at the
+.I call site,
+so a nil array there reads address \-1 before the function is entered.
+Hosted that surfaces as a Dis exception that kills the program; on a
+native kernel, which has no such handler, it is a fault. Whoever merges
+this should keep both tests rather than read them as an accident of
+whichever version arrived second.
 .PP
 It does not cover
 .B Image.line
