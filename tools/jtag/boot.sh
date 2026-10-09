@@ -29,6 +29,24 @@
 set -u
 ROOT=`cd \`dirname "$0"\`/../.. && pwd`
 S=${S:-/private/tmp/claude-501/-Users-npe-src-inferno64-branches-raspi3b-port/2675f84d-d333-4a0e-ba1f-4ef786fc52b7/scratchpad}
+
+#
+# One operator, before anything else is spent.
+#
+# This script holds the adapter for minutes at a time, and a second
+# openocd does not queue -- it dies with LIBUSB_ERROR_ACCESS, which
+# reads from here as a board that will not answer rather than a board
+# that is busy.  Three overlapping runs on this desk were each diagnosed
+# as a dead board before anyone counted the processes.
+#
+# A run started BY kinstall.sh (its pre-flight boot) inherits the lock
+# rather than being refused by it; see boardlock.sh.
+#
+. "$ROOT/tools/jtag/boardlock.sh"
+boardfree || { echo "boot: not starting while another openocd holds the adapter" >&2; exit 1; }
+boardlock boot || { echo "boot: not starting while another board operation runs" >&2; exit 1; }
+trap 'boardunlock' EXIT INT TERM
+
 #
 # Which screen session, found rather than remembered.
 #
@@ -52,7 +70,8 @@ S=${S:-/private/tmp/claude-501/-Users-npe-src-inferno64-branches-raspi3b-port/26
 # and the read-back -- none of which had run at all, because the console
 # branch was taken every time.  ${SESS-...} without the colon.
 #
-SESS=${SESS-`screen -ls | awk '/ttys/{print $1; exit}'`}
+. "$ROOT/tools/jtag/boardsess.sh"
+SESS=${SESS-`boardsess`}
 
 #
 # Refuse to run without a console, instead of reporting a false

@@ -69,13 +69,38 @@ REMOTE=/n/remote/os/inferno/raspi3b/kernel8.img
 idle() {
 	printf 'load std; echo IDLE-%s\n' "`date +%s`" > "$CMD"
 }
-trap 'idle' EXIT INT TERM
+. "$HERE/boardlock.sh"
+
+cleanup() {
+	idle
+	boardunlock
+}
+trap 'cleanup' EXIT INT TERM
 
 fail() {
 	echo "kinstall: $*" >&2
 	echo "kinstall: THE CARD WAS NOT CHANGED." >&2
 	exit 1
 }
+
+# ---------------------------------------------------------------- 0
+
+#
+# One operator.  The capitals above are now enforced, because they were
+# not: two of these runs overlapped and left the card with a kernel8.bak
+# and a kernel8.new from different builds and a kernel8.img whose
+# directory entry started at a FREE CLUSTER.  The firmware loaded
+# nothing, 0x80000 held uninitialised DRAM, and the repair needed a card
+# reader, a human, and a privileged fsck -- the one failure mode this
+# script's whole ordering exists to prevent, arrived at from outside the
+# ordering.
+#
+# The trap above releases the lock, and boardunlock only releases a lock
+# this process holds, so the run refused here does not delete the lock
+# belonging to the run it was refused in favour of.
+#
+boardfree || fail "another openocd is driving the adapter"
+boardlock kinstall || fail "another board operation is already running"
 
 # ---------------------------------------------------------------- 1
 
@@ -148,7 +173,8 @@ PYEOF`
 # and the read-back -- none of which had run at all, because the console
 # branch was taken every time.  ${SESS-...} without the colon.
 #
-SESS=${SESS-`screen -ls | awk '/ttys/{print $1; exit}'`}
+. "$HERE/boardsess.sh"
+SESS=${SESS-`boardsess`}
 if [ -z "$SESS" ] || ! screen -S "$SESS" -X select . >/dev/null 2>&1; then
 	echo "kinstall: no console; the board will be asked directly instead" >&2
 	SESS=

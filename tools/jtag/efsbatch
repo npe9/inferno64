@@ -44,7 +44,8 @@ ROOT=`cd "$HERE/../.." && pwd`
 N=${N:-30}
 WAIT=${WAIT:-900}
 OUT=${OUT:-${TMPDIR:-/tmp}/efsbatch.$$}
-SESS=${SESS-`screen -ls | awk '/ttys/{print $1; exit}'`}
+. "$HERE/boardsess.sh"
+SESS=${SESS-`boardsess`}
 
 mkdir -p "$OUT" || exit 1
 echo "efsbatch: $N runs, ${WAIT}s each, logs in $OUT"

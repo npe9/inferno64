@@ -74,9 +74,23 @@ the stall -- which with a debugger is a read, not a release cycle.
 NEVER OPEN THE SERIAL DEVICE FROM A SCRIPT.  screen owns it.  Type and
 read through the session and nothing else:
 
-	SESS=`screen -ls | awk '/ttys/{print $1; exit}'`
+	. tools/jtag/boardsess.sh
+	SESS=${SESS-`boardsess`}
 	screen -S "$SESS" -X stuff "<command>\r"
 	screen -S "$SESS" -X hardcopy -h <file>
+
+AND PICK THE SESSION BY THE DEVICE, NOT BY ORDER.  What stood here was
+
+	SESS=`screen -ls | awk '/ttys/{print $1; exit}'`
+
+which means "the first screen session on a tty".  There are four on
+this desk -- the Pi, a SiFive HiFive Unmatched, and both ends of the
+xip radio bench -- and that awk returns the SiFive.  A whole session's
+board work read its scrollback, so tools reported "the console saw
+nothing" while the kernel's own log ring said the build was running,
+and four boots were recorded as failures for a kernel that was up.
+boardsess finds the session whose process holds the Pi's adapter, and
+prints NOTHING rather than a neighbouring board if it cannot.
 
 Opening /dev/cu.* a second time while screen holds it, and killing
 processes that hold it mid-transfer, wedges the adapter.  It carries

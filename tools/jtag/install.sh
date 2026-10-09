@@ -38,7 +38,8 @@ S=${S:-/private/tmp/claude-501/-Users-npe-src-inferno64-branches-raspi3b-port/26
 # unresponsive when in fact nobody was speaking to it.  Take the first
 # attached session on a tty instead, and let SESS override it.
 #
-SESS=${SESS:-`screen -ls | awk '/ttys/{print $1; exit}'`}
+. "$HERE/boardsess.sh"
+SESS=${SESS-`boardsess`}
 
 #
 # Refuse to run without a console, instead of reporting a false
