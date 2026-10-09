@@ -95,16 +95,80 @@ and it does
 .B not
 make an exec safe to run.
 .PP
-.B "What is established and what is not."
-That an exec poisons the channel is established. WHICH call poisons it
-is not: the first poisoned run showed two timeouts and the first had
-five-argument shape, which means a submission happened before the
-explicit exec. A boot doing control, then
+.B "And it is EXECUTE_QPU specifically, measured."
+A fresh boot doing the control, then
+.CW reset
+and
 .CW enable
-alone with no exec, then the control again separates those, and it is
-the
+with no exec, then the control again:
+.DS
+.CW
+A-CONTROL-FRESH   PROCESSED, 8 bytes, 25 us, 0xee6b280
+B-ENABLE-NO-EXEC  reset, enable accepted
+C-CONTROL-AFTER   PROCESSED, 8 bytes, 24 us, 0xee6b280
+.DE
+.PP
+25 us before and 24 us after, the same value both times. So it is not
+the reset path, not the enable path, and not
+.CW #Q
+touching the channel at all.
+.PP
+That also disposes of the other reading the two timeouts allowed:
+.CW qputry
+writes its
+.B own
+.CW exec
+.CW ( appl/cmd/qputry.b :163),
+so the earlier run's first timeout was its submission and the second
+was the explicit one \(em two execs, not an exec preceded by something
+else. Which means the battery's
+.CW arith
+question is an exec too, and it was listed as shareable: running it
+between
 .CW enable
-question in the script.
+and
+.CW h2
+would have spent a boot producing a dead
+.CW h2
+and read as a finding about firmware memory.
+.NH 1
+What the five measurements eliminate, and the one question left
+.PP
+Each taken before any exec in its own boot:
+.DS
+.CW
+the parser runs and walks the list   absent tag answered, 0x80000001, 22us
+GET_CLOCK_RATE implemented+answered  25us, 250 MHz
+SET_ENABLE_QPU implemented+answered  accepted, channel alive after
+the V3D power domain is ON           domain 0xa reads back state 1
+EXECUTE_QPU                          reached, never answers, CHANNEL DEAD
+.DE
+.PP
+So the handler is
+.B entered
+\(em it is not absent, or it would look like
+.CW 0x000f0f0f
+\(em and it does not return, and it takes the property channel with it.
+.B "Not absent, not unimplemented, not powered off, not slow, and not"
+.B "provoked by anything else #Q does,"
+each by a measurement rather than by argument.
+.PP
+.B "What is left is h2."
+If
+.CW EXECUTE_QPU
+answers from a firmware allocation when it never answers from the
+kernel's own alias, the alias was the whole fault.
+.CW devv3d 's
+.CW gpumem
+provenance line and its separate
+.CW alloc
+and
+.CW lock
+fields exist so that a second silence is attributable to the exec
+rather than to an allocation that quietly did not happen \(em the
+allocating path has never succeeded anywhere, since QEMU refuses it for
+want of alias bits, which is the shape of code that is wrong in a way
+no run has shown.
 
 .NH 1
 The hypotheses, each with the test that kills it
