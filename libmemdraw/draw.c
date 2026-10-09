@@ -2757,7 +2757,33 @@ memfillcolor(Memimage *i, u32 val)
 		uchar *dp;
 
 		dp = (uchar*)u32addr(i, i->r.min);
-		if(((uintptr)dp >> 32) != 0 || ((uintptr)i->data->bdata >> 32) != 0){
+		/*
+		 * SAME 4GB AS bdata, which is what the paragraph above says to
+		 * test and is not what this line used to do.  It read
+		 *
+		 *	((uintptr)dp >> 32) != 0 || ((uintptr)bdata >> 32) != 0
+		 *
+		 * i.e. "both in the LOW 4GB", an absolute test.  That is true
+		 * on a board with 1GB of RAM and FALSE FOR EVERY IMAGE ON A
+		 * 64-BIT HOST, where the heap is above 2^32 -- so under host
+		 * emu this branch was taken for every call and memfillcolor
+		 * RETURNED WITHOUT FILLING.  Measured: a 30x22 rectangle drew
+		 * as ten pixels, because the 1x1 replicated source image was
+		 * never filled white and the draw painted black on black.
+		 * polytest(1) and anything else using draw(2) as an oracle was
+		 * unusable on the host, and the board was unaffected, which is
+		 * why it went unnoticed.
+		 *
+		 * The relative test keeps every bit of the diagnostic's
+		 * purpose.  On the recorded fault it still fires --
+		 * dst 0x1008c6c40 against bdata 0x8c6c40, high halves 1 and 0
+		 * -- and on the host it does not, because dst and bdata are in
+		 * the same 4GB there (0x10ca78230 and 0x10ca78230 in the run
+		 * that found this).  A destination in a different 4GB from its
+		 * own pixel data is the bug being hunted; being above 4GB is
+		 * merely what a host pointer looks like.
+		 */
+		if(((uintptr)dp >> 32) != ((uintptr)i->data->bdata >> 32)){
 			if(nhigh++ < 4)
 				print("memfillcolor: HIGH dst %#p bdata %#p base %#p"
 					" data %#p allocd %d zero %d width %d"

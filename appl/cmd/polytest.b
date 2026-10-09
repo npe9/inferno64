@@ -165,6 +165,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	linecheck();
 	trianglecheck();
 	splinecheck();
+	nilcheck();
 
 	sys->print("polytest: %d ok, %d fail\n", nok, nfail);
 	if(nfail != 0){
@@ -172,6 +173,59 @@ init(nil: ref Draw->Context, nil: list of string)
 		raise "fail:polygon mismatch";
 	}
 	sys->print("polytest: all checks passed\n");
+}
+
+#
+# 0.  A NIL ARRAY MUST BE REFUSED, NOT DEREFERENCED.
+#
+# H is ((void*)(-1)), so a Limbo `nil' array arrives as a pointer that
+# is not nil in C.  The old code did
+#
+#	fillpolyop(d, (Point*)f->p->data, f->p->len, ...)
+#
+# which dereferences f->p before anything can check it; whether the
+# replacement is safe depends on WHERE the conversion is reached from,
+# not on what it does once it runs.  In this tree cvtpoints() takes the
+# Array* and tests it, so the call site does not dereference -- but that
+# is an argument, and this is the measurement.  A peer (inferno-rio-71)
+# raised it after controlling it in their own tree by deleting the
+# guard: polytest died with "dereference of nil" and printed no tally.
+#
+# Hosted that is a Dis exception; on a native kernel there is no
+# handler, so this case is worth more on the board than off it.  The
+# handler below turns a raise into a FAIL rather than letting it kill
+# the run, because a test that dies prints no tally at all and a missing
+# tally is easy to read as a pass.
+#
+nilcheck()
+{
+	a := newgrey();
+	if(a == nil){
+		ck("nil array", 0, ": could not allocate an image");
+		return;
+	}
+	ok := 1;
+	{
+		a.fillpoly(nil, ~0, ink, (0, 0));
+		a.poly(nil, draw->Endsquare, draw->Endsquare, 0, ink, (0, 0));
+		a.fillbezspline(nil, ~0, ink, (0, 0));
+		a.bezspline(nil, draw->Endsquare, draw->Endsquare, 0, ink, (0, 0));
+	}exception e{
+	"*" =>
+		ok = 0;
+		ck("a nil point array is refused, not dereferenced", 0,
+			": raised " + e);
+	}
+	if(ok)
+		ck("a nil point array is refused, not dereferenced", 1,
+			": all four entry points returned");
+	#
+	# ...and it must have drawn nothing, rather than drawing whatever
+	# was at H.
+	#
+	if(ok)
+		ck("a nil point array draws nothing", inked(pix(a)) == 0,
+			sys->sprint(": %d pixels", inked(pix(a))));
 }
 
 #
