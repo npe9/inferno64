@@ -217,22 +217,35 @@ or
 which are declared in the vocabulary and emitted by nothing, so no
 dump has ever contained one.
 .PP
-A dump is the tree
-.B after
-the walk rendered it, which means after any global scale was applied to
-the nodes \(em so a dump taken under
+A dump holds the tree
+.B unscaled,
+whatever
+.B "render scaled"
+is set to. A global scale is applied into a stack copy of each node as
+it is drawn and the list itself is never touched, so a dump taken under
 .B "render scaled 2"
-holds the scaled geometry, not the original. The node transform is
-different: a
+carries the same geometry as one taken at 1:1 \(em asserted in
+.IR tkscenetest (1),
+not reasoned: the border's box is
+.B "(58,0)\-(102,24)"
+in both.
+.PP
+.B "This paragraph first said the opposite,"
+which is the worst place in this page to be wrong, since it is the one
+telling a consumer how to read the coordinates it is given. A
 .B Ttransform
-node is in the tree and its span is
+node is likewise in the tree with its span
 .B not
-pre\-scaled, so a consumer applies it itself.
+pre\-scaled, so a consumer applies both the transform and whatever
+scale it wants itself.
 .PP
 There is no encoder. A dump can be read but not written back, so
 nothing yet proves a decoded tree is
 .I sufficient
 to reproduce the picture \(em only that every field survives the trip.
+Which is also why the paragraph above had to be measured rather than
+argued: with no encoder there is no round trip to catch a
+misdescription of the coordinate space.
 Reproducing it would mean a consumer that rasterises the primitive
 subset, which is the next thing here rather than a thing in the way:
 every renderer case is built from

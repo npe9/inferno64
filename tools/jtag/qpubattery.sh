@@ -84,10 +84,22 @@
 #   arith    The GPU path against a known-good address instead of a
 #            firmware one, so "this driver's offsets are wrong" is
 #            separable from "the QPU cannot fetch from there".
-#            THE RESULT WORDS ARE SEEDED with a value no computation
-#            would produce, and the check is that they CHANGED -- a
-#            zero in a buffer you zeroed proves nothing, and neither
-#            does a readback whose invalidate did not take.
+#
+#            IT CANNOT YET TELL A CHANGED RESULT FROM AN UNCHANGED
+#            ONE, and that limitation is written here rather than
+#            dressed up.  qputry's positional words are QPU
+#            INSTRUCTION words, written to /dev/v3dcode -- not
+#            uniforms and not a result area -- so passing a sentinel
+#            seeds nothing.  And devv3d's `block' line is read from
+#            the block BEFORE the mailbox exchange, so it reports what
+#            this driver wrote and not what the GPU produced.
+#
+#            What it would take: seed words the program is meant to
+#            write, re-read them after the exchange with an
+#            invalidate, and report the two side by side.  Until that
+#            exists this line says only whether the submission was
+#            accepted, which is worth running and is not an
+#            arithmetic result.
 #
 #   h2       EXECUTE_QPU from firmware-allocated, locked memory.  The
 #            leading hypothesis and now a clean single-question
@@ -119,6 +131,7 @@
 #   h3 set   tag 0x80000000 PROCESSED wrote 0 bytes   11 us  answered
 #   h3 read  tag 0x80000000 PROCESSED wrote 0 bytes   14 us  answered
 #   arith    block base+8 and base+24, uniforms zero, no fault
+#            (that `block' is the pre-exchange snapshot, see above)
 #   h2       gpualloc REFUSED: no alias bits in the returned address
 #
 # QEMU FABRICATES VALUES for tags it accepts -- V3D clock 700 MHz there
@@ -212,8 +225,8 @@ arith)
 	echo "echo reset >/dev/v3dctl"
 	echo "echo gpufake >/dev/v3dctl"
 	echo "cat /dev/v3dctl"
-	echo "echo '--- arith: result words seeded with 0x5a5a5a5a, must CHANGE'"
-	echo "qputry 0x5a5a5a5a 0x5a5a5a5a 0x5a5a5a5a 0x5a5a5a5a"
+	echo "echo '--- arith: four QPU instruction words (NOT a seeded result)'"
+	echo "qputry 0x11111111 0x22222222 0x33333333 0x44444444"
 	epilogue
 	;;
 h2)

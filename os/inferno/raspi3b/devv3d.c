@@ -244,7 +244,20 @@ static struct {
 	 * that is wrong in a way no run has shown.
 	 */
 	int	memsrc;		/* Memnone, Memfirmware, Memfake */
-	int	memlocked;	/* LOCK_MEMORY was answered and gave an address */
+	/*
+	 * HOW FAR THE ALLOCATION GOT, kept even when it failed, because
+	 * "the firmware refused to give us memory" and "we never asked"
+	 * are different answers to h2 and the status could not tell them
+	 * apart: every failure path calls v3dgpufree(), which reset
+	 * memsrc to Memnone, so a refusal read exactly like an untried
+	 * driver.  And `lock answered' is not `lock gave a usable
+	 * address': ALLOCATE_MEMORY and LOCK_MEMORY each either got a
+	 * reply or did not, which is the fact that says the firmware was
+	 * listening, and the address is a separate fact on top.
+	 */
+	int	memtried;	/* a gpualloc was attempted at all */
+	int	memallocack;	/* ALLOCATE_MEMORY was answered */
+	int	memlockack;	/* LOCK_MEMORY was answered */
 	u32	ctlbus;		/* the control-list address actually sent */
 	u32	blk[6];		/* first words of the block exec wrote */
 	u32	ident[3];	/* V3D_IDENT0..2, if ever read */
@@ -538,7 +551,9 @@ v3dgpufree(void)
 	v3d.memhandle = 0;
 	v3d.membus = 0;
 	v3d.memsrc = Memnone;
-	v3d.memlocked = 0;
+	/* memtried/memallocack/memlockack deliberately survive: they are
+	 * the record of what was attempted, and every failure path here
+	 * runs through this function. */
 	return 0;
 }
 
@@ -550,11 +565,15 @@ v3dgpualloc(int size)
 	if(size <= 0 || size > 1024*1024)
 		error("size must be 1..1048576");
 	v3dgpufree();
+	v3d.memtried = 1;
+	v3d.memallocack = 0;
+	v3d.memlockack = 0;
 	buf = (u32*)(((uintptr)v3draw + 0xf) & ~(uintptr)0xf);
 	buf[0] = 9*4; buf[1] = 0; buf[2] = Tagalloc; buf[3] = 12;
 	buf[4] = 0; buf[5] = size; buf[6] = 16; buf[7] = Memflags; buf[8] = 0;
 	if(mboxpropto(buf, (uvlong)1000*1000) < 0)
 		error("ALLOCATE_MEMORY was not answered");
+	v3d.memallocack = 1;
 	v3d.memhandle = buf[5];
 	if(v3d.memhandle == 0)
 		error("ALLOCATE_MEMORY returned handle 0");
@@ -564,10 +583,10 @@ v3dgpualloc(int size)
 		v3dgpufree();
 		error("LOCK_MEMORY was not answered");
 	}
+	v3d.memlockack = 1;
 	v3d.membus = buf[5];
 	v3d.memsize = size;
 	v3d.memsrc = Memfirmware;
-	v3d.memlocked = v3d.membus != 0;
 	if(v3d.membus == 0){
 		v3dgpufree();
 		error("LOCK_MEMORY returned bus address 0");
@@ -623,7 +642,9 @@ v3dgpufake(void)
 	v3d.membus = (u32)((uintptr)v3dfake | Busalias);
 	v3d.memsize = sizeof v3dfake;
 	v3d.memsrc = Memfake;
-	v3d.memlocked = 0;	/* no firmware was asked anything */
+	v3d.memtried = 0;	/* no firmware was asked anything */
+	v3d.memallocack = 0;
+	v3d.memlockack = 0;
 	return 0;
 }
 
@@ -705,7 +726,8 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			"args %#ux %#ux %#ux %#ux ctlidx %d\n"
 			"exec %s code %#ux tag %#ux %s wrote %ud bytes %llud us\n"
 			"wait %s\n"
-			"gpumem %s handle %#ux bus %#ux size %d lock %s ctlbus %#ux\n"
+			"gpumem %s handle %#ux bus %#ux size %d ctlbus %#ux\n"
+			"gpualloc %s alloc %s lock %s\n"
 			"block %#ux %#ux %#ux %#ux %#ux %#ux\n"
 			"ident %s %#ux %#ux %#ux\n"
 			"value %#ux %#ux %#ux %#ux\n",
@@ -727,10 +749,10 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			v3d.memsrc == Memfirmware? "firmware" :
 			  v3d.memsrc == Memfake? "FAKE (this driver's own block)" :
 			  "none",
-			v3d.memhandle, v3d.membus, v3d.memsize,
-			v3d.memsrc != Memfirmware? "n/a" :
-			  v3d.memlocked? "answered" : "NOT LOCKED",
-			v3d.ctlbus,
+			v3d.memhandle, v3d.membus, v3d.memsize, v3d.ctlbus,
+			v3d.memtried? "tried" : "never tried",
+			v3d.memallocack? "answered" : "no reply",
+			v3d.memlockack? "answered" : "no reply",
 			v3d.blk[0], v3d.blk[1], v3d.blk[2],
 			v3d.blk[3], v3d.blk[4], v3d.blk[5],
 			v3d.identread?

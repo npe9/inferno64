@@ -1376,6 +1376,29 @@ init(ctxt: ref Draw->Context, argv: list of string)
 					len cnodes[sp].pts,
 					cnodes[sp].pts[0].x, cnodes[sp].pts[0].y));
 
+		# IS A DUMP SCALED? The renderer writes every scaled node
+		# into a stack copy and never touches the list, and
+		# recorddump() walks the list -- so a dump taken under a
+		# global scale should hold the UNSCALED geometry. Asserted
+		# rather than reasoned, because man/2/tknode first said the
+		# opposite and that paragraph is the one telling a consumer
+		# how to read the coordinates it is given.
+		tk->cmd(tk->toplevel(disp, ""), "render scaled 2");
+		paint(disp, "recorded at 2:1", scaleframe);
+		(snodes, serr) := tknode->decode(
+			tk->cmd(tk->toplevel(disp, ""), "render tree"));
+		tk->cmd(tk->toplevel(disp, ""), "render scaled 1");
+		report(serr == nil, sys->sprint("a 2:1 tree decodes: %s", errstr(serr)));
+		if(len snodes == 4){
+			sb := snodes[3];
+			report(sb.r.min.x == 58 && sb.r.max.x == 102 &&
+			       sb.r.max.y == 24,
+				sys->sprint("a dump under `render scaled 2' is UNSCALED: (%d,%d)-(%d,%d)",
+					sb.r.min.x, sb.r.min.y,
+					sb.r.max.x, sb.r.max.y));
+		}else
+			report(0, sys->sprint("the 2:1 tree is 4 nodes (%d)", len snodes));
+
 		# And off again. An empty answer here is the only thing that
 		# distinguishes recording from a dump that was never cleared.
 		tk->cmd(tk->toplevel(disp, ""), "render record 0");
