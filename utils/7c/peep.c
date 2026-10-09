@@ -2,6 +2,8 @@
 
 int xtramodes(Reg*, Adr*);
 
+static int	extcopy(Reg*);
+
 void
 peep(void)
 {
@@ -63,7 +65,8 @@ loop1:
 		 * AArch64, so an int -1 became 0xffffffff downstream
 		 * (doc/inferno-ports.ms).
 		 */
-		if(p->as == AMOV || p->as == AFMOVS || p->as == AFMOVD)
+		if(p->as == AMOV || p->as == AFMOVS || p->as == AFMOVD
+		|| extcopy(r))
 		if(regtyp(&p->to)) {
 			if(p->from.type == D_CONST)
 				constprop(&p->from, &p->to, r->s1);
@@ -363,6 +366,96 @@ uniqs(Reg *r)
 			return R;
 	return r1;
 }
+
+/*
+ * sameext -- is the value in register `src' already extended the way
+ * instruction `as' would extend it?
+ *
+ * This is the whole condition for propagating a 32-bit register-to-register
+ * move, and it is about SIGNEDNESS, NOT WIDTH.  Measured over this kernel,
+ * keying on width instead is wrong in 4934 places: a W-form result (ADDW and
+ * friends, 2030 sites) and a function's W0 return value (2904 sites) both
+ * ZERO-extend into the 64-bit register, so an SXTW after either of them is
+ * load-bearing and eliding it turned `int -1' into 0xffffffff.
+ *
+ * Only an idempotent extension qualifies: MOVW after MOVW is SXTW of an
+ * already sign-extended value, MOVWU after MOVWU is UXTW of an already
+ * zero-extended one.  The cross cases differ whenever bit 31 is set, so they
+ * are refused.
+ *
+ * The walk is through uniqp() only, so it crosses a basic-block boundary
+ * exactly when that block has a single predecessor, and a merge is a refusal.
+ * That is conservative by construction: reg.c's flow graph is already built
+ * for the register allocator, so this costs a bounded pointer chase and no
+ * new analysis.  Of 22493 such moves in this kernel 7273 qualify and 5887 are
+ * refused at a merge -- the headroom a real dataflow pass would reach, and
+ * the reason this one is a pointer chase instead.
+ */
+static int
+sameext(Reg *r, Adr *src, int as)
+{
+	Reg *r1;
+	Prog *q;
+	int n, t;
+
+	r1 = r;
+	for(n = 0; n < 200; n++) {
+		r1 = uniqp(r1);
+		if(r1 == R)
+			return 0;		/* a merge, or the top: refuse */
+		q = r1->prog;
+		if(q->as == ANOP)		/* excise() leaves these */
+			continue;
+		/*
+		 * copyu IS the authority on "does this instruction write v",
+		 * and the reason to use it rather than testing q->to is that
+		 * `to' is not always the destination: copyu's ABL arm returns
+		 * 2 for every caller-saved register while a call's `to' is the
+		 * callee symbol, and its ARET and ATEXT arms are keyed on
+		 * REGRET and REGARG.  A hand-rolled q->to.reg test has to
+		 * enumerate those by hand and be re-audited whenever the
+		 * switch grows; this does not.
+		 *
+		 * It is called with a nil s, which is a query -- but note
+		 * that a query here is not side-effect free: peep.c:1168
+		 * normalises p->reg on an ADD-family instruction whose
+		 * destination is v.  That rewrite is semantically inert
+		 * (`ADD R4,R2' and `ADD R4,R2,R2' are the same instruction)
+		 * and copyprop and subprop already depend on it, but it does
+		 * mean enabling this pass changes the LISTING of functions it
+		 * declines.  See doc/open-issues-plan.ms.
+		 */
+		t = copyu(q, src, A);
+		switch(t) {
+		case 0:				/* does not touch src */
+		case 1:				/* READS src and does not write it */
+			continue;
+		case 2:				/* read-alter-rewrite: src changes */
+			return 0;
+		}
+		/* t is 3 (set) or 4 (set and used): this is the producer */
+		return q->as == as
+			&& q->to.type == D_REG
+			&& q->from.type == D_REG;
+	}
+	return 0;
+}
+
+static int
+extcopy(Reg *r)
+{
+	Prog *p;
+
+	p = r->prog;
+	if(p->as != AMOVW && p->as != AMOVWU)
+		return 0;
+	if(p->from.type != D_REG || p->to.type != D_REG)
+		return 0;
+	if(p->from.reg == p->to.reg)
+		return 0;		/* in-place: the conversion itself */
+	return sameext(r, &p->from, p->as);
+}
+
 
 /*
  * convert references to $0 to references to ZR (REGZERO)

@@ -899,7 +899,7 @@ duplicate RETURN       77   0.57       1  none    HIGH   NO, see below
 shift fold (shiftprop)164   1.21     ~30  flow    med    DONE, ported
 branch to next instr  153   1.13      ~8  none    low    LISTING only
 adjacent spill/reload  69   0.51      ~8  none    low    marginal
-width-aware copyprop   7273   32.3     ~50  flow    HIGH   OPEN, candidates
+width-aware copyprop   5231  38.66     ~55  flow    HIGH   built, UNPROVEN
 MUL+ADD -> MADD        18   0.13     ~20  flow    med    NO -- too rare
 extension pair         14   0.10       1  none    med    DONE (see below)
 switch -> arithmetic    -      -    ~300  SSA     high   NO
@@ -1184,6 +1184,139 @@ already computes bit-vector liveness and
 .CW prop() ,
 so a real pass could resolve some fraction of them.  That makes the candidate
 range 7273 to 13160, and narrowing it is the same work as writing the pass.
+.NH 2
+The width-aware propagation, written and measured
+.LP
+.B "Rule 4 was satisfied first:"
+.CW tests/kencc-widthprop.sh
+landed before the pass, with five probes drawn from the measured unsafe classes
+and a demonstrated failure on the naive relaxation.  Only then was the pass
+written.
+.LP
+.B "The condition is one function, and it is about signedness."
+.CW sameext()
+walks back through
+.CW uniqp()
+to the instruction that writes the move's source and returns true only when
+that instruction applied the
+.I same
+extension:
+.CW MOVW
+after
+.CW MOVW ,
+.CW MOVWU
+after
+.CW MOVWU .
+A merge, a call, or any other producer is a refusal.
+.LP
+.B "It asks copyu rather than testing q->to, and that choice is load-bearing."
+.CW to
+is not always the destination:
+.CW copyu 's
+.CW ABL
+arm returns 2 for every caller-saved register while a call's
+.CW to
+is the callee symbol, and its
+.CW ARET
+and
+.CW ATEXT
+arms are keyed on
+.CW REGRET
+and
+.CW REGARG .
+A hand-rolled
+.CW to
+test has to enumerate those and be re-audited whenever the switch grows.
+.B "The first implementation did test q->to, and it was too permissive in 22"
+.B "places."
+.P1
+                                 surviving reg-to-reg 32-bit moves
+base (exclusion intact)                       22483
+v1, tested q->to                              20071   removed 2412
+v2, copyu but refused "only used"             20914   removed 1569
+v3, copyu, correct                            20093   removed 2390
+.P2
+.LP
+.B "v2 is the more instructive mistake."
+.CW copyu
+returns 1 for \(lqv only used\(rq, which does
+.B not
+modify the register, and v2 refused on it \(em so it gave up 843 sites and
+looked at first like evidence that v1 had been unsound in 843 places.  It was
+not; it was my own bug in the instrument I was using to judge v1.
+.B "A more conservative implementation is not automatically a more correct one,"
+and the gap between two implementations is not a count of defects in either
+until you know why they differ.
+.LP
+.B "5231 instructions leave the kernel."
+.CW iraspi3b
+3353257 to 3332333 bytes, which is 20924, which is 5231 instructions.  The two
+exact counters corroborate:
+.CW SXTW
+27533 to 23884 and
+.CW "MOV Wd,Wn"
+11353 to 9813, a sum of 5189, agreeing with the mask-free byte figure to within
+0.8 per cent.  Both masks score zero on the random-bytes control.
+.B "That is 31 times the shiftprop win,"
+and against the survey's 7273 candidates it is a 72 per cent realisation \(em
+the rest being candidates whose uses copyprop could not rewrite, which is the
+unknown the survey said it could not resolve.
+.LP
+.B "And it costs nothing to compile."
+Three runs of
+.CW chan.c :
+24, 24, 23 ms before and 23, 23, 23 ms after.  The pass is a bounded pointer
+chase over a flow graph the register allocator had already built, which is
+exactly the tier-one property this document set out to exploit.
+.LP
+.B "NOT YET RUN ON THE BOARD, and this is the one thing still owed."
+The install refused twice.  The first attempt hit
+.CW DSCR.ERR=1 ,
+which
+.CW tools/jtag/unwedge
+cleared \(em EDSCR 0x13147d53 to 0x03147d13, the sticky bit gone and no human
+needed \(em but the retry reported that the
+.B core
+is stuck and not merely the bit, and
+.CW hardreset
+then could not read
+.CW Rstc
+at all.  The board answers neither JTAG nor ping.
+.B "It needs a power cycle at the switch,"
+so
+.CW kinstall
+left the card on the previous build and said so, which is the tool behaving
+correctly.
+.LP
+So for this row:
+.B "real"
+are the 5231 instructions, the byte-level corroboration, the zero loader
+diagnostics, the unchanged compile time, and that
+.CW tests/kencc-widthprop.sh
+and the other eleven toolchain tests pass.
+.B "Not done"
+is any execution of a kernel built this way.  5231 sites is 31 times the
+shiftprop change and it rewrites integer-to-pointer arithmetic throughout the
+kernel, so until it has booted and run
+.CW bndstest ,
+.CW drawink
+and a styx transfer, this row is implemented and unproven \(em and the
+tree's
+.CW kernel8.img
+is the unproven build, which disarms the stamp-checked tools until it is
+installed.
+.LP
+.B "162 emissions against 145 did NOT mean new warnings,"
+and reading the wrong one of kbuild's two numbers nearly made it a finding.
+.CW kbuild
+prints
+.CW "162 emission(s), 145 distinct" ;
+the distinct count is unchanged, and the 17 extra emissions are seventeen
+pre-existing warnings printed twice because 41 more compiles ran in that build.
+.B "Comparing the two runs with sort -u reported no new diagnostics and was"
+.B "also wrong to,"
+for the opposite reason: dedup hides a count change.  Only the per-text counts
+answered it.
 .NH 2
 The shiftprop kernel on silicon
 .LP
