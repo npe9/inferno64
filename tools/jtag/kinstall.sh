@@ -48,9 +48,24 @@
 set -u
 HERE=`dirname "$0"`
 ROOT=`cd "$HERE/../.." && pwd`
-S=${S:-/private/tmp/claude-501/-Users-npe-src-inferno64-branches-raspi3b-port/2675f84d-d333-4a0e-ba1f-4ef786fc52b7/scratchpad}
-CMD=$ROOT/os/inferno/raspi3b/board.cmd
-OUT=$ROOT/os/inferno/raspi3b/board.out
+#
+# S HAD A HARD-CODED PATH INSIDE ONE CLAUDE SESSION'S SCRATCHPAD, and
+# nothing created it.  For any other session -- or for this one after it
+# ends -- that directory does not exist, so every trim wrote nothing and
+# every grep read an empty file, and runcmd() would report "did not
+# appear" whatever the board did.  A peer found the mirror image of this
+# in their tree, where the baked-in path belonged to a session of mine.
+# So: a neutral default, and mkdir it rather than assuming.
+#
+S=${S:-${TMPDIR:-/tmp}/inferno-raspi3b}
+mkdir -p "$S" 2>/dev/null
+#
+# Overridable so the clash check below can be tested without a board,
+# an adapter, or the real channel.  A test that can only run against the
+# live board.cmd is a test nobody runs.
+#
+CMD=${CMD:-$ROOT/os/inferno/raspi3b/board.cmd}
+OUT=${OUT:-$ROOT/os/inferno/raspi3b/board.out}
 IMG=${IMG:-$ROOT/os/inferno/raspi3b/kernel8.img}
 ELF=${ELF:-$ROOT/os/inferno/raspi3b/iraspi3b}
 REMOTE=/n/remote/os/inferno/raspi3b/kernel8.img
@@ -66,7 +81,31 @@ REMOTE=/n/remote/os/inferno/raspi3b/kernel8.img
 # itself; it was only ever broken by the next thing that happened to
 # write board.cmd.
 #
+#
+# ONLY RESET THE CHANNEL IF IT STILL HOLDS WHAT WE PUT THERE.
+#
+# This wrote board.cmd unconditionally, and that turned the lock added
+# above into a way of CAUSING the collision it exists to prevent: the
+# EXIT trap was armed before the lock was taken, so a kinstall refused
+# because another operation held the board ran idle() on the way out and
+# overwrote the holder's command.  The guard against the clash committed
+# the clash.  A peer hit the identical shape in their own tree, in the
+# self-test of their clash detector, which is how I came to look.
+#
+# Two changes, because either alone is not enough.  The trap is now
+# armed AFTER the lock is held, so a refusal has no handler and touches
+# nothing -- before the lock there is nothing to clean up.  And this
+# function checks the channel still holds a KI- marker of ours before
+# resetting it, the way boardrun's idle() already did, so if another
+# writer takes the channel mid-run the damage is not moved onto them.
+#
 idle() {
+	if [ ! -f "$CMD" ]; then
+		return
+	fi
+	if ! grep -q 'KI-' "$CMD" 2>/dev/null; then
+		return
+	fi
 	printf 'load std; echo IDLE-%s\n' "`date +%s`" > "$CMD"
 }
 . "$HERE/boardlock.sh"
@@ -75,7 +114,6 @@ cleanup() {
 	idle
 	boardunlock
 }
-trap 'cleanup' EXIT INT TERM
 
 fail() {
 	echo "kinstall: $*" >&2
@@ -101,6 +139,14 @@ fail() {
 #
 boardfree || fail "another openocd is driving the adapter"
 boardlock kinstall || fail "another board operation is already running"
+
+#
+# ONLY NOW is the exit handler armed.  Everything above this line has
+# written nothing and holds nothing, so there is nothing to undo; and
+# arming it earlier is what let a refused run overwrite the channel of
+# the run it was refused in favour of.
+#
+trap 'cleanup' EXIT INT TERM
 
 # ---------------------------------------------------------------- 1
 
@@ -230,10 +276,48 @@ runcmd() {
 	tok=KI-$tokbase
 	cmdtok="KI'^'-$tokbase"
 	printf "%s; echo 'KI'^'-%s'\n" "$*" "$tokbase" > "$CMD"
+	#
+	# REMEMBER WHAT WE WROTE, so that a second writer is reported as a
+	# second writer.
+	#
+	# board.cmd is one file, one command deep, and nothing in it records
+	# whose command it holds.  When another run replaces ours the poller
+	# never prints our token and the loop below simply times out with
+	# "did not appear", which reads as a board that has stopped
+	# answering.  That happened and I believed it: a boardrun of my own
+	# overwrote the marker this was waiting for and the install reported
+	# "build NNN boots but its command poller never answered", which is
+	# a sentence about the kernel describing a collision between two of
+	# my own processes.
+	#
+	# The lock in step 0 stops an unrelated run from starting, and this
+	# does not replace it.  Detection is not serialisation: a holder's
+	# own children inherit the lock and can still write the channel, and
+	# anything that writes board.cmd without going through these tools
+	# is not bound by it at all.  So the check stays, and it earns its
+	# place by making the REPORT accurate rather than by preventing
+	# anything.
+	#
+	rcwrote=`cat "$CMD" 2>/dev/null`
 	i=0
 	while [ $i -lt "$limit" ]; do
 		sleep 5
 		i=`expr $i + 5`
+		#
+		# ...and check on every poll, not once at the end: the sooner
+		# this is said the less of the timeout is spent being wrong
+		# about why.
+		#
+		rcnow=`cat "$CMD" 2>/dev/null`
+		if [ "$rcnow" != "$rcwrote" ]; then
+			echo "kinstall: ANOTHER WRITER TOOK THE COMMAND CHANNEL." >&2
+			echo "kinstall:   $CMD no longer holds what this step wrote." >&2
+			echo "kinstall:   wanted: $rcwrote" >&2
+			echo "kinstall:   found:  $rcnow" >&2
+			echo "kinstall: so this step never ran, and that is a" >&2
+			echo "kinstall: collision between two runs, NOT a board fault." >&2
+			return 3
+		fi
 		[ -f "$OUT" ] || continue
 		LC_ALL=C tr -cd '\11\12\40-\176' < "$OUT" > "$S/ki-out.txt" 2>/dev/null
 		#
@@ -283,6 +367,107 @@ runcmd() {
 	cat "$S/ki-last.txt" 2>/dev/null >&2
 	return 1
 }
+
+#
+# SELF-TEST FOR THE CLASH CHECK, with no board, no adapter and no card.
+#
+#	KINSTALL_SELFTEST=1 CMD=/tmp/t/cmd OUT=/tmp/t/out S=/tmp/t sh tools/jtag/kinstall.sh
+#	KINSTALL_SELFTEST=2 ...   same, without a second writer
+#
+# Mode 1 injects a second writer and requires runcmd to return 3 with the
+# channel still holding the other writer's text.  Mode 2 is the CONTROL and
+# it is not decoration: a comparison that was always unequal -- one stray
+# newline between the write and the read would do it -- would report a clash
+# on every step and pass mode 1 for the wrong reason.  So mode 2 requires an
+# ordinary timeout with ZERO clash messages.
+#
+# It REFUSES to run against the real channel, and clears the exit handler
+# before doing so.  A peer's version of this refusal merely exited, and the
+# trap that resets board.cmd then fired on the way out -- so the guard against
+# the collision committed the collision.  Every path that declines has to
+# disarm the handler, not just the paths that succeed.
+#
+selftest() {
+	if [ "$CMD" = "$ROOT/os/inferno/raspi3b/board.cmd" ]; then
+		trap - EXIT INT TERM
+		echo "kinstall: selftest refuses to use the real $CMD; set CMD" >&2
+		return 1
+	fi
+	: > "$OUT"
+	rc=0
+	case $KINSTALL_SELFTEST in
+	1)
+		( sleep 6; printf 'load std; echo A-SECOND-WRITER\n' > "$CMD" ) &
+		runcmd KI-NEVER 30 "load std; echo KI-NEVER"
+		rc=$?
+		wait
+		if [ "$rc" != 3 ]; then
+			echo "selftest: mode 1 wanted return 3, got $rc" >&2
+			return 2
+		fi
+		if ! grep -q 'A-SECOND-WRITER' "$CMD" 2>/dev/null; then
+			echo "selftest: mode 1 overwrote the other writer's command" >&2
+			return 2
+		fi
+		echo "selftest: mode 1 ok -- clash detected, channel left as the other writer set it"
+		return 0
+		;;
+	2)
+		runcmd KI-NEVER 15 "load std; echo KI-NEVER"
+		rc=$?
+		if [ "$rc" = 3 ]; then
+			echo "selftest: mode 2 reported a clash with no second writer" >&2
+			return 2
+		fi
+		echo "selftest: mode 2 ok -- timed out with no clash reported (rc $rc)"
+		return 0
+		;;
+	3)
+		#
+		# THE SUCCESS PATH, which modes 1 and 2 do not reach and which
+		# matters most: if the clash comparison fired spuriously during
+		# a real run, EVERY step would fail and the card would never be
+		# written.  Mode 2 shows it stays quiet while polling, but only
+		# a step that SUCCEEDS shows the check does not block one.
+		#
+		# The responder reads the token out of the channel rather than
+		# being told it, because the token carries $$ and a sequence
+		# number the caller cannot know in advance -- and reading it
+		# back is also what proves the channel still holds our command.
+		#
+		( sleep 6
+		  t=`sed -n "s/.*\(KI'^'-DONE-[0-9]*-[0-9]*\).*/\1/p" "$CMD"`
+		  j=`echo "$t" | sed "s/KI'\^'-/KI-/"`
+		  {
+			printf 'RCMD 7 load std; echo KI-NEVER; echo %s\n' "$t"
+			printf 'KI-NEVER\n'
+			printf '%s\n' "$j"
+		  } >> "$OUT"
+		) &
+		runcmd KI-NEVER 60 "load std; echo KI-NEVER"
+		rc=$?
+		wait
+		if [ "$rc" != 0 ]; then
+			echo "selftest: mode 3 wanted return 0, got $rc" >&2
+			return 2
+		fi
+		echo "selftest: mode 3 ok -- a successful step is not blocked by the clash check"
+		return 0
+		;;
+	*)
+		echo "selftest: KINSTALL_SELFTEST must be 1 or 2" >&2
+		return 1
+		;;
+	esac
+}
+
+if [ -n "${KINSTALL_SELFTEST:-}" ]; then
+	selftest
+	rc=$?
+	trap - EXIT INT TERM
+	exit $rc
+fi
+
 
 # ---------------------------------------------------------------- 2, 3
 

@@ -28,7 +28,11 @@
 set -u
 HERE=`dirname "$0"`
 ROOT=`cd "$HERE/../.." && pwd`
-S=${S:-/private/tmp/claude-501/-Users-npe-src-inferno64-branches-raspi3b-port/2675f84d-d333-4a0e-ba1f-4ef786fc52b7/scratchpad}
+# A neutral default, created rather than assumed: a path inside one
+# Claude session's scratchpad does not exist for any other session, and
+# every grep against a missing file reads empty.
+S=${S:-${TMPDIR:-/tmp}/inferno-raspi3b}
+mkdir -p "$S" 2>/dev/null
 #
 # Which screen session, found rather than remembered.
 #
