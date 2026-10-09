@@ -145,6 +145,12 @@ enum {
 	Codemax	= 4096,		/* QPU instructions are 8 bytes; this is 512 */
 	Busalias = 0xc0000000,	/* uncached alias the VideoCore reads through */
 
+	Tagalloc = 0x0003000c,	/* ALLOCATE_MEMORY: size, align, flags */
+	Taglock	= 0x0003000d,	/* LOCK_MEMORY: handle -> bus address */
+	Tagunlock = 0x0003000e,	/* UNLOCK_MEMORY: handle */
+	Tagfree	= 0x0003000f,	/* RELEASE_MEMORY: handle */
+	Memflags = 0xc,		/* COHERENT|DIRECT, as a QPU program wants */
+
 	Tagclock = 0x00030002,	/* GET_CLOCK_RATE */
 	Tagqpuen = 0x00030012,	/* SET_ENABLE_QPU */
 	Tagqpuex = 0x00030011,	/* EXECUTE_QPU */
@@ -198,9 +204,15 @@ static struct {
 	u32	lasttag;	/* buf[4]: processed bit | bytes written */
 	u32	lastval[4];	/* buf[5..8] AFTER the call */
 	int	lastok;		/* whether mboxprop reported success */
+	int	lastwait;	/* 0 answered, -1 out of time, -2 counter dead */
+	uvlong	lastwaitus;	/* the bound that wait was given */
 	uvlong	lastus;		/* how long it took */
 	u32	clock;
 	int	clockok;
+	u32	memhandle;	/* firmware memory handle, 0 = none */
+	u32	membus;		/* ...its bus address once locked */
+	int	memsize;
+	u32	ctlbus;		/* the control-list address actually sent */
 } v3d;
 
 static Lock v3dlk;
@@ -222,6 +234,8 @@ extern int mboxprop(u32*);
  * would be silently truncated. It linked either way.
  */
 extern uvlong systmrusec(void);
+extern int mboxpropto(u32*, uvlong);
+extern int mboxlastwait(void);
 
 static int
 v3dclock(void)
@@ -289,7 +303,7 @@ v3denable(int on)
  * see the header for the 500x timeout sweep that moved nothing.
  */
 static int
-v3dexecraw(int ctlidx, u32 w0, u32 w1, u32 w2, u32 w3)
+v3dexecraw(int ctlidx, u32 w0, u32 w1, u32 w2, u32 w3, uvlong waitus)
 {
 	u32 *buf;
 	uvlong t0;
@@ -301,14 +315,51 @@ v3dexecraw(int ctlidx, u32 w0, u32 w1, u32 w2, u32 w3)
 		error("ctlidx must be 0..3");
 	nj = 1;
 
-	/* one job: uniforms then code, both bus addresses */
-	for(i = 0; i < nj && i < nelem(v3d.ctrl)/2; i++){
-		v3d.ctrl[2*i]   = (u32)((uintptr)v3d.unif | Busalias);
-		v3d.ctrl[2*i+1] = (u32)((uintptr)v3d.code | Busalias);
+	/*
+	 * If firmware memory has been allocated, the code and the control
+	 * list go THERE and the control list carries the firmware's own
+	 * bus addresses. That is plan item 3, and without this the
+	 * allocation would be plumbing nothing uses.
+	 *
+	 * Layout inside the block: the control list first (two words),
+	 * then the uniforms (four), then the code. Everything the QPU
+	 * fetches is then inside one locked allocation, which is the
+	 * arrangement the firmware's own examples use.
+	 */
+	if(v3d.membus != 0 && (v3d.membus & 0xc0000000) != 0){
+		u32 *m;
+		u32 cbus, ubus, kbus;
+
+		if(2*4 + sizeof v3d.unif + v3d.ncode > v3d.memsize)
+			error("gpu memory too small for code and control");
+		/*
+		 * The handle is locked, so the bus address is stable, and
+		 * the ARM sees that memory through the alias with the top
+		 * bits cleared. Writing through the uncached alias avoids
+		 * needing a cache flush for the GPU to see it.
+		 */
+		m = (u32*)(uintptr)(v3d.membus & ~0xc0000000U | 0xc0000000U);
+		cbus = v3d.membus;
+		ubus = v3d.membus + 2*4;
+		kbus = v3d.membus + 2*4 + sizeof v3d.unif;
+		for(i = 0; i < 4; i++)
+			m[2 + i] = v3d.unif[i];
+		memmove((uchar*)m + 2*4 + sizeof v3d.unif, v3d.code, v3d.ncode);
+		m[0] = ubus;
+		m[1] = kbus;
+		cacheflush(m, 2*4 + sizeof v3d.unif + v3d.ncode);
+		v3d.ctlbus = cbus;
+	}else{
+		/* one job: uniforms then code, both bus addresses */
+		for(i = 0; i < nj && i < nelem(v3d.ctrl)/2; i++){
+			v3d.ctrl[2*i]   = (u32)((uintptr)v3d.unif | Busalias);
+			v3d.ctrl[2*i+1] = (u32)((uintptr)v3d.code | Busalias);
+		}
+		cacheflush(v3d.code, v3d.ncode);
+		cacheflush(v3d.unif, sizeof v3d.unif);
+		cacheflush(v3d.ctrl, sizeof v3d.ctrl);
+		v3d.ctlbus = (u32)((uintptr)v3d.ctrl | Busalias);
 	}
-	cacheflush(v3d.code, v3d.ncode);
-	cacheflush(v3d.unif, sizeof v3d.unif);
-	cacheflush(v3d.ctrl, sizeof v3d.ctrl);
 
 	buf = (u32*)(((uintptr)v3draw + 0xf) & ~(uintptr)0xf);
 	buf[0] = 10*4;
@@ -320,18 +371,160 @@ v3dexecraw(int ctlidx, u32 w0, u32 w1, u32 w2, u32 w3)
 	buf[6] = w1;
 	buf[7] = w2;
 	buf[8] = w3;
-	buf[5+ctlidx] = (u32)((uintptr)v3d.ctrl | Busalias);
+	buf[5+ctlidx] = v3d.ctlbus;
 	buf[9] = 0;
 	for(i = 0; i < 4; i++)
 		v3d.lastargs[i] = buf[5+i];
 	v3d.lastctlidx = ctlidx;
 	t0 = systmrusec();
-	v3d.lastok = mboxprop(buf) >= 0;
+	v3d.lastok = mboxpropto(buf, waitus) >= 0;
 	v3d.lastus = systmrusec() - t0;
+	v3d.lastwait = mboxlastwait();
+	v3d.lastwaitus = waitus;
 	v3d.lastcode = buf[1];
 	v3d.lasttag = buf[4];
 	for(i = 0; i < 4; i++)
 		v3d.lastval[i] = buf[5+i];
+	return 0;
+}
+
+/*
+ * PLAN ITEM 2: any property tag, from Limbo.
+ *
+ *	echo tag TAG VALBYTES [w0 [w1 [w2 [w3]]]] >/dev/v3dctl
+ *
+ * The highest-leverage thing in doc/qpu-plan.ms by a wide margin: it
+ * makes the power-domain and unimplemented-tag hypotheses testable, and
+ * every firmware question after them, without a kernel rebuild. The
+ * alternative was a C function per tag, which is how this file started
+ * and why it had three.
+ *
+ * Nothing is interpreted. The tag, the value-buffer size and up to four
+ * words go out as given and the whole response comes back, because what
+ * a given tag expects is exactly what is not known.
+ */
+static int
+v3dtag(u32 tag, int valbytes, u32 w0, u32 w1, u32 w2, u32 w3, uvlong waitus)
+{
+	u32 *buf;
+	uvlong t0;
+	int i, nw;
+
+	if(valbytes < 0 || valbytes > 16)
+		error("value size must be 0..16 bytes");
+	nw = (valbytes + 3)/4;
+	buf = (u32*)(((uintptr)v3draw + 0xf) & ~(uintptr)0xf);
+	buf[0] = (5 + nw + 1)*4;
+	buf[1] = 0;
+	buf[2] = tag;
+	buf[3] = valbytes;
+	buf[4] = 0;
+	if(nw > 0) buf[5] = w0;
+	if(nw > 1) buf[6] = w1;
+	if(nw > 2) buf[7] = w2;
+	if(nw > 3) buf[8] = w3;
+	buf[5+nw] = 0;			/* end tag */
+	for(i = 0; i < 4; i++)
+		v3d.lastargs[i] = i < nw? buf[5+i] : 0;
+	v3d.lastctlidx = -1;		/* not an exec */
+	t0 = systmrusec();
+	v3d.lastok = mboxpropto(buf, waitus) >= 0;
+	v3d.lastus = systmrusec() - t0;
+	v3d.lastwait = mboxlastwait();
+	v3d.lastcode = buf[1];
+	v3d.lasttag = buf[4];
+	for(i = 0; i < 4; i++)
+		v3d.lastval[i] = i < nw? buf[5+i] : 0;
+	return 0;
+}
+
+/*
+ * PLAN ITEM 3, and the leading hypothesis in doc/qpu-plan.ms.
+ *
+ * The code and the control list have been static kernel memory passed
+ * as `pa | 0xc0000000', the uncached alias the VPU reads property
+ * messages through -- and that is the thing that works for a property
+ * message precisely because the VPU reads it. The QPUs fetch through
+ * the V3D, which is not the VPU, and the documented way to get memory
+ * a QPU can run from is to ask the firmware: ALLOCATE_MEMORY then
+ * LOCK_MEMORY, which returns a bus address.
+ *
+ * So this allocates, locks, and copies the loaded code and a control
+ * list into it. If EXECUTE_QPU then answers, the alias was the fault
+ * and nothing else here was wrong. If it still does not answer, H2 is
+ * dead and the mailbox has nothing further to offer -- which is a
+ * result, and the plan says to write it down rather than drift into a
+ * V3D register driver.
+ *
+ * The handle is kept so the memory can be unlocked and released; a
+ * second `gpualloc' releases the first, because leaking GPU memory
+ * across experiments on a 1GB board would eventually look like a
+ * firmware fault.
+ */
+static int
+v3dgpufree(void)
+{
+	u32 *buf;
+
+	if(v3d.memhandle == 0)
+		return 0;
+	buf = (u32*)(((uintptr)v3draw + 0xf) & ~(uintptr)0xf);
+	buf[0] = 7*4; buf[1] = 0; buf[2] = Tagunlock; buf[3] = 4;
+	buf[4] = 0; buf[5] = v3d.memhandle; buf[6] = 0;
+	mboxprop(buf);
+	buf[0] = 7*4; buf[1] = 0; buf[2] = Tagfree; buf[3] = 4;
+	buf[4] = 0; buf[5] = v3d.memhandle; buf[6] = 0;
+	mboxprop(buf);
+	v3d.memhandle = 0;
+	v3d.membus = 0;
+	return 0;
+}
+
+static int
+v3dgpualloc(int size)
+{
+	u32 *buf;
+
+	if(size <= 0 || size > 1024*1024)
+		error("size must be 1..1048576");
+	v3dgpufree();
+	buf = (u32*)(((uintptr)v3draw + 0xf) & ~(uintptr)0xf);
+	buf[0] = 9*4; buf[1] = 0; buf[2] = Tagalloc; buf[3] = 12;
+	buf[4] = 0; buf[5] = size; buf[6] = 16; buf[7] = Memflags; buf[8] = 0;
+	if(mboxpropto(buf, (uvlong)1000*1000) < 0)
+		error("ALLOCATE_MEMORY was not answered");
+	v3d.memhandle = buf[5];
+	if(v3d.memhandle == 0)
+		error("ALLOCATE_MEMORY returned handle 0");
+	buf[0] = 7*4; buf[1] = 0; buf[2] = Taglock; buf[3] = 4;
+	buf[4] = 0; buf[5] = v3d.memhandle; buf[6] = 0;
+	if(mboxpropto(buf, (uvlong)1000*1000) < 0){
+		v3dgpufree();
+		error("LOCK_MEMORY was not answered");
+	}
+	v3d.membus = buf[5];
+	v3d.memsize = size;
+	if(v3d.membus == 0){
+		v3dgpufree();
+		error("LOCK_MEMORY returned bus address 0");
+	}
+	/*
+	 * A BUS ADDRESS WITH NO ALIAS BITS IS NOT ONE, and believing a
+	 * stub would fault the kernel rather than merely mislead it: the
+	 * write path below derives an ARM address from this, so a
+	 * returned 0x1000 -- which is what QEMU answers -- becomes
+	 * 0xc0001000, unmapped, and the copy into it takes the board
+	 * down. The emulator's own answer is the reason this check
+	 * exists, found before the image went near hardware.
+	 */
+	if((v3d.membus & 0xc0000000) == 0){
+		u32 bad = v3d.membus;
+
+		v3dgpufree();
+		v3d.membus = 0;
+		error("LOCK_MEMORY returned an address with no alias bits");
+		USED(bad);
+	}
 	return 0;
 }
 
@@ -387,6 +580,8 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			"code %d bytes (appended; `reset' clears)\n"
 			"args %#ux %#ux %#ux %#ux ctlidx %d\n"
 			"exec %s code %#ux tag %#ux %s wrote %ud bytes %llud us\n"
+			"wait %s\n"
+			"gpumem handle %#ux bus %#ux size %d ctlbus %#ux\n"
 			"value %#ux %#ux %#ux %#ux\n",
 			v3d.clockok? "hz" : "unknown", v3d.clock,
 			v3d.enabled,
@@ -400,6 +595,10 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			(v3d.lasttag & 0x80000000)? "PROCESSED" : "UNTOUCHED",
 			v3d.lasttag & 0x7fffffff,
 			v3d.lastus,
+			v3d.lastwait == 0? "answered" :
+			  v3d.lastwait == -1? "OUT OF TIME (no reply)" :
+			  "COUNTER NOT ADVANCING",
+			v3d.memhandle, v3d.membus, v3d.memsize, v3d.ctlbus,
 			v3d.lastval[0], v3d.lastval[1],
 			v3d.lastval[2], v3d.lastval[3]);
 		return readstr((ulong)offset, a, n, buf);
@@ -437,14 +636,33 @@ v3dwrite(Chan *c, void *a, int n, vlong offset)
 			if(v3denable(0) < 0)
 				error("the firmware refused SET_ENABLE_QPU");
 		}else if(strcmp(cb->f[0], "exec") == 0){
-			/* exec ctlidx w0 w1 w2 w3 -- all four words raw */
+			/* exec ctlidx w0 w1 w2 w3 [waitms] */
 			if(cb->nf < 6)
-				error("usage: exec ctlidx w0 w1 w2 w3");
+				error("usage: exec ctlidx w0 w1 w2 w3 [waitms]");
 			v3dexecraw(strtol(cb->f[1], nil, 0),
 				strtoul(cb->f[2], nil, 0),
 				strtoul(cb->f[3], nil, 0),
 				strtoul(cb->f[4], nil, 0),
-				strtoul(cb->f[5], nil, 0));
+				strtoul(cb->f[5], nil, 0),
+				cb->nf > 6?
+				  (uvlong)strtoul(cb->f[6], nil, 0)*1000 :
+				  (uvlong)1000*1000);
+		}else if(strcmp(cb->f[0], "gpualloc") == 0){
+			v3dgpualloc(cb->nf > 1?
+				strtol(cb->f[1], nil, 0) : 4096);
+		}else if(strcmp(cb->f[0], "gpufree") == 0){
+			v3dgpufree();
+		}else if(strcmp(cb->f[0], "tag") == 0){
+			/* tag TAG valbytes [w0 [w1 [w2 [w3]]]] [-- waitms] */
+			if(cb->nf < 3)
+				error("usage: tag TAG valbytes [w0..w3]");
+			v3dtag(strtoul(cb->f[1], nil, 0),
+				strtol(cb->f[2], nil, 0),
+				cb->nf > 3? strtoul(cb->f[3], nil, 0) : 0,
+				cb->nf > 4? strtoul(cb->f[4], nil, 0) : 0,
+				cb->nf > 5? strtoul(cb->f[5], nil, 0) : 0,
+				cb->nf > 6? strtoul(cb->f[6], nil, 0) : 0,
+				(uvlong)1000*1000);
 		}else
 			error(Ebadctl);
 		poperror();

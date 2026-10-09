@@ -116,6 +116,8 @@ mboxwrite(int chan, u32 data)
  * Returns 0 and the value, -1 if the time ran out, -2 if the spin
  * backstop ran out first, which means the counter is not advancing.
  */
+static int lastwait;	/* 0 ok, -1 out of time, -2 counter not advancing */
+
 static int
 mboxreadto(int chan, u32 *val, uvlong usec)
 {
@@ -127,16 +129,20 @@ mboxreadto(int chan, u32 *val, uvlong usec)
 	t0 = systmrusec();
 	for(i = 0; i < Spins; i++){
 		if(r[Status] & Empty){
-			if(systmrusec() - t0 >= usec)
+			if(systmrusec() - t0 >= usec){
+				lastwait = -1;
 				return -1;
+			}
 			continue;
 		}
 		v = r[Read];
 		if((int)(v & 0xf) == chan){
 			*val = v & ~0xfU;
+			lastwait = 0;
 			return 0;
 		}
 	}
+	lastwait = -2;
 	return -2;
 }
 
@@ -190,6 +196,18 @@ int
 mboxprop(u32 *buf)
 {
 	return mboxpropto(buf, Waitus);
+}
+
+/*
+ * Which bound ended the last wait, for a caller that needs to tell
+ * "the GPU has not answered yet" from "this board's counter is dead".
+ * mboxpropto returns -1 for both because its contract is older than
+ * the distinction.
+ */
+int
+mboxlastwait(void)
+{
+	return lastwait;
 }
 
 /*
