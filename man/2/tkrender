@@ -119,7 +119,11 @@ for its alpha, so an opaque black mask is a transparent one.
 .B doc/scene\-graph\-plan.ms
 .SH BUGS
 .B "Writing this found a defect in draw(2) itself,"
-not in the tree it consumes. The scrollbar's arrows and the
+not in the tree it consumes \(em though not first:
+.B infernode
+had fixed the same four casts a week earlier, independently, with no
+test. What was new was a consumer whose output could be compared
+against something. The scrollbar's arrows and the
 checkbutton's tick were the last two fixtures to disagree, and the
 cause was
 .B libinterp/draw.c

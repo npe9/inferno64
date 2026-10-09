@@ -66,7 +66,22 @@ is
 casts were left behind with the comment that justified them still
 attached. Every Limbo polygon and spline in the tree drew the wrong
 shape.
-.SH "HOW IT WAS FOUND, WHICH IS WHY THIS EXISTS"
+.SH "NOT FOUND HERE FIRST"
+.B infernode
+fixed the same four casts on 3 October, independently and in the same
+shape \(em a
+.I cvtpoints()
+that mallocs, converts and frees \(em so this is a rediscovery, and the
+record should say so. 36 of the 38 worktrees on this machine still
+carry the reinterpreting cast.
+.PP
+What is new here is the
+.BR test .
+.B infernode
+has none, and neither did anything else: the defect reached every Limbo
+polygon and spline in the tree and survived because nothing compared a
+drawn shape against anything.
+.SH "HOW IT WAS FOUND HERE, WHICH IS WHY THIS EXISTS"
 Not here, and not by anything looking at polygons.
 .IR Tkscenetest (1)
 rasterises a serialised
