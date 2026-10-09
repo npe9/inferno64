@@ -224,7 +224,8 @@ static struct {
 	u32	lastval[4];	/* buf[5..8] AFTER the call */
 	int	lastok;		/* whether mboxprop reported success */
 	int	lastwait;	/* 0 answered, -1 out of time, -2 counter dead */
-	uvlong	lastwaitus;	/* the bound that wait was given */
+	uvlong	lastwaitus;	/* the bound the CALLER asked for */
+	uvlong	lastwaitused;	/* ...and the one that was enforced */
 	uvlong	lastus;		/* how long it took */
 	u32	clock;
 	int	clockok;
@@ -284,6 +285,7 @@ extern int mboxprop(u32*);
  */
 extern uvlong systmrusec(void);
 extern int mboxpropto(u32*, uvlong);
+extern uvlong mboxwaitcap(void);	/* the bound mboxpropto will clamp to */
 extern int mboxlastwait(void);
 
 static int
@@ -448,6 +450,7 @@ v3dexecraw(int ctlidx, u32 w0, u32 w1, u32 w2, u32 w3, uvlong waitus)
 	v3d.lastus = systmrusec() - t0;
 	v3d.lastwait = mboxlastwait();
 	v3d.lastwaitus = waitus;
+	v3d.lastwaitused = waitus > mboxwaitcap()? mboxwaitcap() : waitus;
 	v3d.lastcode = buf[1];
 	v3d.lasttag = buf[4];
 	for(i = 0; i < 4; i++)
@@ -733,7 +736,7 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			"code %d bytes (appended; `reset' clears)\n"
 			"args %#ux %#ux %#ux %#ux ctlidx %d\n"
 			"exec %s code %#ux tag %#ux %s wrote %ud bytes %llud us\n"
-			"wait %s\n"
+			"wait %s after %llud us (asked %llud)\n"
 			"gpumem %s handle %#ux bus %#ux size %d ctlbus %#ux\n"
 			"gpualloc %s alloc %s lock %s\n"
 			"block %#ux %#ux %#ux %#ux %#ux %#ux\n"
@@ -754,6 +757,7 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			v3d.lastwait == 0? "answered" :
 			  v3d.lastwait == -1? "OUT OF TIME (no reply)" :
 			  "COUNTER NOT ADVANCING",
+			v3d.lastwaitused, v3d.lastwaitus,
 			v3d.memsrc == Memfirmware? "firmware" :
 			  v3d.memsrc == Memfake? "FAKE (this driver's own block)" :
 			  "none",

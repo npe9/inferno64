@@ -84,6 +84,14 @@
 #   arith    The GPU path against a known-good address instead of a
 #            firmware one, so "this driver's offsets are wrong" is
 #            separable from "the QPU cannot fetch from there".
+#            ENDS THE BOOT: qputry writes its own `exec' to
+#            /dev/v3dctl (appl/cmd/qputry.b:163), so this question is
+#            an exec like h1 and h2 and poisons the channel exactly as
+#            they do.  Its control-after is EXPECTED to be dead, and
+#            that is the shape to look for rather than a surprise.
+#            This file listed it as shareable and ordered it between
+#            `enable' and h2, which would have spent a boot producing
+#            a dead h2.
 #
 #            IT CANNOT YET TELL A CHANGED RESULT FROM AN UNCHANGED
 #            ONE, and that limitation is written here rather than
@@ -170,14 +178,22 @@ channel was alive when the question was asked.
 	h4        an absent tag, for the shape of that failure
 	h3        the V3D power domain, set twice then read
 	enable    `enable' with no exec: does IT poison the channel?
-	arith     the GPU path with seeded result words
+	arith     the GPU path, known-good address  -- ENDS THE BOOT
 	h2        EXECUTE_QPU from firmware memory   -- ENDS THE BOOT
 	h1        EXECUTE_QPU from our own alias     -- ENDS THE BOOT
 	h5        the V3D IDENT0 register directly   -- CAN HANG THE BOARD
 
-An exec kills the property channel until a reboot, so h1 and h2 must
-be the last thing their boot does and cannot share one.  h5 can stall
-the bus, so it gets its own boot too.
+An exec kills the property channel until a reboot, so every question
+that executes -- h1, h2, AND arith, because qputry issues its own exec
+-- must be the last thing its boot does and no two can share one.  h5
+can stall the bus, so it gets its own boot too.
+
+ANSWERED ALREADY, on silicon, each in its own boot: control (25us, 250
+MHz), h4 (an absent tag IS answered, 0x80000001, 22us), h3 (domain 0xa
+reads back state 1), enable (reset and SET_ENABLE_QPU leave the channel
+intact -- 25us before, 24us after).  So EXECUTE_QPU is reached, never
+returns, and takes the property channel with it, and h2 is the question
+that is left.
 LIST
 	# No argument is a usage error even though the list is useful
 	# output: a caller that meant to pass a question and passed
@@ -225,7 +241,7 @@ arith)
 	echo "echo reset >/dev/v3dctl"
 	echo "echo gpufake >/dev/v3dctl"
 	echo "cat /dev/v3dctl"
-	echo "echo '--- arith: four QPU instruction words (NOT a seeded result)'"
+	echo "echo '--- arith: four QPU instruction words. ENDS THE BOOT (qputry execs)'"
 	echo "qputry 0x11111111 0x22222222 0x33333333 0x44444444"
 	epilogue
 	;;

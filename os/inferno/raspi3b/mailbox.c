@@ -304,6 +304,21 @@ mboxprop(u32 *buf)
 }
 
 /*
+ * The ceiling mboxpropto() will silently apply, so a caller that took
+ * its bound from somebody else can SAY what it actually got.  #Q lets a
+ * user write `exec ... 30000' and the clamp made that 2 s with nothing
+ * in the status admitting the request had been reduced -- a bound
+ * reported as 30 s and enforced at 2 is the same class of lie as a spin
+ * count reported as a timeout, which is the defect this cap exists
+ * because of.
+ */
+uvlong
+mboxwaitcap(void)
+{
+	return Maxwaitus;
+}
+
+/*
  * Which bound ended the last wait, for a caller that needs to tell
  * "the GPU has not answered yet" from "this board's counter is dead".
  * mboxpropto returns -1 for both because its contract is older than
