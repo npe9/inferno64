@@ -9404,3 +9404,91 @@ the failure would turn a reported shortage into a silent one.  Verified
 against the arm that passes \- base conf with ssl on still exports and
 mounts, with the same 11144 bytes of core \- and against the arm that
 floods, where 22546 lines became none.
+.NH 2
+The keyring-plus-ssl death is a STACK overflow, not a failed allocation
+.PP
+The section above left that arm as "out of Blocks", which is what the
+console said and is not what kills it.
+.IR Qemustyx (1)
+reproduces the failure in ninety seconds, so
+.I qemu
+can be asked to log every exception the guest takes:
+.CW "-d int -D <file>" .
+.PP
+.B "In the whole run there is exactly one fault before the cascade,"
+and it is not an allocation:
+.DS
+.CW "Exception return: magic PC fffffff9 previous exception 15"
+.CW "...successful exception return"
+.CW "Taking exception 4 [Data Abort] on CPU 0"
+.CW "...at fault address 0x1fffffec"
+.CW "...with CFSR.PRECISERR and BFAR 0x1fffffec"
+.CW "...BusFault with BFSR.STKERR"
+.DE
+.PP
+.B BFSR.STKERR
+is a fault
+.I stacking
+the exception frame, and
+.B "magic PC fffffff9"
+is a return to thread mode on MSP \- so ordinary thread code had already
+walked SP down to 0x20000000 and the next interrupt could not push its
+frame.  Everything after it is consequence: three more Data Aborts at
+0x1fffff88 and 0x1fffff18, each escalating, until
+.CW "Lockup: can't escalate 3 to HardFault" .
+.B "Nothing faults before it."
+.PP
+So the Block shortage is survivable and reported \-
+.IR exhausted ()
+raises and the caller fails \- and the thing that kills the station is
+the kernel stack.  The two readings that make that more than one run's
+accident:
+.IP \(bu
+.B "The arm that PASSES runs at 3988 of 4096."
+Base conf with ssl on exports and mounts, and its own
+.B "kstack high water"
+print reaches 97% of a process stack: 108 bytes of margin.  The
+satellite on silicon printed 3908 of 4096 in the same arm.  This station
+has no stack headroom in either arm; keyring and ssl together is what
+finally spends it.
+.IP \(bu
+.B "And the keyring conf has MORE stack room, not less."
+The initial MSP from each image's vector table: 0x20006f7c for
+.BR stm32f407 ,
+0x20007a14 for
+.BR stm32f407auth ,
+so 28540 and 31252 bytes down to the bottom of SRAM.  Registering
+.B $Keyring
+does not shrink the stack region, which rules out the obvious
+explanation.
+.PP
+.B "There is no guard between the stack and kernel bss."
+The kernel links its data at
+.CW -D0x20000000
+and that grows up, while the stack grows down from the vector table's
+initial SP; they share one region and meet in the middle with nothing
+between them.  An overflow therefore writes over kernel bss
+.I silently
+and only faults once it has run past 0x20000000 \- which is exactly the
+address the fault reports.  The fault is the END of the overflow, not
+its beginning, and whatever bss it crossed on the way down was already
+corrupt.
+.PP
+.B "This corrects what the identity half concluded."
+"A bigger part" was the answer to a core shortage, and more RAM does not
+change
+.B KSTACK
+\- 4096, a constant in
+.B os/inferno/stm32f407/mem.h
+\- nor the collision between the stack and bss.  Nor is doubling it free
+here: 11 process stacks of 4096 is 45056 bytes already, and 8192 would
+be 90112, the whole of the SRAM region the pools live in.
+.PP
+.B "What is NOT claimed:"
+what consumed the stack.  The log says the overflow happened and says
+nothing about what recursed or what frame was large, and 28 to 31
+kilobytes is far more than one deep call \- so this names the fatal
+mechanism and not yet its cause.  Also not claimed: that silicon dies
+the same way.  The board's own
+.B "kstack high water 3908 of 4096"
+in the passing arm is consistent with it and is not the same evidence.
