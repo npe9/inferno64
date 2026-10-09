@@ -43,12 +43,53 @@ enum {
 
 	Respok	= 0x80000000,		/* message code: request succeeded */
 	Spins	= 10*1000*1000,	/* bound on a mailbox wait: uncached reads, so about a second */
+	/*
+	 * A TIME bound for the callers that need to tell "did not answer in
+	 * time" from "answered with an error", which a spin count cannot:
+	 * ~1.05s of spinning here was read as a fixed cost in the firmware's
+	 * EXECUTE_QPU path and written into #Q's comment block in capitals,
+	 * when it was only this loop giving up.  A figure immune to a 500x
+	 * change in its own argument is not measuring the argument.
+	 *
+	 * Spins above stays as a BACKSTOP: systmrusec() needs no init and so
+	 * is usable this early, but on a board whose counter is not running a
+	 * purely time-based loop would never exit and would hang the boot.
+	 * Which bound fired is reported, because "the GPU did not answer in
+	 * time" and "this board has no usable clock" are different facts.
+	 *
+	 * Ported from inferno-rio's f8350b014 onto THIS branch's locked
+	 * mailbox: that branch predates 586a77181 ("serialise the mailbox --
+	 * it had no lock at all") and its mboxpropto takes no lock, so the
+	 * two had to be merged rather than copied.
+	 */
+	Waitus	= 1000*1000,	/* default: a second, as the spin count was */
+	/*
+	 * BOTH BOUNDS ARE LOAD-BEARING AND THEY CATCH DIFFERENT FAULTS.
+	 * This is not belt and braces and the "redundant" one must not be
+	 * tidied away (inferno-rio-71's point, and worth more than the fix):
+	 *
+	 *	Waitus  a firmware that will never answer
+	 *	Spins   a DEAD COUNTER
+	 *
+	 * If systmrusec() ever returns a constant -- SYSTMR-NONE, a board
+	 * whose counter is not running -- then systmrusec() - t0 is always
+	 * zero, the deadline can never expire, and the spin count is the
+	 * only thing that gets you out.  Delete it and that board hangs in
+	 * here before it has printed anything.
+	 *
+	 * Which is why mboxlastwait() distinguishes -1 from -2 rather than
+	 * just failing: "the GPU did not answer in time" and "this board
+	 * has no usable clock" need different responses from the caller,
+	 * and the caller cannot tell them apart any other way.
+	 */
 };
 
 /*
  * Serialises every property-channel exchange; see mboxprop below.
  */
 static Lock mboxlock;
+
+extern uvlong systmrusec(void);
 
 static u32*
 mbox(void)
@@ -86,6 +127,57 @@ mboxwrite(int chan, u32 data)
  * is worth more than a kernel stopped in a while loop before it has
  * printed anything.  Returns 0 and the value, or -1.
  */
+/* 0 answered, -1 out of time, -2 the counter is not advancing */
+static int lastwait;
+
+int
+mboxlastwait(void)
+{
+	return lastwait;
+}
+
+static int
+mboxreadto(int chan, u32 *val, uvlong usec)
+{
+	u32 *r = mbox();
+	u32 v;
+	uvlong t0;
+	int i;
+
+	t0 = systmrusec();
+	for(i = 0; i < Spins; i++){
+		/*
+		 * THE DEADLINE IS CHECKED EVERY ITERATION, not only when the
+		 * FIFO is empty, and that placement is the whole point.
+		 *
+		 * With the check inside the Empty branch, a read FIFO holding
+		 * a word for ANOTHER channel takes the r[Read] path and loops
+		 * without ever consulting the clock -- so the request's own
+		 * bound is ignored and the Spins backstop decides.  Measured
+		 * on silicon asking for 30 s: it gave up at 4174742 us, which
+		 * is 200e6 iterations at about 21 ns, and reported
+		 * "COUNTER NOT ADVANCING" when the counter was perfectly fine.
+		 * A bound that cannot be honoured is bad; a bound that then
+		 * misnames which bound fired is worse, because that is the one
+		 * fact the caller cannot get any other way.
+		 */
+		if(systmrusec() - t0 >= usec){
+			lastwait = -1;
+			return -1;
+		}
+		if(r[Status] & Empty)
+			continue;
+		v = r[Read];
+		if((int)(v & 0xf) == chan){
+			*val = v & ~0xfU;
+			lastwait = 0;
+			return 0;
+		}
+	}
+	lastwait = -2;
+	return -2;
+}
+
 static int
 mboxread(int chan, u32 *val)
 {
@@ -111,8 +203,24 @@ mboxread(int chan, u32 *val)
  * above.  Returns 0 on success (message code == Respok), -1 otherwise.
  * The response is written back into buf in place.
  */
+int	mboxpropto(u32*, uvlong);	/* defined below; mboxprop delegates to it */
+
 int
 mboxprop(u32 *buf)
+{
+	return mboxpropto(buf, Waitus);
+}
+
+/*
+ * As mboxprop, with an explicit deadline for the reply.  It keeps
+ * mboxlock: this branch serialises the property channel (586a77181) and
+ * the timeout does not change why -- two callers interleaving can still
+ * each take the other's reply, and a GPIO read returning a clock rate is
+ * a wrong answer with the success code set rather than a detectable
+ * error.  mboxlastwait() says which bound fired.
+ */
+int
+mboxpropto(u32 *buf, uvlong usec)
 {
 	uintptr pa = (uintptr)buf;	/* RAM is identity-mapped */
 	usize reqlen;
@@ -159,7 +267,7 @@ mboxprop(u32 *buf)
 		unlock(&mboxlock);
 		return -1;
 	}
-	if(mboxread(Chanprop, &resp) < 0){
+	if(mboxreadto(Chanprop, &resp, usec) < 0){
 		unlock(&mboxlock);
 		return -1;
 	}
