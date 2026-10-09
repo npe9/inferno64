@@ -705,8 +705,16 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 	 * Second time in a day: `render types' in libtk stopped after
 	 * eight of seventeen widget types for the same reason, and read
 	 * as a fact about widgets.
+	 *
+	 * Measured rather than counted: the same format fed the widest
+	 * value every conversion can take is 642 bytes, so there are 381
+	 * spare.  And the check below fires rather than relying on that
+	 * number staying true -- adding a field is exactly the moment the
+	 * comment goes stale, and a truncated status is invisible in its
+	 * own output.
 	 */
 	char buf[1024];
+	int nb;
 
 	switch((ulong)c->qid.path){
 	case Qdir:
@@ -720,7 +728,7 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 		 * separately, because a stale truth beside a fresh error is
 		 * worse than either alone.
 		 */
-		snprint(buf, sizeof buf,
+		nb = snprint(buf, sizeof buf,
 			"clock %s %ud\nenabled %d\nenable %s\n"
 			"code %d bytes (appended; `reset' clears)\n"
 			"args %#ux %#ux %#ux %#ux ctlidx %d\n"
@@ -762,6 +770,26 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			v3d.ident[0], v3d.ident[1], v3d.ident[2],
 			v3d.lastval[0], v3d.lastval[1],
 			v3d.lastval[2], v3d.lastval[3]);
+		/*
+		 * snprint stops at the limit and says nothing, so the only
+		 * sign of a cut status is this.  libkern's vsnprint returns
+		 * `f.to - buf' with f.stop at buf+len-1, so a truncated call
+		 * returns exactly sizeof buf - 1 and this is the precise
+		 * test rather than an approximation of one.
+		 *
+		 * A status that came to exactly that length without being
+		 * cut would warn falsely.  It cannot here -- the widest
+		 * every conversion can be is 642 -- and an over-warning is
+		 * the right way round: a spurious line in a diagnostic file
+		 * costs a moment, and a silently halved status cost this
+		 * file two of its fields and a day.
+		 *
+		 * It is a read of a diagnostic file in process context, so
+		 * a print here is safe and reaches whoever is reading.
+		 */
+		if(nb >= sizeof buf - 1)
+			print("devv3d: status TRUNCATED at %d bytes;"
+				" grow buf[%ud]\n", nb, (u32)sizeof buf);
 		return readstr((ulong)offset, a, n, buf);
 	}
 	error(Eperm);
