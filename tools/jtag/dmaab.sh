@@ -42,7 +42,14 @@
 set -u
 HERE=`dirname "$0"`
 ROOT=`cd "$HERE/../.." && pwd`
-S=${S:-/private/tmp/claude-501/-Users-npe-src-inferno64-branches-raspi3b-port/2675f84d-d333-4a0e-ba1f-4ef786fc52b7/scratchpad}
+#
+# Scratch for this run.  This defaulted to a session scratchpad in a
+# DIFFERENT worktree, which exists only while that session does, and
+# nothing here created it: with it absent every write into $S went
+# nowhere and every read of one came back empty.
+#
+S=${S:-${TMPDIR:-/tmp}/inferno-raspi3b}
+mkdir -p "$S" || { echo "`basename $0`: cannot create scratch $S" >&2; exit 1; }
 SESS=${SESS:-37971.ttys006}
 SWITCH=${SWITCH:-dmaclearirq}	# which /dev/sdM0/ctl switch to vary
 OUT=${OUT:-$S/dmaab-$SWITCH}

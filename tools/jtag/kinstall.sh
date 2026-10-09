@@ -55,7 +55,7 @@ ROOT=`cd "$HERE/../.." && pwd`
 # with it absent every trim silently wrote nothing and every grep below
 # read an empty file.  Make our own and create it.
 #
-S=${S:-${TMPDIR:-/tmp}/kinstall-$$}
+S=${S:-${TMPDIR:-/tmp}/inferno-raspi3b}
 mkdir -p "$S" || { echo "kinstall: cannot create scratch $S" >&2; exit 1; }
 CMD=${CMD:-$ROOT/os/inferno/raspi3b/board.cmd}
 OUT=${OUT:-$ROOT/os/inferno/raspi3b/board.out}
@@ -74,8 +74,20 @@ REMOTE=/n/remote/os/inferno/raspi3b/kernel8.img
 # itself; it was only ever broken by the next thing that happened to
 # write board.cmd.
 #
+#
+# Reset board.cmd only if it still holds a command of OURS.  It used to
+# write unconditionally, which meant any exit -- a refusal, a failed
+# pre-flight, an interrupt -- overwrote whatever another writer had put
+# there in the meantime, so the handler that exists to leave the channel
+# harmless was itself the collision.  Our tokens carry this pid, so
+# "KI-DONE-$$-" identifies them and nothing else.  Before the first
+# runcmd there is nothing of ours there and nothing to undo.
+#
 idle() {
-	printf 'load std; echo IDLE-%s\n' "`date +%s`" > "$CMD"
+	case `cat "$CMD" 2>/dev/null` in
+	*KI-DONE-$$-*)
+		printf 'load std; echo IDLE-%s\n' "`date +%s`" > "$CMD";;
+	esac
 }
 trap 'idle' EXIT INT TERM
 
@@ -280,7 +292,7 @@ runcmd() {
 # may be mid-install -- which is why CMD and OUT are overridable.
 #
 case ${KINSTALL_SELFTEST:-0} in
-1|2)
+1|2|3)
 	case $CMD in
 	*/os/inferno/raspi3b/board.cmd)
 		#
@@ -310,9 +322,30 @@ case ${KINSTALL_SELFTEST:-0} in
 		echo "kinstall: SELFTEST 1: runcmd returned $? without detecting the clash" >&2
 		exit 1
 	fi
-	runcmd KI-SELFTEST 15 "load std; echo KI-SELFTEST"
+	if [ "${KINSTALL_SELFTEST}" = 2 ]; then
+		runcmd KI-SELFTEST 15 "load std; echo KI-SELFTEST"
+		rc=$?
+		echo "kinstall: SELFTEST 2: no second writer, runcmd returned $rc (want 1, no clash)" >&2
+		exit $rc
+	fi
+	#
+	# Mode 3 answers what modes 1 and 2 cannot: neither reaches the
+	# SUCCESS path, so a check that fired on every step would pass both
+	# and then fail every real install.  A stand-in board reads the
+	# token out of board.cmd and appends the three lines a real one
+	# would.  It appends to board.out and never writes board.cmd, which
+	# is also the case that would break a check comparing the wrong
+	# file.
+	#
+	(
+		sleep 6
+		c=`cat "$CMD"`
+		t=`printf '%s' "$c" | sed 's/.*echo \(KI-DONE-[0-9]*-[0-9]*\).*/\1/'`
+		printf 'RCMD %s\nKI-SELFTEST\n%s\n' "$c" "$t" >> "$OUT"
+	) &
+	runcmd KI-SELFTEST 60 "load std; echo KI-SELFTEST"
 	rc=$?
-	echo "kinstall: SELFTEST 2: no second writer, runcmd returned $rc (want 1, no clash)" >&2
+	echo "kinstall: SELFTEST 3: stand-in board answered, runcmd returned $rc (want 0, no clash)" >&2
 	exit $rc;;
 esac
 

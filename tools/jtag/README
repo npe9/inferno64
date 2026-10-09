@@ -55,11 +55,17 @@ evidence), or drive the board from the host instead by writing
 os/inferno/raspi3b/board.cmd.
 
 
-BOARD.CMD HAS THREE WRITERS AND NO LOCK.  kinstall.sh, netbench and
-styxstress.py all write os/inferno/raspi3b/board.cmd, the file is one
-command deep, and nothing in it records whose command it holds.  So an
-unrelated run of any of them replaces the command another is waiting
-for.  The waiting run then sees its token never come back, and that is
+BOARD.CMD HAS TWO WRITERS AND NO LOCK.  kinstall.sh and netbench both
+write os/inferno/raspi3b/board.cmd, the file is one command deep, and
+nothing in it records whose command it holds.  So an unrelated run of
+either replaces the command the other is waiting for.
+
+The count is two, not three: styxstress.py names that same path but
+OPENS IT READ-ONLY over Styx (Topen mode 0, then Tread) as traffic for
+the connection stress, and os/inferno/init/raspi3binit.b is the board
+side, which only reads it.  Counted first by grepping for the filename,
+which gave three writers and was wrong -- a mention is not a write.
+Grep for the redirection.  The waiting run then sees its token never come back, and that is
 indistinguishable from a board that stopped answering -- which is how
 it was first read, as "the command poller never answered".
 
@@ -71,6 +77,13 @@ card is written, "THE CARD WAS NOT CHANGED" would be false.  It also
 leaves board.cmd as the other writer set it, rather than letting its
 own exit handler overwrite a run that is still going.
 
+idle(), the exit handler, now resets board.cmd only when it still holds
+a command of ours -- our tokens carry the pid, so KI-DONE-$$- identifies
+them.  It used to write unconditionally, so ANY exit (a refusal, a
+failed pre-flight, an interrupt, a plain timeout) overwrote whatever
+another writer had put there meanwhile: the handler whose job is to
+leave the channel harmless was itself the collision.
+
 Detection is not serialisation.  Two runs still collide; one of them
 now says so accurately instead of blaming the board.  If you need them
 not to collide, run them one at a time.
@@ -79,6 +92,8 @@ not to collide, run them one at a time.
 		sh tools/jtag/kinstall.sh	# clash: exit 3
 	KINSTALL_SELFTEST=2 CMD=$S/board.cmd OUT=$S/board.out S=$S/s \
 		sh tools/jtag/kinstall.sh	# no clash: exit 1, timeout
+	KINSTALL_SELFTEST=3 CMD=$S/board.cmd OUT=$S/board.out S=$S/s \
+		sh tools/jtag/kinstall.sh	# success: exit 0, no clash
 
 The refusal clears the exit handler before exiting.  Without that it
 refused and then overwrote the real board.cmd anyway on the way out,
@@ -87,9 +102,23 @@ committed by the thing that tests for it.  That is not hypothetical: a
 refusal run replaced a committed netbench stats command with IDLE here,
 and it was restored from HEAD.
 
-Both need no board, no adapter and no card, and mode 2 is the control:
-without it a comparison that was always unequal would report a clash on
-every step and pass mode 1 for the wrong reason.  The self-test refuses
+All three need no board, no adapter and no card.  Mode 2 is the control
+for a check that fires when it should not: a comparison that was always
+unequal -- a stray newline between the write and the read would do it --
+would report a clash on every step and pass mode 1 for the wrong reason.
+Mode 3 goes further, because neither 1 nor 2 reaches the SUCCESS path: a
+stand-in reads the token out of board.cmd and appends the lines a real
+board would, and the step must return 0 with no clash.  Without mode 3 a
+check that fired on every step would pass both others and then fail
+every real install.
+
+Each guard was attributed separately, by disabling them:
+
+	clash check off                 exit 1, no detection, board.cmd intact
+	clash check off, idle guard off exit 1, board.cmd CLOBBERED to IDLE
+	both on                         exit 3, detected, board.cmd intact
+
+The middle row is the original bug, reproduced on demand.  The self-test refuses
 to run against the real board.cmd, since another session may be
 mid-install.
 
