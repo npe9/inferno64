@@ -40,11 +40,33 @@ clock id 5).
 .B SET_ENABLE_QPU
 with 1 or 0.
 .TP
-.BI exec " ctlidx w0 w1 w2 w3"
+.BI exec " ctlidx w0 w1 w2 w3" " [" waitms ]
 .B EXECUTE_QPU
 with those four words as the request's value buffer, and the control
 list's bus address substituted into word
 .IR ctlidx .
+.I Waitms
+bounds the wait for a reply; the default is a second, which is what an
+older spin count happened to cost.
+.TP
+.BI tag " TAG valbytes" " [" w0 ... ]
+Any property tag, with that value-buffer size and up to four words.
+Nothing is interpreted \- what a given tag expects is what is not
+known.
+.TP
+.BI gpualloc " [" size ]
+.B ALLOCATE_MEMORY
+then
+.BR LOCK_MEMORY ,
+and
+.B exec
+then places the control list, uniforms and code inside the locked block
+and sends the firmware's own bus address. A second
+.B gpualloc
+releases the first.
+.TP
+.B gpufree
+Unlock and release it.
 .PP
 Reading
 .B /dev/v3dctl
@@ -75,6 +97,29 @@ so an echo of the request can never be mistaken for an answer again.
 .TP
 .I us
 Elapsed microseconds, from the board's own 1MHz counter.
+.TP
+.B wait
+.BR answered ,
+.B "OUT OF TIME (no reply)"
+or
+.BR "COUNTER NOT ADVANCING" .
+Three different facts that a single \-1 used to flatten into one: a
+mailbox bounded by a spin
+.I count
+cannot tell "has not answered yet" from "will never answer", and
+reading one as the other is how a 1.05 second give-up was published as
+the firmware working for a second.
+.TP
+.B "wrote N bytes"
+.B "The discriminator."
+An answered tag writes bytes and sets a length;
+.B GET_CLOCK_RATE
+writes 8. A processed bit with zero bytes is what both an absent tag
+and
+.B EXECUTE_QPU
+produce under
+.IR qemu (1),
+so the bit alone separates nothing.
 .SH EXAMPLE
 .EX
 bind -a '#Q' /dev
