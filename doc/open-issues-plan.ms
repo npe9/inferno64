@@ -5391,6 +5391,111 @@ still calls
 on every live process's every stack frame every pass.  That is the open piece,
 it is a design property rather than a defect, and bounding it is its own work.
 .NH 2
+H4 residue, SCOPED: what the root walk costs and why the sweep's bound does not transfer
+.LP
+This is the piece H4 leaves open, scoped from the source rather than built, and
+the first thing scoping it found is that the frequency in every previous
+description of it was wrong.
+.PP
+.B "rootset() runs once per EPOCH, not every pass."
+It is
+.CW static
+in
+.CW libinterp/gc.c
+with
+.I exactly
+one call site, inside
+.CW rungc() 's
+.CW "if(nprop == 0)"
+branch \(em the one its own comment calls "Completed the epoch ?".  A pass that
+still has propagation work queued does not walk the roots at all.  Both this
+plan and the comment above
+.CW markheap()
+said "every GC pass"; the comment is corrected in the same commit as this
+section.  The distinction matters because the
+.I cost
+of the walk and the
+.I frequency
+of the walk are different questions and only the first has ever been measured.
+.PP
+.B "What it walks, and all of it under the interpreter token."
+Every
+.CW Prog
+on the list, and for each: its
+.CW Modlink
+and
+.CW MP ,
+then every
+.CW Stkext
+down the
+.CW reg.EX
+chain, and within each extent every
+.CW Frame
+from
+.CW tos.fu
+down to
+.CW SP ,
+calling
+.CW "t->mark(t, f)"
+on each and marking that frame's
+.CW mr
+modlink.  Then every module on
+.CW modules
+for its
+.CW origmp ,
+then
+.CW ptrmark() .
+So the cost is proportional to processes times stack depth, which is why holds
+of 53 to 91 ticks appear only once the suite has accumulated seventy-odd Dis
+processes.
+.PP
+.B "Why the sweep's bound does not transfer, which is the part that makes this real work."
+The sweep is bounded by
+.CW quanta
+because a partly swept arena is still
+.I correct :
+blocks not yet reached stay allocated, and the next quantum resumes from a
+cursor.  A partly walked root set is not correct in that way.  A root left
+unmarked is a live object the sweeper is then entitled to free, so stopping
+half way is not a pause \(em it is a use-after-free.  Bounding it needs
+something that makes a partial walk safe: a snapshot of the roots, or a write
+barrier maintaining a tri-colour invariant across the pause.  This collector
+has neither for roots, and
+.CW Setmark
+on a frame word is not a barrier.  That is the design question, and it is why
+H4 called bounding it its own piece of work rather than a fix.
+.PP
+.B "The measurement that would size it needs no kernel change, and has not been taken."
+.CW gcepochs
+is already exported and already printed:
+.P1
+echo sched > /dev/sysctl
+GC-COUNTS runs ... sweeps ... epochs ... halted ...
+.P2
+.CW os/inferno/port/devcons.c , (
+under
+.CW CMsched ;
+.CW /dev/sysctl
+is devcons's control file, not
+.CW /dev/consctl ).
+Epochs over a known wall interval gives the walk's frequency; the existing
+.CW VMHELD
+lines give the per-hold cost, measured at 53 to 91 ticks with last kernel pc in
+.CW rungc
+or
+.CW memset .
+The product of those two is the fraction of wall time the interpreter token is
+held by the root walk, and that single number decides whether this is worth
+building anything for.
+.PP
+.B "And what is NOT established, because the previous text invited the opposite reading."
+That the root walk is why the board stops answering inside 600s.  The holds
+were observed; their
+.I frequency
+was not, and one 0.91s hold a minute is a different system from one a second.
+Until that number exists, "the root walk makes the board slow" is a hypothesis
+with a measured upper bound on one of its two terms.
+.NH 2
 H1a correction.  "The expensive case needs no copy" assumed the wrong frame
 .LP
 The flip/copy rule above says the expensive case for the copy is the

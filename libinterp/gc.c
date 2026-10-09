@@ -263,9 +263,17 @@ static int markdepth;
  * object's memory, corrupting it, with no crash at the write site
  * itself (an ordinary store, not a fault) to point at what happened.
  * rootset() calls markheap() on every live process's every stack
- * frame every GC pass (libinterp/gc.c's rootset()), so if this is the
- * mechanism, it explains the shape this hunt has chased for four-plus
- * sessions: a legitimate word somewhere holds transient garbage for
+ * frame once per EPOCH -- not every pass, which is what this comment
+ * used to say and what doc/open-issues-plan.ms repeated.  rootset() is
+ * static with exactly one call site, in rungc()'s `if(nprop == 0)'
+ * branch -- the one its own comment calls "Completed the epoch ?" --
+ * so a pass that still has propagation work to do does not walk the
+ * roots at all.
+ * The distinction matters because the cost of the walk and the
+ * frequency of the walk are different questions and only the first was
+ * ever measured.  If this is the mechanism, it explains the shape this
+ * hunt has chased for four-plus sessions: a legitimate word somewhere
+ * holds transient garbage for
  * an instant mid-computation (register spill, uninitialized temp,
  * whatever), a GC pass lands on exactly that instant, and the mark
  * write lands on a frame that has nothing to do with the code that
