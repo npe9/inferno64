@@ -89,9 +89,8 @@ neither of which the compiler can see through.
 .SH "THE CONTROLS"
 Three small values first \(em 42, 0 and \-7 \(em because a conversion
 that was simply broken would otherwise pass the interesting cases by
-accident. They earned themselves immediately: the first version of
-.I digits()
-built its characters with
+accident. They earned themselves immediately: the first version built
+its expected digits with
 .BR "string c" ,
 which appends the character's decimal
 .B value
@@ -101,6 +100,49 @@ is
 .B 52
 and every case failed. The three controls said so on the first three
 lines.
+.SH "WHY BOTH SIDES OF EVERY CASE ARE STRINGS"
+Because the first version's were not, and it cost a clean pass on a
+kernel where three of its numbers were wrong.
+.PP
+It compared
+.I sprint
+of the converted value against the digits of a
+.B big
+.BR literal .
+When the literal was itself wrong, both sides were wrong together:
+.IP
+.EX
+ok   int of an rgba above 2^31: \-1869574401
+ok   int at 2^32\-1: \-1
+ok   int below \-2^32: \-99
+.EE
+.PP
+.B "15 ok, 0 fail,"
+on a kernel where three of the fifteen numbers were not the numbers
+named in the test.
+.B "A symmetric fixture cannot see a fault on the path both of its"
+.B "sides take,"
+and
+.B "big LITERAL"
+is on both \(em this tree already has the finding that a
+.B computed
+all\-ones and a
+.B literal
+all\-ones are different numbers in this Limbo, so a literal is not a
+safe oracle for exactly this question.
+.PP
+Now the input is a string
+.I limbo (1)
+cannot fold and the expectation is the same characters, so the only
+arithmetic between them is the conversion under test. It is printed
+with
+.B %bd
+on a
+.BR big ,
+because
+.B %d
+formats the low 32 bits and would print the right answer and the wrong
+answer alike.
 .PP
 2\u31\d\-1 is checked
 .B as well as

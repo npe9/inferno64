@@ -70,6 +70,24 @@ enum {
 	 */
 	Waitus	= 1000*1000,	/* default: a second, as the spin count was */
 	Spins	= 200*1000*1000,	/* backstop only: far beyond Waitus */
+
+	/*
+	 * SPIN THIS LONG, THEN YIELD.  Every tag that answers answers in
+	 * tens of microseconds on silicon -- GET_CLOCK_RATE 25us, an
+	 * absent tag refused in 22us, SET and GET_DOMAIN_STATE 31 and
+	 * 23 -- so 2 ms is about sixty times the observed latency and
+	 * covers the fast path without a sleep in it.
+	 *
+	 * Past that the wait sleeps a millisecond a go instead of
+	 * spinning.  A non-yielding spin for the whole bound starves the
+	 * machine, and on a JTAG boot it starves it completely: a JTAG
+	 * boot holds cores 1-3, so the board is single-cpu and a long
+	 * kernel spin takes the network poller with it.  Measured the
+	 * expensive way by the session that owns the board -- a 30-second
+	 * request wedged it, recovered only by hardreset.
+	 */
+	Fastus	= 2000,
+	Maxwaitus = 2*1000*1000,	/* the most any caller may ask for */
 };
 
 static u32*
@@ -123,10 +141,16 @@ mboxreadto(int chan, u32 *val, uvlong usec)
 {
 	u32 *r = mbox();
 	u32 v;
-	uvlong t0;
-	int i;
+	uvlong t0, el;
+	int i, yield;
 
 	t0 = systmrusec();
+	/*
+	 * Yieldable only in process context with interrupts on.  At boot
+	 * there is no process to sleep and nothing else to run anyway,
+	 * and the fast path never reaches the sleep.
+	 */
+	yield = up != nil && islo();
 	for(i = 0; i < Spins; i++){
 		/*
 		 * THE DEADLINE IS CHECKED EVERY ITERATION, not only when
@@ -147,12 +171,22 @@ mboxreadto(int chan, u32 *val, uvlong usec)
 		 * you out.  A later tidy that deletes "the redundant one"
 		 * would delete the only bound that survives a stopped clock.
 		 */
-		if(systmrusec() - t0 >= usec){
+		el = systmrusec() - t0;
+		if(el >= usec){
 			lastwait = -1;
 			return -1;
 		}
-		if(r[Status] & Empty)
+		if(r[Status] & Empty){
+			/*
+			 * If the counter is dead el is always zero, so this
+			 * never fires and Spins is still the only way out --
+			 * which is the property that must survive any tidy
+			 * of these two bounds.
+			 */
+			if(yield && el >= Fastus)
+				tsleep(&up->sleep, return0, 0, 1);
 			continue;
+		}
 		v = r[Read];
 		if((int)(v & 0xf) == chan){
 			*val = v & ~0xfU;
@@ -184,22 +218,27 @@ mboxread(int chan, u32 *val)
  * success code set and somebody else's value in it -- a GPIO read
  * returning a clock rate, not a detectable error.
  *
- * In THIS kernel the only caller is devv3d.c, so the race needs two
- * processes using #Q at once rather than two drivers; said plainly
- * because the hazard is obvious on a branch where btbcm, sdhostbcm,
- * sdhcibcm, pwmbcm and screenbcm all come back to this channel at
- * runtime, and this is the branch where it would be easy to conclude
- * the lock is unnecessary and drop it on the way forward.
+ * THREE CALLERS IN THIS KERNEL, not one.  I first wrote here that
+ * devv3d.c was the only one, from a grep for mboxprop -- and btbcm.c
+ * and thermbcm.c reach the same channel through mboxtag(), which calls
+ * mboxprop() four lines in.  So a /dev read of the temperature and a
+ * BT_ON cycle and a #Q exec all share this, and the race is reachable
+ * between drivers here exactly as it is on a branch with more of them.
+ * Grep for the function the drivers call, not the one they end up in.
  *
- * lock() and not ilock(): every caller is a read or a write on a file,
- * so process context, and an exchange can take up to Waitus -- which is
- * exactly the serialisation wanted and exactly what must not be held
- * with interrupts off.  A caller from interrupt context would need
- * ilock and would then be holding interrupts off for a second, which is
- * a reason not to add such a caller rather than a reason to change the
- * lock.
+ * A QLOCK AND NOT A LOCK, the same choice dmabcm.c made for the same
+ * reason: the wait is long by kernel standards and the caller is always
+ * process context, so other processes must keep running while one of
+ * them is at the mailbox.  A Lock here was worse than no lock -- it
+ * added every other mailbox user to the set of things a long wait
+ * starves -- and a Lock could not be held across the sleep in
+ * mboxreadto() at all.
+ *
+ * A caller from interrupt context would need an ilock and would then be
+ * holding interrupts off for the whole exchange, which is a reason not
+ * to add such a caller rather than a reason to change this.
  */
-static Lock mboxlock;
+static QLock mboxlock;
 
 int
 mboxpropto(u32 *buf, uvlong usec)
@@ -219,14 +258,31 @@ mboxpropto(u32 *buf, uvlong usec)
 	 * we wrote.  cacheflush ends in a DSB, so the write-register poke
 	 * below is ordered after the clean.
 	 */
+	/*
+	 * CAPPED, because the bound comes from a caller and #Q lets a
+	 * user program choose it.  Without this a write of `exec ...
+	 * 30000' asks the kernel to wait thirty seconds holding the
+	 * mailbox, which is how the board was wedged.  2 s is already
+	 * eighty thousand times the latency of every tag that answers,
+	 * so a request that misses it is not being slow.
+	 */
+	if(usec > Maxwaitus)
+		usec = Maxwaitus;
 	cacheflush(buf, reqlen);
-	lock(&mboxlock);
+	/*
+	 * At boot there is no process to qlock with, and nothing else is
+	 * running to race against.
+	 */
+	if(up != nil)
+		qlock(&mboxlock);
 	if(mboxwrite(Chanprop, (u32)(pa | Busalias)) < 0){
-		unlock(&mboxlock);
+		if(up != nil)
+			qunlock(&mboxlock);
 		return -1;
 	}
 	r = mboxreadto(Chanprop, &resp, usec);
-	unlock(&mboxlock);
+	if(up != nil)
+		qunlock(&mboxlock);
 	if(r < 0)
 		return -1;
 	USED(resp);
