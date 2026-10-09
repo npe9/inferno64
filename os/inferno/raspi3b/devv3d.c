@@ -213,6 +213,7 @@ static struct {
 	u32	membus;		/* ...its bus address once locked */
 	int	memsize;
 	u32	ctlbus;		/* the control-list address actually sent */
+	u32	blk[6];		/* first words of the block exec wrote */
 } v3d;
 
 static Lock v3dlk;
@@ -329,16 +330,32 @@ v3dexecraw(int ctlidx, u32 w0, u32 w1, u32 w2, u32 w3, uvlong waitus)
 	if(v3d.membus != 0 && (v3d.membus & 0xc0000000) != 0){
 		u32 *m;
 		u32 cbus, ubus, kbus;
+		uintptr pa;
 
 		if(2*4 + sizeof v3d.unif + v3d.ncode > v3d.memsize)
 			error("gpu memory too small for code and control");
 		/*
-		 * The handle is locked, so the bus address is stable, and
-		 * the ARM sees that memory through the alias with the top
-		 * bits cleared. Writing through the uncached alias avoids
-		 * needing a cache flush for the GPU to see it.
+		 * THE ARM POINTER IS THE PHYSICAL ADDRESS, which is the bus
+		 * address with the alias bits CLEARED -- this kernel has
+		 * KZERO == PHYSDRAM == 0, so RAM is identity mapped at zero
+		 * and nothing maps 0xc0000000 for the ARM at all.
+		 *
+		 * This line used to SET those bits, deriving an ARM pointer
+		 * by turning a physical address into a bus address, and
+		 * every write through it would have hit unmapped memory and
+		 * taken the board down the first time a real allocation
+		 * succeeded. The comment that stood here described clearing
+		 * them while the code set them; the comment was right.
+		 *
+		 * Bounds-checked, because a firmware that returned an
+		 * address outside RAM would fault just as surely as the bug
+		 * did, and this driver cannot assume the firmware's answer
+		 * is sane -- the emulator's was not.
 		 */
-		m = (u32*)(uintptr)(v3d.membus & ~0xc0000000U | 0xc0000000U);
+		pa = v3d.membus & ~0xc0000000U;
+		if(pa == 0 || pa + v3d.memsize > DRAMSIZE)
+			error("gpu memory is not in RAM this kernel can reach");
+		m = (u32*)(uintptr)pa;
 		cbus = v3d.membus;
 		ubus = v3d.membus + 2*4;
 		kbus = v3d.membus + 2*4 + sizeof v3d.unif;
@@ -348,6 +365,8 @@ v3dexecraw(int ctlidx, u32 w0, u32 w1, u32 w2, u32 w3, uvlong waitus)
 		m[0] = ubus;
 		m[1] = kbus;
 		cacheflush(m, 2*4 + sizeof v3d.unif + v3d.ncode);
+		for(i = 0; i < nelem(v3d.blk); i++)
+			v3d.blk[i] = m[i];
 		v3d.ctlbus = cbus;
 	}else{
 		/* one job: uniforms then code, both bus addresses */
@@ -528,6 +547,39 @@ v3dgpualloc(int size)
 	return 0;
 }
 
+/*
+ * FORCE THE GPU PATH TO RUN WITHOUT A GPU ALLOCATION.
+ *
+ * The block above only executes when LOCK_MEMORY returns an address
+ * with alias bits, and QEMU returns 0x1000, which the guard refuses.
+ * So on an emulator that path never runs -- and its first execution
+ * would otherwise be on somebody else's board, where a mistake in the
+ * offset arithmetic is an unmapped write and a dead kernel rather than
+ * a wrong number.
+ *
+ * `gpufake' points membus at a static block of this driver's own,
+ * through the same alias, which is a mapped address because the
+ * non-GPU path already writes through it. The arithmetic, the offsets
+ * and the control-list contents are then exercised exactly as they
+ * will be on hardware; only the provenance of the address differs.
+ * `dump' reads the block back so the layout can be checked rather than
+ * assumed.
+ *
+ * It is not a substitute for the real thing. What it tests is this
+ * file's arithmetic, not whether a QPU can fetch from there.
+ */
+static u32 v3dfake[1024];
+
+static int
+v3dgpufake(void)
+{
+	v3dgpufree();
+	v3d.memhandle = 0;
+	v3d.membus = (u32)((uintptr)v3dfake | Busalias);
+	v3d.memsize = sizeof v3dfake;
+	return 0;
+}
+
 static Chan*
 v3dattach(char *spec)
 {
@@ -561,7 +613,16 @@ v3dclose(Chan *c)
 static int
 v3dread(Chan *c, void *a, int n, vlong offset)
 {
-	char buf[256];
+	/*
+	 * 1024, not 256. The status grew to ten lines and snprint
+	 * truncated it mid-word -- `gpumem ... size 4096 c' -- so the
+	 * ctlbus and block fields, added to make the GPU path checkable,
+	 * were silently dropped by the very read meant to check them.
+	 * Second time in a day: `render types' in libtk stopped after
+	 * eight of seventeen widget types for the same reason, and read
+	 * as a fact about widgets.
+	 */
+	char buf[1024];
 
 	switch((ulong)c->qid.path){
 	case Qdir:
@@ -582,6 +643,7 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			"exec %s code %#ux tag %#ux %s wrote %ud bytes %llud us\n"
 			"wait %s\n"
 			"gpumem handle %#ux bus %#ux size %d ctlbus %#ux\n"
+			"block %#ux %#ux %#ux %#ux %#ux %#ux\n"
 			"value %#ux %#ux %#ux %#ux\n",
 			v3d.clockok? "hz" : "unknown", v3d.clock,
 			v3d.enabled,
@@ -599,6 +661,8 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			  v3d.lastwait == -1? "OUT OF TIME (no reply)" :
 			  "COUNTER NOT ADVANCING",
 			v3d.memhandle, v3d.membus, v3d.memsize, v3d.ctlbus,
+			v3d.blk[0], v3d.blk[1], v3d.blk[2],
+			v3d.blk[3], v3d.blk[4], v3d.blk[5],
 			v3d.lastval[0], v3d.lastval[1],
 			v3d.lastval[2], v3d.lastval[3]);
 		return readstr((ulong)offset, a, n, buf);
@@ -650,6 +714,8 @@ v3dwrite(Chan *c, void *a, int n, vlong offset)
 		}else if(strcmp(cb->f[0], "gpualloc") == 0){
 			v3dgpualloc(cb->nf > 1?
 				strtol(cb->f[1], nil, 0) : 4096);
+		}else if(strcmp(cb->f[0], "gpufake") == 0){
+			v3dgpufake();
 		}else if(strcmp(cb->f[0], "gpufree") == 0){
 			v3dgpufree();
 		}else if(strcmp(cb->f[0], "tag") == 0){
