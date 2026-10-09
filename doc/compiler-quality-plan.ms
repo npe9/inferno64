@@ -1611,6 +1611,20 @@ guard.
 .B "many ARE this,"
 which is the third time in this document that an image count and a compiler
 count have had to be reconciled rather than compared.
+.LP
+.B "On silicon:"
+build 1791508691 installed and running from the card, tree and board agreeing
+by
+.CW vmheld 's
+stamp check,
+.CW bndstest
+11 ok 0 fail, and the VM hold 0 ticks current against 59 longest since boot.
+.CW drawink
+remains unavailable \(em
+.CW /dev/screen
+is 0 bytes since the cold power cycle, on every kernel \(em so the draw path
+is still unexercised for all three passes this session shipped, and that is
+stated rather than glossed.
 .NH 1
 Making the compiler itself faster
 .LP
