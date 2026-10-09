@@ -78,7 +78,18 @@ enum {
 	 * 23 -- so 2 ms is about sixty times the observed latency and
 	 * covers the fast path without a sleep in it.
 	 *
-	 * Past that the wait sleeps a millisecond a go instead of
+	 * THE SLEEP WAS UNEXERCISED CODE until it was forced.  Every tag
+	 * that answers does so in tens of microseconds, so el >= Fastus
+	 * had never once been true in any boot -- the yield, the
+	 * up->sleep wakeup and sleeping while holding mboxlock were all
+	 * paths described as safe and never run.  Forced with Fastus = 0,
+	 * so every mailbox wait takes the sleep: boots through the whole
+	 * init sequence to RCMD-OFF, including RCMD's 180-second network
+	 * wait, with THERM-OK and DRAW-OK and TK-OK on the way and no
+	 * panic.  THERM-OK comes from a Dis process, so up was non-nil
+	 * and the sleep really ran.
+	 *
+	 * Past Fastus the wait sleeps a millisecond a go instead of
 	 * spinning.  A non-yielding spin for the whole bound starves the
 	 * machine, and on a JTAG boot it starves it completely: a JTAG
 	 * boot holds cores 1-3, so the board is single-cpu and a long
