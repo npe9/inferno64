@@ -9794,3 +9794,50 @@ anything about the antenna path.  The measurement was not completed:
 board 1 stopped answering a software reset before the corrected run \-
 six attempts, console silent, no bootloader \- and wants a power cycle.
 The tool is right and the reading is missing.
+.NH 2
+And the blocker is named: the connectors are female on both sides
+.PP
+The section above spent a tinySA on the transmit path.  It should not
+have: this document had already settled the question and said so \-
+"nothing else in this section is worth pursuing until an antenna is on
+that click, and the shape of the evidence \- textbook floor, thirty dB
+of missing signal \- is what a disconnected or wrong-band antenna looks
+like rather than a subtle one."
+.PP
+.B "What was missing was why, and it is mechanical:"
+the antennas are not attached, and cannot be, because the mating
+surfaces are
+.I female
+on both sides.  It wants an adapter and nothing else.
+.PP
+So items 2 and 4 are not open questions about the radio.  They are one
+part on order:
+.IP \(bu
+.B "Item 2,"
+the 930.824MHz deficit \- the tinySA reads \-80.2dBm where this
+receiver reads \-102 and holds the better noise floor of the two by six
+dB \- is the missing antenna, measured on two channels and about thirty
+dB both times.
+.IP \(bu
+.B "Item 4,"
+keying into the tinySA, cannot be done at all: a transmit into an open
+connector is a full reflection into the PA.  At the driver's default
+\-10dBm that is nothing; a power ladder to +14 into an unterminated
+port is not something to repeat, and
+.IR txpin (1)
+now says so where somebody would read it.
+.PP
+.B "What this does NOT explain,"
+and the temptation is to let it: the frame loss of item 9.  Every
+over-the-air result in this document was obtained through bare
+connector coupling, which is a marginal link by construction \- but
+item 9's own evidence argues against level being the cause, because 69
+dB of attenuation changed the error rate not at all and the errors
+follow the ROLE while the RSSI follows the BOARD.  Worth re-taking once
+an antenna is on, and not worth re-explaining now.
+.PP
+.B "The lesson, which cost a tinySA session:"
+this document is the record of what has already been ruled out, and the
+section on the thing being measured said not to measure it.  Reading
+forward from the open item list is not the same as reading the section
+it points into.

@@ -206,6 +206,19 @@ def link(hz, level="-10"):
 def airtest(hz, bursts):
     """Does this board's transmitter reach the tinySA?  With a control.
 
+    FIRST, IS THERE AN ANTENNA ON THE CLICK?  This measurement is
+    meaningless without one and the part would rather not do it: a
+    transmit into an open connector is a full reflection back into the
+    PA, which at the driver's default -10dBm is nothing and at +14 is
+    not something to repeat.  doc/radio-plan.ms had already concluded,
+    thirty dB of missing signal and a textbook noise floor, that "an
+    antenna that does not deliver is a connector rather than a
+    soldering iron and is the one thing to fix before anything else
+    here is worth measuring again" -- and the connectors on this bench
+    are female on both sides, so the antennas cannot be mated without
+    an adapter.  Nothing below can answer the antenna-path question
+    while that is true; it can only confirm that the transmit happens.
+
     doc/radio-plan.ms leaves this open: "board 2 hears nothing from a
     transmitter now known to work, and the tinySA on its own antenna
     heard nothing from it either".  Answering it needs a transmit that
