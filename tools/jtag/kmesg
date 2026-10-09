@@ -20,6 +20,29 @@ N=${1:-40}
 ELF=$ROOT/os/inferno/raspi3b/iraspi3b
 OUT=${OUT:-/tmp/kmesg.bin}
 
+#
+# IS THE TREE'S IMAGE WHAT IS RUNNING?  Every address below comes from
+# $ELF's symbol table, and symbols move with every build, so reading
+# them on a board running something else lands on an unrelated variable
+# and prints it as a fact.  samekernel compares kerndate -- the one
+# symbol whose value the image also knows -- and refusing here is the
+# point: a confident wrong answer from this tool is worse than no
+# answer, which is what its own comment above says about the console.
+#
+SK=`sh "$ROOT/tools/jtag/samekernel" "$ELF" 2>&1`
+case "$SK" in
+SAME*)	;;
+DIFFERENT*)
+	echo "kmesg: CANNOT TELL -- $SK" >&2
+	echo "kmesg: the running kernel is not $ELF, so every address from" >&2
+	echo "kmesg: it is an unrelated variable.  Rebuild, or point ELF at" >&2
+	echo "kmesg: the image the board is actually running." >&2
+	exit 2;;
+*)
+	echo "kmesg: cannot establish which kernel is running: $SK" >&2
+	exit 2;;
+esac
+
 K=`python3 "$ROOT/tools/jtag/ksyms" "$ELF" 2>/dev/null | awk '$3=="kmesg"{print $1}'`
 [ -n "$K" ] || { echo "kmesg: no kmesg symbol in $ELF" >&2; exit 2; }
 

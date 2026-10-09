@@ -51,6 +51,24 @@ if ! grep -aq WHERE "$TMP"; then
 	exit 1
 fi
 
+#
+# WHICH IMAGE THESE NAMES COME FROM.  Symbols move with every build, so a
+# name is only right if $KERNEL is what the board is running -- and this
+# tool is most wanted when the board is wedged, which is exactly when
+# samekernel cannot ask it.  So it says where the names came from and
+# leaves the reader to judge, rather than refusing (as alive and kmesg
+# do, because their answers would be meaningless) or staying silent (as
+# this did, which is how an unrelated variable gets printed as a fact).
+#
+KDA=`python3 "$HERE/ksyms" "$KERNEL" 2>/dev/null | awk '$3=="kerndate"{print $1; exit}'`
+KDV=`python3 "$HERE/kread" "$KERNEL" "${KDA:-0}" 2>/dev/null`
+if [ -n "$KDV" ]; then
+	echo "names from $KERNEL, kerndate `python3 -c "print(int('$KDV',16))"`"
+	echo "(right only if that is the kernel on the board: sh tools/jtag/samekernel)"
+else
+	echo "names from $KERNEL (its kerndate could not be read)"
+fi
+
 grep -a WHERE "$TMP" | while read -r _ cpu _ _ pc; do
 	name=`python3 "$HERE/ksyms" "$KERNEL" "$pc" 2>/dev/null | \
 		sed -e 's/^[^ ]*  *//'`

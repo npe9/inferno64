@@ -26,6 +26,29 @@ ROOT=`cd \`dirname "$0"\`/../.. && pwd`
 MAX=${1:-0}
 ELF=$ROOT/os/inferno/raspi3b/iraspi3b
 
+#
+# IS THE TREE'S IMAGE WHAT IS RUNNING?  Every address below comes from
+# $ELF's symbol table, and symbols move with every build, so reading
+# them on a board running something else lands on an unrelated variable
+# and prints it as a fact.  samekernel compares kerndate -- the one
+# symbol whose value the image also knows -- and refusing here is the
+# point: a confident wrong answer from this tool is worse than no
+# answer, which is what its own comment above says about the console.
+#
+SK=`sh "$ROOT/tools/jtag/samekernel" "$ELF" 2>&1`
+case "$SK" in
+SAME*)	;;
+DIFFERENT*)
+	echo "alive: CANNOT TELL -- $SK" >&2
+	echo "alive: the running kernel is not $ELF, so every address from" >&2
+	echo "alive: it is an unrelated variable.  Rebuild, or point ELF at" >&2
+	echo "alive: the image the board is actually running." >&2
+	exit 2;;
+*)
+	echo "alive: cannot establish which kernel is running: $SK" >&2
+	exit 2;;
+esac
+
 MACH0=`python3 "$ROOT/tools/jtag/ksyms" "$ELF" 2>/dev/null |
 	awk '$3=="mach0"{print $1}'`
 [ -n "$MACH0" ] || { echo "alive: no mach0 symbol in $ELF" >&2; exit 2; }

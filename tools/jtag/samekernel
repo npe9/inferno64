@@ -1,0 +1,93 @@
+#!/bin/sh
+#
+# Is the kernel running on the board the one in the tree?
+#
+#	sh tools/jtag/samekernel [image]
+#
+#	SAME 1791513796                 exit 0
+#	DIFFERENT board 2738592 image 1791513796    exit 1
+#	UNKNOWN no answer from the debugger         exit 2
+#
+# WHY EVERY TOOL HERE NEEDS THIS.  alive, kmesg and where all resolve a
+# symbol from the image IN THE TREE and then read or name that address
+# on whatever kernel is actually RUNNING.  Nothing checked that those
+# were the same kernel, and symbols move with every build -- kerndate
+# moved 16 bytes between two adjacent builds one afternoon and 0x5000
+# between the extremes:
+#
+#	1791512303   0x001e7318
+#	1791506170   0x001e7308
+#	1791496543   0x001ec308
+#
+# So a tree one build ahead of the card makes every such read land on
+# an unrelated variable, and the tool prints it as a fact about the
+# board.  That is not hypothetical: two unexplained "board stamps",
+# 2738592 and 4099408436, were exactly this, and the smaller one looked
+# convincingly like a boot-time microsecond counter because it very
+# likely WAS one, read at a shifted address.
+#
+# WHY kerndate IS THE RIGHT SYMBOL.  The guard needs one symbol whose
+# VALUE the image also knows, and this is the only one: the image's
+# copy is the build date compiled into it.  Agreement therefore means
+# the address AND the value line up, which is strong; disagreement
+# means the running kernel is not this image and NO address from it can
+# be trusted.
+#
+# A SHARPER TEST THAN READING THE VALUE TWICE.  The obvious diagnostic
+# for a suspect reading is to read it again N seconds apart -- a
+# counter advances, a constant does not.  That answers "what is at this
+# address" and the question here is "is this the RIGHT address", so it
+# returns a true answer to the wrong question: it would have said
+# "a 1MHz counter" and sent the next person looking for why the date
+# field had become a timer, when the field was fine and the address was
+# wrong.
+#
+set -u
+ROOT=`cd \`dirname "$0"\`/../.. && pwd`
+ELF=${1:-$ROOT/os/inferno/raspi3b/iraspi3b}
+
+[ -f "$ELF" ] || { echo "UNKNOWN no image at $ELF"; exit 2; }
+
+KDADDR=`python3 "$ROOT/tools/jtag/ksyms" "$ELF" 2>/dev/null |
+	awk '$3=="kerndate"{print $1; exit}'`
+[ -n "$KDADDR" ] || { echo "UNKNOWN no kerndate symbol in $ELF"; exit 2; }
+
+IMGHEX=`python3 "$ROOT/tools/jtag/kread" "$ELF" "$KDADDR" 2>/dev/null`
+[ -n "$IMGHEX" ] || { echo "UNKNOWN cannot read kerndate out of $ELF"; exit 2; }
+
+#
+# SAMEKERNEL_BOARD exists so the COMPARISON can be tested without
+# hardware, by handing it a value a board would have returned.  It is
+# named loudly and read only here; a tool that cannot be tested except
+# against a wedged board is a tool whose logic is never exercised,
+# which is how the defect it guards against survived in the first
+# place.
+#
+# TEST THIS SCRIPT, NOT THE TOOLS THAT CALL IT.  Setting it and running
+# alive(1) end to end does not test a guard -- it BYPASSES the guard
+# and then does the board read the guard exists to prevent.  I did
+# exactly that while someone else owned the board, and the tick count
+# it printed was an unrelated variable, which is the defect this file
+# is about.  Point it at samekernel and read the verdict; the callers'
+# behaviour on DIFFERENT is one `case' arm and visible by reading it.
+#
+if [ -n "${SAMEKERNEL_BOARD:-}" ]; then
+	BRDHEX=$SAMEKERNEL_BOARD
+else
+	BRDHEX=`timeout 90 openocd -f interface/ftdi/olimex-arm-usb-tiny-h.cfg \
+		-f "$ROOT/tools/jtag/raspi3b.cfg" \
+		-c init -c 'targets bcm2837.cpu0' -c halt \
+		-c "mdw $KDADDR 1" -c resume -c shutdown 2>&1 |
+		awk -F': ' '/^0x/{print $2; exit}' | awk '{print $1}'`
+	[ -n "$BRDHEX" ] || { echo "UNKNOWN no answer from the debugger"; exit 2; }
+fi
+
+IMG=`python3 -c "print(int('$IMGHEX',16))"`
+BRD=`python3 -c "print(int('$BRDHEX',16))"` || { echo "UNKNOWN unreadable board value $BRDHEX"; exit 2; }
+
+if [ "$IMG" = "$BRD" ]; then
+	echo "SAME $IMG"
+	exit 0
+fi
+echo "DIFFERENT board $BRD image $IMG (kerndate at $KDADDR in $ELF)"
+exit 1
