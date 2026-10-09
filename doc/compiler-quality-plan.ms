@@ -1407,6 +1407,91 @@ string and byte routines do comparatively little of.
 so quoting one figure for both would have been wrong in whichever direction it
 was quoted.
 .NH 2
+Where the gap is, and it is the opposite of what this document said
+.LP
+.B "This document explained the synthetic benchmark's 2.4x by saying kencc's"
+.B "per-function fixed cost amortises over bigger functions,"
+so real library code would show a smaller gap.
+.B "The first half is true and the conclusion is wrong."
+Banding the same 332 files by how much code
+.CW 7c
+emits for them:
+.P1
+size band (7c instrs)   files   median  aggregate
+  < 20                     45    1.29x      1.26x
+  20-49                    95    1.25x      1.24x
+  50-99                    49    1.21x      1.12x
+  100-199                  51    1.38x      1.33x
+  200-499                  55    1.57x      1.46x
+  >= 500                   37    1.71x      1.53x
+.P2
+.LP
+.B "The gap GROWS with size above about a hundred instructions,"
+monotonically, from 1.21x to 1.71x.  Restricted to the 92 files of 200
+instructions or more the median is 1.61x against 1.40x for all files.
+.B "So the all-files median is held DOWN by the small files, not up by them,"
+and \(lqreal code is bigger, so the gap is smaller\(rq had it backwards.
+.LP
+.B "The mechanism is the one this document already named, pointing the other"
+.B "way:"
+clang's wins are global \(em common subexpressions, loop-invariant hoisting,
+scheduling across a window wider than a basic block \(em and the amount of that
+available scales with function size.
+.CW 7c 's
+peephole is local, so it gets a fixed fraction and the rest accrues to clang.
+The per-function ABI cost is real but it is a
+.I constant ,
+and a constant loses to a term that grows.
+.NH 2
+And the losses concentrate in the graphics libraries
+.P1
+library            files   median  aggregate
+  libmemlayer         10    1.85x      2.05x
+  libframe             7    1.70x      1.63x
+  libdraw             58    1.65x      1.66x
+  libmemdraw          19    1.57x      1.53x
+  libc               175    1.30x      1.32x
+  lib9p               18    1.24x      1.16x
+  libthread           29    1.20x      1.07x
+  libauth             10    1.17x      1.23x
+.P2
+.LP
+.B "kencc is within 17 to 30 per cent of clang on ordinary systems code"
+\(em
+.CW libc ,
+.CW lib9p ,
+.CW libthread ,
+.CW libauth
+\(em and loses 1.57x to 1.85x on the four graphics libraries, with
+.CW libmemlayer
+at 2.05x aggregate.
+.B "Those four are loop-heavy array and rectangle arithmetic,"
+which is precisely the shape global optimisation pays on.
+.LP
+.B "Which closes the argument rather than opening a new item."
+The remaining gap is concentrated in exactly the code whose closing steps this
+document's tradespace rejected:
+.B "common-subexpression elimination and loop transforms, both in the"
+.B "\(lqneeds SSA or value ranges \(em DO NOT\(rq tier."
+So kencc's position is a deliberate trade and not an oversight: 1.2 to 1.3x on
+systems code for a compiler of a few thousand lines that runs in 6 ms, and
+1.6 to 1.9x on graphics arithmetic that would cost the infrastructure the first
+half of this document declined to build.
+.B "The honest headline is therefore not one number,"
+and anyone quoting 1.40x should say which half of the corpus they mean.
+.LP
+.B "It also explains the two passes' different yields."
+They removed 4.0 per cent from the raspi3b kernel and 1.66 per cent here: both
+target array indexing and int-to-pointer arithmetic, and a kernel is nearly all
+of that while
+.CW libc
+\(em 175 of these 332 files \(em is mostly string and byte work.
+.CW libdraw
+and
+.CW libmemdraw
+are the userspace code that looks like kernel code, and they are also where
+the remaining gap is.
+.NH 2
 A flaw found in the method, and then deflated
 .LP
 .B "clang recognises libc names as builtins and discards the bodies."
