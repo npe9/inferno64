@@ -1184,9 +1184,15 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	# gave 394208 of 525088 -- 0.751, which is 192/255 to three
 	# figures -- so the ink is linear in the alpha and the figure
 	# below is not a coincidence of some other mechanism. Deleting
-	# the composite gave 0. Neither control was reachable by reading
-	# the code: the first was written expecting 255 and found that a
-	# mask with no alpha channel composites as transparent here.
+	# the composite gave 0.
+	#
+	# The first control was written expecting a forced 255 to leave
+	# the picture whole, and it vanished instead -- documented
+	# behaviour, not a defect. 0x000000ff is DBlack, so tkcolor()
+	# answers it with display->black, and libmemdraw substitutes a
+	# maskless mask's GREY for its alpha (the comment above
+	# greymaskread() says so). A black mask is a grey-0 mask is a
+	# transparent mask, which is why 255 takes a maskless draw().
 	tk->cmd(tk->toplevel(disp, ""), "render opacity 128");
 	so128 := paint(disp, "opacity 128", scaleframe);
 	if(so128 != nil && so255 != nil){

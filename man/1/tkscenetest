@@ -192,23 +192,40 @@ composited. That is written in the test beside the check.
 Neither control was reachable by reading the code. The first was
 written expecting a forced alpha of
 .B 255
-to leave the picture whole, and instead it vanished:
+to leave the picture whole, and instead it vanished \(em for a reason
+that is documented behaviour twice over.
+.B 0x000000ff
+is
+.BR DBlack ,
+so
 .IR tkcolor ()
-returns an
-.B RGB24
-image when the low byte is 0xff, and a 1x1 replicated mask with no
-alpha channel composites here as though it were
-.BR transparent .
-.I Libmemdraw
-appears to intend the opposite \(em
-.B "sadelta = bsrc.alpha == &ones ? 0 : bsrc.delta"
-reads a maskless alpha as 255 \(em so this is an open discrepancy
-recorded where it was found, not a property of
-.BR TkNopacity .
-The renderer takes the maskless path for 255 so the case cannot be
-reached: the emitter refuses 255 and
+answered it with
+.B "display->black"
+before reaching its allocator at all; and
+.I libmemdraw
+says of a mask with no alpha channel, in a comment above
+.IR greymaskread (),
+"if there is no alpha channel, we'll ask for a grey channel and
+pretend it is the alpha". A black mask is a
+.B grey-0
+mask is a transparent mask. So an alpha of 255 must not be expressed as
+a mask: the emitter refuses it and
 .IR blitopacity ()
-refuses it again.
+takes a plain maskless
+.IR draw ()
+for it, which is also the faster path.
+.PP
+.B "That was first written up here as a libmemdraw discrepancy, and it"
+.B "was not one."
+.B "sadelta = bsrc.alpha == &ones ? 0 : bsrc.delta"
+does read a maskless alpha as 255, but
+.B bsrc
+is the
+.BR source ;
+the mask is fetched through a different reader chosen a few lines
+earlier, and that one is explicit about substituting grey. Reading the
+right function would have settled it, and reading a function with the
+right name settled nothing.
 .PP
 With
 .B -v

@@ -1650,16 +1650,14 @@ static int renderscene(TkScene*, TkCtxt*, Image*, int, int);
 /*
  * Composite an opacity span's surface back over its destination.
  *
- * The mask is tkcolor()'s 1x1 replicated image, whose channel depends
- * on the low byte: RGBA32 when there is alpha to carry, RGB24 when
- * there is not.  So 255 must NOT go through the mask -- it would ask
- * for a mask with no alpha channel, and a replicated one of those does
- * not behave as opaque here (measured: it composited as though it were
- * transparent, which is a separate finding and not this path's to
- * work around).  tksceneopacity() refuses 255 so the case cannot
- * arise from the emitter, and this refuses it again so a future caller
- * that sets rgba directly gets the right picture rather than a blank
- * one.
+ * 255 must NOT go through the mask.  libmemdraw substitutes a mask's
+ * GREY for its alpha when the mask has no alpha channel -- the comment
+ * above greymaskread() says so -- and tkcolor() answers 0x000000ff
+ * with display->black, because that value is DBlack.  A black mask is
+ * a grey-0 mask is a transparent mask, so asking for full opacity that
+ * way draws nothing at all.  tksceneopacity() refuses 255 and this
+ * refuses it again, taking a plain maskless draw() instead, which is
+ * also the cheaper path.
  */
 static void
 blitopacity(TkCtxt *c, Image *dst, Image *src, TkNode *n)
