@@ -899,7 +899,7 @@ duplicate RETURN       77   0.57       1  none    HIGH   NO, see below
 shift fold (shiftprop)164   1.21     ~30  flow    med    DONE, ported
 branch to next instr  153   1.13      ~8  none    low    LISTING only
 adjacent spill/reload 107   0.79     ~30  flow    low    DONE, 108 instrs
-width-aware copyprop   5231  38.66     ~55  flow    HIGH   bndstest ok
+width-aware copyprop   5231  38.66     ~55  flow    HIGH   DONE, drawink ok
 MUL+ADD -> MADD        18   0.13     ~20  flow    med    NO -- too rare
 extension pair         14   0.10       1  none    med    DONE (see below)
 switch -> arithmetic    -      -    ~300  SSA     high   NO
@@ -1304,11 +1304,51 @@ checks only exit status it would have read as a pass on every kernel from here
 on.  The gate it was supposed to be is gone until the board is warm-booted
 again.
 .LP
-.B "Still owed:"
-drawink and a styx throughput number on a board with a framebuffer.
-.CW bndstest
-passing 11 of 11 exercises the Dis bounds path and is real; it is not the draw
-path.
+.B "PAID, 2026-10-09: the draw path passes on all four changes."
+Build 1791512303 \(em shiftprop, width-aware copyprop, dead-reload and the
+mailbox time bound together \(em with
+.CW vmheld
+confirming the stamp:
+.P1
+bndstest   11 ok, 0 fail
+drawink    screen 640x480 x8r8g8b8 depth 32
+           PASS clear: 0 of 2560 bytes non-zero
+           PASS box inside: 75684 of 75684 pixels inked
+           PASS box outside: 0 of 38080 pixels above the box inked
+           PASS halves: left 320/320 right 320/320
+           PASS text ink: 226 of 1728 pixels, advance 63, box 9,10 71,21
+           PASS undrawn region: still the last frame's fill
+           all checks passed
+.P2
+.LP
+.B "So 5507 instructions were removed from this kernel's integer and pointer"
+.B "arithmetic and the draw path still verifies pixel by pixel."
+That is the test the width-aware row most needed, because
+.CW libdraw
+and
+.CW libmemdraw
+are the code that looks most like what the pass rewrites.
+.LP
+.B "AND THE REASON IT WAS OWED SO LONG WAS A TEST I INVENTED AND NEVER"
+.B "CHECKED."
+drawink had been silent on two earlier kernels, and I explained that as "the
+board has no framebuffer since the cold power cycle" on the strength of
+.CW "cat /dev/screen | wc -c"
+reading 0.
+.B "It reads 0 here too, with the framebuffer plainly working:"
+.CW /dev/screen 's
+length does not report the framebuffer, and a number that happened to be zero
+for an unrelated reason became a diagnosis.
+.LP
+What is actually established is narrower: drawink was silent on two
+card-booted kernels and passes on a JTAG-booted one, so the difference tracks
+the
+.B "boot type"
+and the mechanism is unknown.
+.B "What survives is the half that was measured \(em drawink exits 0 while"
+.B "printing nothing,"
+so a suite grading on exit status scores it a pass for doing nothing, which is
+why the silence was noticed at all.
 .LP
 .B "(The earlier text of this paragraph said the install had refused twice and"
 .B "needed a power cycle, which it did.)"
