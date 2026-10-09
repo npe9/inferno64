@@ -15108,7 +15108,7 @@ it was "unestablished whether the paced phase is inside blanking" and it is now
 "inside blanking for any v-total at or above about 512, for any definition of
 the vsync event, with 16.6 lines of margin at 525".
 .NH 2
-H1a REFUTED on this hardware: the scanout is 1080p60, so blanking is 666us and the paced flip is OUTSIDE it
+H1a: the scanout is 1080p60, so blanking is 667us and the margin is 13us, not 528us
 .LP
 The section above upgraded the claim to "inside blanking for any v-total at or
 above about 512, for any definition of the vsync event, with 16.6 lines of
@@ -15131,8 +15131,10 @@ gaps it qualifies.  On this desk:
 .P1
 SCREEN edid active 3840x2160 total 4400x2250 pixclk 594000 kHz
                    line 7407407 ps vblank 90 lines (666 us)
-SCREEN edid v-total 2250 (assumed 525): blanking 666 us vs 902 us
-                   worst case -- paced flip NOT inside blanking
+SCREEN edid v-total 2250 (assumed 525): blanking 666 us,
+                   vsync pulse ends 133 us in (vfp 8 vsw 10), window 520 us
+SCREEN edid worst-case flip at 653 us vs 666 us of blanking
+                   -- paced flip INSIDE blanking, margin 13 us
 SCREEN edid pixel clock(id 9): set = 0 kHz, measured = 148500 kHz,
                    max = 2400000 kHz
 SCREEN edid live pixel clock 148500 kHz vs 594000 kHz in the
@@ -15153,7 +15155,46 @@ pixclk x period = 148.5e6 x 16666us = 2474901 pixels a frame
 .P2
 agreement to 0.004 per cent, so the live mode is 1080p60 and not a guess.
 .PP
-.B "And the blanking interval is 666us for either candidate mode:"
+.B "RETRACTION, written before the rest because the rest was committed wrong."
+The heading of this section read "REFUTED ... the paced flip is OUTSIDE it", and
+.CW 524f8b197
+committed that.  It is wrong.  I took the measured blanking interval, 667us,
+and compared it against the worst case from the paragraph above \(em 902us \(em
+which is itself computed from
+.I "640x480 porches" ,
+10 front plus 2 sync lines at 31.75us.  Mixing a measured blanking for one mode
+with assumed porches from another in a single inequality is how a confident
+negative appears out of two correct numbers.  At 1080p60 the porches are 4 and
+5 lines of 14.81us, so the vsync pulse ends 133us into the blank and not 381us.
+.PP
+.B "What the kernel says once the worst case comes from the same descriptor as the blank:"
+.P1
+SCREEN edid v-total 2250 (assumed 525): blanking 666 us,
+             vsync pulse ends 133 us in (vfp 8 vsw 10), window 520 us
+SCREEN edid worst-case flip at 653 us vs 666 us of blanking
+             -- paced flip INSIDE blanking, margin 13 us
+.P2
+.CW vfp
+and
+.CW vsw
+are read out of EDID bytes 64 and 65 rather than assumed, so the whole
+inequality now comes from one mode.  An independent host calculation gave 12us
+against the board's 13us, which is integer rounding and not a disagreement.
+.PP
+.B "So the CONCLUSION survives and the MARGIN does not."
+.P1
+mode                      line  blank   pulse end  worst  margin
+640x480@60 DMT (assumed) 31.78  1430 us    381 us  902 us  +528 us
+1920x1080@60   (live)    14.81   667 us    133 us  653 us   +13 us
+3840x2160@60   (EDID)     7.41   667 us    133 us  653 us   +13 us
+.P2
+A forty-fold collapse, from 16.6 scanlines of margin to 0.9 of one.  The claim
+"inside blanking with 16.6 lines of margin" was false; "inside blanking by 13us
+on porch numbers the ARM side cannot read for the live mode" is what is
+established.  That is a materially weaker safety argument for the same
+conclusion, and it is the kind of difference this file exists to record.
+.PP
+.B "And the blanking interval is 667us for either candidate mode:"
 .P1
 mode                              line     vblank          of frame  fits 902us
 640x480@60 DMT  (H1a assumed)  31.78 us  45 lines 1430 us     8.6%   yes
@@ -15162,19 +15203,19 @@ mode                              line     vblank          of frame  fits 902us
 .P2
 Every standard CEA 60Hz mode puts vertical blanking at about four per cent of
 the frame; the 640x480 DMT mode is the outlier at 8.6, which is why assuming it
-was generous by more than a factor of two.  So the worst case the table in
-.CW screenbcm.c
-needs \(em 902us \(em does not fit, and
-.B "the paced flip is outside the blanking interval on this hardware."
+was generous by more than a factor of two.  The porches scale with the mode in
+the same proportion, which is exactly why the conclusion survives the change of
+mode while the margin does not."
 .PP
 .B "What this does and does not overturn."
-It overturns the blanking claim and nothing else: the 60.000Hz lock, the 1.1us
+It overturns the MARGIN and nothing else: the 60.000Hz lock, the 1.1us
 residual, the phase predictability to 3 ppm and the 84.9 per cent damage-copy
-saving were all measured and stand.  What dies is the argument that pacing
-alone puts the flip in a safe window.  A flip 666us-wide-window late is still a
-flip during active scanout, which is the thing the flip was supposed to avoid \(em
-so either the pacing window has to shrink below the real blanking interval, or
-the tear it was meant to remove is not removed by pacing at this mode.
+saving were all measured and stand.  What is weakened is the headroom: 13us is
+0.9 of a scanline, so any error in the firmware's event definition, in the
+pacing spin, or in the porch numbers for the mode actually being driven can put
+the flip into active scanout.  fpperiod/64 would restore real headroom (260us
+window, 393us worst case, 273us margin) at the cost of a longer spin in a path
+that is already not shippable because it holds drawlock.
 .PP
 .B "Two pieces of instrument design worth keeping."
 The decoder was positive-controlled on the host before the board ran it, with

@@ -295,18 +295,26 @@ static int	vsclosed;	/* the window filled up before it was read */
  * 640x480 at 60 in standard DMT timing is 480 active + 10 front porch + 2
  * vsync + 33 back porch = 525 lines at 31.75us, so blanking is 1429us.  The
  *
- * REFUTED ON THIS HARDWARE, and the whole paragraph below is kept only as the
- * reasoning that led to the measurement.  edidtimings() now asks the firmware:
- * the framebuffer is 640x480 but the firmware SCALES it into the display's
- * mode, and the measured live pixel clock is 148500kHz -- 1920x1080 at 60Hz,
- * whose blanking is 45 lines of 14.81us = 667us, not 1429us.  Cross-checked:
- * pixclk times the measured frame period gives 2474901 pixels a frame against
- * 1080p60's 2475000.  So the worst case below, 902us, DOES NOT FIT, and the
- * conclusion this comment reaches is false here.  Every standard CEA 60Hz mode
- * puts vertical blanking at about 4 per cent of the frame; the 640x480 DMT mode
- * assumed below is the outlier at 8.6.  See doc/open-issues-plan.ms, "H1a
- * REFUTED on this hardware".  Flippace is 0, so nothing shipping depends on it;
- * what is refuted is the case for turning it on.
+ * THE NUMBERS BELOW ARE FOR THE WRONG MODE, and the margin they claim is 40x
+ * too large -- but the conclusion survives.  edidtimings() now asks the
+ * firmware: the framebuffer is 640x480 and the firmware SCALES it into the
+ * display's mode, measured live pixel clock 148500kHz, which is 1920x1080 at
+ * 60Hz.  Cross-checked: pixclk times the measured frame period gives 2474901
+ * pixels a frame against 1080p60's 2475000.  So blanking is 667us and not
+ * 1429us.
+ *
+ * The porches scale with the mode in the same proportion, which is why the
+ * conclusion holds: at 1080p60 the vsync pulse ends 133us into the blank, not
+ * 381us, so the worst case is 653us against 667us of blanking -- INSIDE, with
+ * 13us of margin where this paragraph claims 528us.  0.9 of a scanline, not
+ * 16.6.  Measured on the board, with the porches read out of the same EDID
+ * descriptor as the blanking rather than assumed.
+ *
+ * I first compared the measured 667us against the 902us below and recorded
+ * this as refuted, which was wrong: 902us is computed from 640x480 porches, so
+ * that inequality mixed two modes.  See doc/open-issues-plan.ms, "H1a: the
+ * scanout is 1080p60".  Flippace is 0, so nothing shipping depends on either
+ * number.
  *
  * pacing window below is fpperiod/32, 521us.  Therefore:
  *
@@ -376,8 +384,9 @@ static int	vsclosed;	/* the window filled up before it was read */
  * active, so the blank WOULD BE about 8.6 per cent of a frame -- 1428us, wider
  * than one bucket -- but that is the framebuffer's mode and NOT the mode being
  * scanned out: measured, the firmware drives 1080p60 and the blank is 4.0 per
- * cent, 667us, NARROWER than the 902us worst case.  So the margin this
- * paragraph relies on does not exist.  And whether phase zero sits inside the
+ * cent, 667us.  The porches scale with it, so the worst case is 653us and the
+ * flip is still inside the blank -- but by 13us, not the 528us this paragraph
+ * implies.  And whether phase zero sits inside the
  * blank is still a claim about what the scanout showed, which no instrument in
  * this file can see, because every one of them is a readback.
  *
@@ -871,8 +880,8 @@ edidtimings(void)
 {
 	uchar e[128];
 	u32 st;
-	int i, sum, ha, hb, va, vb, ht, vt;
-	uvlong pxhz, lineps, blankus;
+	int i, sum, ha, hb, va, vb, ht, vt, vfp, vsw;
+	uvlong pxhz, lineps, blankus, pulseus, worstus;
 
 	st = ~0;
 	if(mboxedid(0, e, &st) < 0){
@@ -944,10 +953,36 @@ edidtimings(void)
 	 * header needs the blanking interval to exceed the worst-case
 	 * pacing window, which is 902us.
 	 */
-	print("SCREEN edid v-total %d (assumed 525): blanking %llud us"
-		" vs 902 us worst case -- paced flip %s\n",
-		vt, blankus,
-		blankus > 902? "INSIDE blanking": "NOT inside blanking");
+	/*
+	 * THE WORST CASE MUST COME FROM THE SAME DESCRIPTOR AS THE BLANK.
+	 *
+	 * The first version of this compared against a hardcoded 902us,
+	 * which is where the paced flip can land if the firmware's vsync
+	 * event means "end of the vsync pulse" -- computed in the header
+	 * of this file from 640x480 porches, 10 front plus 2 sync at
+	 * 31.75us.  Comparing THAT against a blanking interval measured
+	 * for a different mode mixes two modes in one inequality, and it
+	 * produced a confident "NOT inside blanking" that is wrong: at
+	 * 1080p60 the porches are 4 and 5 lines of 14.81us, so the pulse
+	 * ends 133us in, not 381us.
+	 *
+	 * EDID carries the porches, so take them from the same bytes as
+	 * everything else: v front porch and v sync width are split
+	 * across byte 64 (low nibbles) and byte 65 (upper 2 bits each).
+	 */
+	vfp = (e[64] >> 4)   | (((e[65] >> 2) & 0x3) << 4);
+	vsw = (e[64] & 0xF)  | (((e[65] >> 0) & 0x3) << 4);
+	pulseus = (uvlong)(vfp + vsw) * lineps / 1000000ULL;
+	worstus = pulseus + (uvlong)16666 / 32;	/* the pacing window */
+	print("SCREEN edid v-total %d (assumed 525): blanking %llud us,"
+		" vsync pulse ends %llud us in (vfp %d vsw %d),"
+		" window 520 us\n",
+		vt, blankus, pulseus, vfp, vsw);
+	print("SCREEN edid worst-case flip at %llud us vs %llud us of blanking"
+		" -- paced flip %s, margin %lld us\n",
+		worstus, blankus,
+		worstus <= blankus? "INSIDE blanking": "NOT inside blanking",
+		(vlong)blankus - (vlong)worstus);
 
 	/*
 	 * ...AND WHETHER THAT IS THE MODE BEING DRIVEN, which the EDID
