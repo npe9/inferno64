@@ -168,9 +168,43 @@ links=`grep -c "^$LD -o i$CONF" "$LOG"`
 echo "kbuild: mk exit $rc, $LD links $links, log $LOG"
 [ -f "$LOG.prev" ] && echo "kbuild:   previous run kept at $LOG.prev (diff them for new warnings)"
 
+#
+# THE DIAGNOSTIC PATTERN, in one place because it is used four times below
+# and a word list that drifts between uses is worse than no list.
+#
+# IT WAS A WORD LIST AND IT MISSED A REAL ERROR.  Positive-controlled against
+# four diagnostics this toolchain actually emits -- produced by compiling
+# deliberately broken files, not by reading the compilers:
+#
+#	a.c:1 function not declared: undeclared_fn          7c
+#	b.c:1 syntax error, last name: x                    7c
+#	c.b:7: redeclaration of local x, previously ...     limbo
+#	d.b:6: nosuchvariable is not declared               limbo
+#
+# `warning|not declared|undefined' matched THREE of those four.  It misses
+# "redeclaration of local", which is the error that cost a peer session a
+# build -- caught there only because mk's exit status was nonzero.  Adding
+# words does not fix the class: adding `declar' still leaves `syntax error'
+# unmatched by the counting patterns below.
+#
+# So match the SHAPE instead.  Every diagnostic from 7c, 8c, limbo and cc
+# begins with a source file and a line number; no command echo, mk line or
+# `ls -l' timestamp does.  Measured: 4 of 4 diagnostics, and ZERO lines in
+# two real clean kbuild logs -- where the bare `[^ ]+:[0-9]+' shape matched
+# the `08:11 /path' in ls output, which is why the extension is required.
+#
+# The words stay, because a linker or mk failure has no file:line at all.
+#
+DIAG='error|warning|not declared|undefined|declar|\.[cbhsy]:[0-9]+:? '
+#
+# NOTE: this pattern is wider than the one previous logs were counted with,
+# so the first comparison against $LOG.prev after this change will show a
+# different number for reasons that are not the build.
+#
+
 if [ "$rc" -ne 0 ]; then
 	echo "kbuild: the build failed" >&2
-	grep -iE 'error|warning|not declared|undefined' "$LOG" | head -20 >&2
+	grep -iE "$DIAG" "$LOG" | head -20 >&2
 	exit 1
 fi
 #
@@ -233,13 +267,13 @@ done
 # the distinct count is the right one.  Both are printed, because the raw
 # number is still what the per-file table below adds up to.
 #
-nd=`grep -ciE 'warning|not declared|undefined' "$LOG"`
-ndu=`grep -iE 'warning|not declared|undefined' "$LOG" | sort -u | wc -l | tr -d ' '`
-nf=`grep -iE 'warning|not declared|undefined' "$LOG" |
+nd=`grep -ciE "$DIAG" "$LOG"`
+ndu=`grep -iE "$DIAG" "$LOG" | sort -u | wc -l | tr -d ' '`
+nf=`grep -iE "$DIAG" "$LOG" |
 	sed 's/^warning: //;s/:.*//' | sort -u | wc -l | tr -d ' '`
 echo "kbuild: diagnostics in the log: $nd emission(s), $ndu distinct, in $nf file(s)"
 echo "kbuild:   (over what THIS run recompiled -- a zero is not a clean tree)"
-[ "$nd" -gt 0 ] && grep -iE 'warning|not declared|undefined' "$LOG" |
+[ "$nd" -gt 0 ] && grep -iE "$DIAG" "$LOG" |
 	sed 's/^warning: //;s/:.*//' | sort | uniq -c | sort -rn | head -12
 
 #
