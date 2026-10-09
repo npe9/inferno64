@@ -607,7 +607,22 @@ enum {
 	 * is the thing a description exists to avoid. What is here is
 	 * what HiDPI and zoom need, exactly, with no interpolation.
 	 */
-	TkNtransformend
+	TkNtransformend,
+
+	/*
+	 * The close of a TkNopacity, bracketed for the same reason as a
+	 * clip and a transform and appended here for the same reason as
+	 * those ends: a node type's number must not move.
+	 *
+	 * TkNopacity's rgba carries the alpha in its low byte. The span
+	 * is rendered into a scratch surface that STARTS AS A COPY of
+	 * the destination, and the close composites the whole scratch
+	 * back through a constant-alpha mask -- which gives the right
+	 * answer for the span over what was beneath it, and reuses the
+	 * scratch and the 1x1 replicated RGBA32 colour the context
+	 * already caches rather than needing a per-pixel path.
+	 */
+	TkNopacityend
 };
 
 struct TkNode
@@ -904,6 +919,10 @@ extern	void		tkwalkscaled(int*, int*);
 extern	void		tkscenesetscale(int, int);
 extern	void		tkscenetransform(TkScene*, Point, int, int);
 extern	void		tkscenetransformend(TkScene*);
+extern	void		tksceneopacity(TkScene*, Rectangle, int);
+extern	void		tksceneopacityend(TkScene*);
+extern	void		tkscenesetopacity(int);
+extern	int		tkscenegetopacity(void);
 extern	void		tkscenesetxform(int, int);
 extern	void		tkscenegetxform(int*, int*);
 extern	void		tkscenegetscale(int*, int*);

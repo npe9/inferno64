@@ -385,6 +385,70 @@ tkscenetransformend(TkScene *s)
 }
 
 /*
+ * Opacity over the span that follows. Like the transform, the opening
+ * node must PRECEDE its span, so this prepends; see the note there for
+ * what appending it cost.
+ *
+ * 255 is opaque and is refused rather than emitted: an opacity node
+ * that changes nothing still costs a scratch surface and a full-region
+ * blit, and the whole argument for a description is that it does not
+ * pay for what it does not do.
+ */
+void
+tksceneopacity(TkScene *s, Rectangle r, int alpha)
+{
+	TkNode *n;
+
+	if(alpha < 0 || alpha >= 255)
+		return;
+	if(Dx(r) <= 0 || Dy(r) <= 0)
+		return;
+	if((n = newnode(s, TkNopacity)) == nil)
+		return;
+	n->r = r;
+	n->rgba = alpha & 0xff;
+	if(s->head != n){
+		TkNode *p;
+
+		for(p = s->head; p != nil && p->next != n; p = p->next)
+			;
+		if(p != nil){
+			p->next = nil;
+			s->tail = p;
+			n->next = s->head;
+			s->head = n;
+		}
+	}
+}
+
+void
+tksceneopacityend(TkScene *s)
+{
+	newnode(s, TkNopacityend);
+}
+
+/*
+ * The opacity the WALK wraps each tree in, set by `render opacity'.
+ * 255 is every running system, and this exists so the node has a
+ * producer to be measured through.
+ */
+static int walkalpha = 255;
+
+void
+tkscenesetopacity(int a)
+{
+	if(a < 0 || a > 255)
+		return;
+	walkalpha = a;
+}
+
+int
+tkscenegetopacity(void)
+{
+	return walkalpha;
+}
+
+/*
  * The transform the WALK wraps each tree in, set by `render xform'.
  * One by one is every running system; this exists so the transform
  * node has a producer to be compared through -- against `render
@@ -977,6 +1041,22 @@ tkwalkflush(void)
 		tkscenetransform(s, w->dst->r.min, xnum, xden);
 		tkscenetransformend(s);
 	}
+	/*
+	 * And then the whole thing, transform included, in an opacity
+	 * span if `render opacity' asked for one.  Prepending after the
+	 * transform puts opacity OUTSIDE it, which is the nesting that
+	 * makes sense: the transform says where the picture goes and the
+	 * opacity says how much of it lands.
+	 *
+	 * The span is the whole window rather than the tree's bounds so
+	 * that a transformed tree cannot move its content outside its own
+	 * opacity surface -- the opacity node's rectangle is scaled by
+	 * the global scale but not by a transform it encloses.
+	 */
+	if(walkalpha < 255){
+		tksceneopacity(s, w->dst->r, walkalpha);
+		tksceneopacityend(s);
+	}
 	tkscenerenderscaled(s, w->ctxt, w->dst, scalenum, scaleden);
 	tkscenefree(s);
 	walk.runs++;
@@ -1568,6 +1648,36 @@ enum { Nscratch = 64 };		/* points a scaled polygon may have */
 static int renderscene(TkScene*, TkCtxt*, Image*, int, int);
 
 /*
+ * Composite an opacity span's surface back over its destination.
+ *
+ * The mask is tkcolor()'s 1x1 replicated image, whose channel depends
+ * on the low byte: RGBA32 when there is alpha to carry, RGB24 when
+ * there is not.  So 255 must NOT go through the mask -- it would ask
+ * for a mask with no alpha channel, and a replicated one of those does
+ * not behave as opaque here (measured: it composited as though it were
+ * transparent, which is a separate finding and not this path's to
+ * work around).  tksceneopacity() refuses 255 so the case cannot
+ * arise from the emitter, and this refuses it again so a future caller
+ * that sets rgba directly gets the right picture rather than a blank
+ * one.
+ */
+static void
+blitopacity(TkCtxt *c, Image *dst, Image *src, TkNode *n)
+{
+	Image *col;
+
+	if(dst == nil || src == nil || n == nil)
+		return;
+	if((n->rgba & 0xff) == 0xff){
+		draw(dst, n->r, src, nil, n->r.min);
+		return;
+	}
+	col = tkcolor(c, n->rgba & 0xff);
+	if(col != nil)
+		draw(dst, n->r, src, col, n->r.min);
+}
+
+/*
  * Fill *d with n scaled.  Points go into caller-owned scratch; a
  * polygon with more points than that is drawn UNSCALED and counted
  * approximate, which is wrong in the right direction -- a shape at the
@@ -1661,11 +1771,13 @@ static int
 renderscene(TkScene *s, TkCtxt *c, Image *dst, int num, int den)
 {
 	TkNode *n, *nx, *open;
-	TkNode sd, sd2, sopen;
+	TkNode sd, sd2, sopen, sopaq;
 	TkNode *xf;		/* the open transform, or nil */
+	TkNode *opaq;		/* the open opacity, or nil */
 	Point scratch[Nscratch], scratch2[Nscratch], o;
 	Image *col, *target, *saved, *t, *img, *clipped;
-	Rectangle oclipr, clipr;
+	Image *opq, *savedop;
+	Rectangle oclipr, clipr, opr;
 	Font *fnt;
 	int drawn;
 
@@ -1678,6 +1790,8 @@ renderscene(TkScene *s, TkCtxt *c, Image *dst, int num, int den)
 	saved = nil;
 	open = nil;
 	clipped = nil;
+	opaq = nil;
+	opq = savedop = nil;
 	oclipr = dst->clipr;
 	for(nx = s->head; nx != nil; nx = nx->next){
 		/*
@@ -1779,6 +1893,62 @@ renderscene(TkScene *s, TkCtxt *c, Image *dst, int num, int den)
 			clipped = nil;
 			drawn++;
 			continue;
+		/*
+		 * Opacity. The span is drawn into a surface that STARTS AS
+		 * A COPY of the destination and the close composites the
+		 * whole surface back through a constant-alpha mask, so what
+		 * lands is the span over what was already there, at alpha.
+		 *
+		 * The surface is in WINDOW coordinates, not the ZP origin a
+		 * layer's scratch uses, so the span's nodes need no
+		 * adjustment -- which is also why this cannot open inside a
+		 * layer, where the target is a ZP-origin scratch.  Same
+		 * refusal as a clip, for the same reason.
+		 *
+		 * It is allocated and freed per span rather than cached on
+		 * the context like tkitmppix()'s two slots: the surface is
+		 * the size of the span, and a cache keyed by nothing would
+		 * hold the largest span ever rendered for the life of the
+		 * context.  The allocation is the cost of opacity and it is
+		 * charged where it is incurred.
+		 */
+		case TkNopacity:
+			if(saved != nil || opaq != nil)
+				continue;	/* not inside a layer, and no nesting */
+			opr = n->r;
+			if(!rectclip(&opr, target->r) ||
+			   Dx(opr) <= 0 || Dy(opr) <= 0)
+				continue;
+			t = allocimage(c->display, opr, target->chan, 0, DNofill);
+			if(t == nil)
+				continue;	/* no surface: draw it opaque */
+			draw(t, opr, target, nil, opr.min);
+			savedop = target;
+			target = t;
+			opq = t;
+			/*
+			 * sd is overwritten by the next node, so the open
+			 * node needs its own slot exactly as a layer's does;
+			 * TkNopacityend reads its r and its rgba.
+			 */
+			if(n == &sd || n == &sd2){
+				sopaq = *n;
+				opaq = &sopaq;
+			}else
+				opaq = n;
+			drawn++;
+			continue;
+		case TkNopacityend:
+			if(opaq == nil)
+				continue;
+			target = savedop;
+			blitopacity(c, target, opq, opaq);
+			freeimage(opq);
+			opq = nil;
+			savedop = nil;
+			opaq = nil;
+			drawn++;
+			continue;
 		}
 		switch(n->type){
 		case TkNcolour:
@@ -1862,5 +2032,16 @@ renderscene(TkScene *s, TkCtxt *c, Image *dst, int num, int den)
 	 */
 	if(clipped != nil)
 		replclipr(clipped, clipped->repl, oclipr);
+	/*
+	 * A tree that ends inside an opacity span would otherwise leave
+	 * the span in a surface nothing draws and nothing frees.
+	 * Composite it rather than discard it: at the wrong alpha it is
+	 * visible, missing it is not.
+	 */
+	if(opaq != nil){
+		target = savedop;
+		blitopacity(c, savedop, opq, opaq);
+		freeimage(opq);
+	}
 	return drawn;
 }

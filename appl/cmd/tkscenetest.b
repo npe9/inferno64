@@ -376,6 +376,25 @@ differ(a, b: array of byte): int
 	return n;
 }
 
+#
+# How much ink, not how many inked bytes.  Opacity scales the DISTANCE
+# of every channel from the background, so the sum of those distances
+# is proportional to the alpha -- which makes a quantitative check
+# possible instead of `the picture differs'.  Counting inked bytes
+# cannot do it: a half-transparent picture touches the same pixels.
+#
+# A big, because W*H*3 bytes can each contribute 255.
+#
+darkness(a: array of byte): big
+{
+	if(a == nil)
+		return big 0;
+	d := big 0;
+	for(i := 0; i < len a; i++)
+		d += big (255 - int a[i]);
+	return d;
+}
+
 inked(a: array of byte): int
 {
 	if(a == nil)
@@ -1110,6 +1129,95 @@ init(ctxt: ref Draw->Context, argv: list of string)
 			sys->sprint("scale 1:1 again is byte-identical (%d differ)", differ(s1, s1b)));
 	else
 		report(0, "the 1:1 render repeated");
+
+	#
+	# OPACITY. The third of the three kinds tk.h names as making
+	# animation cost nothing to rasterise, after the clip and the
+	# transform. `render opacity A' wraps each tree in a TkNopacity
+	# span: the span draws into a surface that starts as a copy of
+	# the destination and the close composites the whole surface back
+	# through a constant-alpha mask.
+	#
+	# The identity case is the weak one -- 255 emits no node at all,
+	# so it passes whether or not the node works -- which is why the
+	# two that follow it are the real test, and why they are
+	# QUANTITATIVE. Opacity scales each channel's distance from the
+	# background, so the total of those distances must scale with the
+	# alpha. Checking only that the picture `differs' would pass a
+	# mask read as a colour, the wrong channel, or a premultiply
+	# confusion; this would not.
+	#
+	tk->cmd(tk->toplevel(disp, ""), "render xform 1");
+	tk->cmd(tk->toplevel(disp, ""), "render scaled 1");
+	so255 := paint(disp, "opacity 255", scaleframe);
+	ro := tk->cmd(tk->toplevel(disp, ""), "render opacity");
+	report(ro == "255", sys->sprint("render opacity reports 255 by default: `%s'", ro));
+	if(so255 != nil && s1 != nil)
+		report(differ(so255, s1) == 0,
+			sys->sprint("opacity 255 is unchanged (%d differ)", differ(so255, s1)));
+	else
+		report(0, "the opaque render happened");
+
+	# Alpha 0: the frame must disappear. What that proves is narrower
+	# than it looks, and the control says so: with the composite
+	# deleted outright this check still PASSES, because a span drawn
+	# into a surface nobody blits back also leaves a blank page. So
+	# it is evidence the span was DIVERTED -- if the opacity node
+	# were refused the frame would be drawn straight to the window
+	# and this would fail -- and it is not evidence that anything was
+	# composited. The alpha-128 check below is what establishes that.
+	tk->cmd(tk->toplevel(disp, ""), "render opacity 0");
+	so0 := paint(disp, "opacity 0", scaleframe);
+	report(tk->cmd(tk->toplevel(disp, ""), "render opacity") == "0",
+		"render opacity 0 took");
+	if(so0 != nil)
+		report(inked(so0) == 0,
+			sys->sprint("opacity 0 draws nothing (%d bytes inked)", inked(so0)));
+	else
+		report(0, "the transparent render happened");
+
+	# And half way. The ink must be about half, which is the claim
+	# that the alpha reaches the compositor AS an alpha.
+	#
+	# This is the load-bearing check, and two controls fix what it
+	# can see. Forcing the mask's alpha to 192 instead of the node's
+	# gave 394208 of 525088 -- 0.751, which is 192/255 to three
+	# figures -- so the ink is linear in the alpha and the figure
+	# below is not a coincidence of some other mechanism. Deleting
+	# the composite gave 0. Neither control was reachable by reading
+	# the code: the first was written expecting 255 and found that a
+	# mask with no alpha channel composites as transparent here.
+	tk->cmd(tk->toplevel(disp, ""), "render opacity 128");
+	so128 := paint(disp, "opacity 128", scaleframe);
+	if(so128 != nil && so255 != nil){
+		full := darkness(so255);
+		half := darkness(so128);
+		want := full * big 128 / big 255;
+		# A twentieth of the expected value: the per-pixel rounding
+		# in draw() is a unit or two per channel, not a fraction of
+		# the total, so this is loose enough to be stable and tight
+		# enough that 0, full, or a colour-as-mask fails it.
+		tol := want / big 20;
+		if(tol < big 1)
+			tol = big 1;
+		d := half - want;
+		if(d < big 0)
+			d = -d;
+		report(full > big 0 && d <= tol,
+			sys->sprint("opacity 128 is half the ink: %bd of %bd, wanted %bd +-%bd",
+				half, full, want, tol));
+	}else
+		report(0, "the half-transparent render happened");
+
+	# Reversibility, as for the scale: opacity leaks no state.
+	tk->cmd(tk->toplevel(disp, ""), "render opacity 255");
+	so255b := paint(disp, "opacity back to 255", scaleframe);
+	if(so255b != nil && so255 != nil)
+		report(differ(so255, so255b) == 0,
+			sys->sprint("opacity 255 again is byte-identical (%d differ)",
+				differ(so255, so255b)));
+	else
+		report(0, "the opaque render repeated");
 
 	smenu := paintmenu(disp, 1);
 	if(dmenu != nil && smenu != nil){

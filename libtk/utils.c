@@ -1437,6 +1437,29 @@ tkrendercmd(TkTop *t, char *arg, char **ret)
 		tkwalkreset();
 		return nil;
 	}
+	/*
+	 * `render opacity ?ALPHA?' wraps each tree in a TkNopacity span,
+	 * 0 to 255. 255 is the running system and emits no node at all,
+	 * which is why identity costs nothing and why the test below
+	 * compares 255 against unchanged rather than trusting it.
+	 */
+	if(strcmp(buf, "opacity") == 0){
+		int alpha;
+
+		arg = tkword(t, arg, buf, buf+sizeof(buf), nil);
+		arg = tkword(t, arg, buf, buf+sizeof(buf), nil);
+		if(buf[0] == '\0'){
+			if(ret != nil)
+				return tkvalue(ret, "%d", tkscenegetopacity());
+			return nil;
+		}
+		alpha = atoi(buf);
+		if(alpha < 0 || alpha > 255)
+			return TkBadvl;
+		tkscenesetopacity(alpha);
+		tkwalkreset();
+		return nil;
+	}
 	if(strcmp(buf, "scaled") == 0){
 		int num, den, nodes, approx;
 
