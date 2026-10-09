@@ -1467,6 +1467,36 @@ tkrendercmd(TkTop *t, char *arg, char **ret)
 		tkwalkreset();
 		return nil;
 	}
+	/*
+	 * `render record ?0|1?' turns on serialising each tree the walk
+	 * renders, and `render tree' hands back the last one.  This is
+	 * item 1's API half: a Limbo program can obtain a widget's node
+	 * tree and a consumer -- recording, remote rendering, a backend
+	 * that wants geometry -- can be written outside libtk.
+	 *
+	 * Off by default, because it costs a serialisation on the path
+	 * every repaint takes.
+	 */
+	if(strcmp(buf, "record") == 0){
+		arg = tkword(t, arg, buf, buf+sizeof(buf), nil);
+		tkword(t, arg, buf, buf+sizeof(buf), nil);
+		if(buf[0] == '\0'){
+			if(ret != nil)
+				return tkvalue(ret, "%d", tkscenegetrecord());
+			return nil;
+		}
+		tkscenesetrecord(atoi(buf));
+		tkwalkreset();
+		return nil;
+	}
+	if(strcmp(buf, "tree") == 0){
+		char *d;
+
+		d = tkscenegetdump();
+		if(ret != nil)
+			return tkvalue(ret, "%s", d == nil ? "" : d);
+		return nil;
+	}
 	if(strcmp(buf, "scaled") == 0){
 		int num, den, nodes, approx;
 

@@ -235,6 +235,73 @@ earlier, and that one is explicit about substituting grey. Reading the
 right function would have settled it, and reading a function with the
 right name settled nothing.
 .PP
+.B "render record ?0|1??"
+makes the walk serialise each tree it renders, and
+.B "render tree"
+hands back the last one.
+.IR Tknode (2)
+decodes it. This is the API half of item 1 of
+.BR doc/scene-graph-plan.ms :
+a consumer \(em recording, remote rendering, a backend that wants
+geometry rather than a raster \(em can be written outside
+.IR libtk .
+.PP
+The checks here are
+.B positional,
+not a round trip. Decoding a dump and encoding it again would pass for
+a decoder that stored the line verbatim, which is the same shape as the
+identity transform that passed while
+.B TkNtransform
+did nothing. So this asserts field values at known places in a known
+fixture \(em a raised frame, borderwidth 2, packed in a 160x60 image:
+.IP
+.EX
+4 nodes: roundfill colour roundfill border
+the border's box      (58,0)\-(102,24)
+its radius and width  5 and 2
+its number            Tborder, 3
+its rgba              2425392895
+.EE
+.PP
+The rgba matters on its own: it is past 2\u31\d, so a decoder that read
+it into a signed 32\-bit field would answer negative. The check caught
+nothing and the
+.B message
+caught this instead \(em an
+.B int
+is 64 bits at runtime here but
+.B %d
+formats the low 32, so a correct 2425392895 printed as \-1869574401 and
+a passing check read as a failing one.
+.PP
+Three more fixtures, each for one thing the first cannot reach: a label
+for the two quoted strings, with a
+.B space
+in its text that an unquoted rest\-of\-line field would decode as two
+more numbers; a selected checkbutton for the only node in the flat
+style that carries points; and
+.B "render record 0"
+for whether an answer after it is empty rather than stale.
+.PP
+.B "And the name table has its own two guards, both checked."
+The names in
+.B scene.c
+are indexed by type and ordered against the enum by hand, because Plan
+9 C has no designated initialisers, so the table can drift. A type with
+no name dumps as
+.B unknown\-N
+and a table of the wrong length emits one
+.B tablemismatch
+line; this asserts neither appears. Lengthening the table by one entry
+makes the second fire and, because the diagnostic is the dump's first
+line, poisons the whole decode \(em which is the right failure: a
+drifted table should make a dump unusable, not subtly wrong. Dropping
+the
+.B radius
+field makes the decoder answer
+.B "14 fields, want at least 15"
+rather than reading the points out of the width.
+.PP
 With
 .B -v
 each passing check is printed as well as each failing one.
@@ -338,6 +405,16 @@ more than one of those figures must do the same.
 .IR tkofftest (1),
 .IR tkcmd (1)
 .SH BUGS
+A
+.B layer
+inside an
+.B opacity
+span is permitted by the renderer and is not exercised here: the
+opacity fixture is a plain frame, which takes no layer. The reverse \(em
+an opacity inside a layer \(em is refused by the renderer, because
+there the target is a scratch at the origin and an opacity surface is
+in window coordinates.
+.PP
 What it does
 .B not
 cover:

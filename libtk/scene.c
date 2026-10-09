@@ -428,6 +428,159 @@ tksceneopacityend(TkScene *s)
 }
 
 /*
+ * SERIALISING A TREE, so a consumer can live outside libtk.
+ *
+ * This is the API half of item 1 of doc/scene-graph-plan.ms.  The
+ * nodes already hold nothing display-side -- an rgba is a number and a
+ * face is a file name -- which is what makes a tree writable down at
+ * all; this is what writes it down.
+ *
+ * Text, one node per line, because the first consumers are recording
+ * and inspection and both want to be readable, and because a Limbo
+ * program can obtain a string from a Tk command and nothing else.  A
+ * backend that wants the nodes without the parse is a different
+ * interface and this does not pretend to be it.
+ *
+ * It is taken at FLUSH time, not kept as nodes.  The nodes the renderer
+ * walks are stack copies whose pts points into a stack array (see
+ * scalenode()), and a kept TkNode* would outlive the scene that owns
+ * its strings and its points.  A kept STRING owns itself.
+ *
+ * The names are indexed by type and the table drifting from the enum
+ * is the obvious hazard -- Plan 9 C has no designated initialisers, so
+ * the order here is the order there by hand.  Two guards: a type with
+ * no name dumps as `unknown-N' rather than silently as its neighbour,
+ * and a table whose length is not the enum's emits one `tablemismatch'
+ * line.  tkscenetest(1) asserts both are absent, which is a check that
+ * can fire rather than a comment asking for care.
+ */
+static char *nodenames[] = {
+	"group",		/* TkNgroup */
+	"colour",		/* TkNcolour */
+	"roundfill",		/* TkNroundfill */
+	"border",		/* TkNborder */
+	"corners",		/* TkNcorners */
+	"layer",		/* TkNlayer */
+	"layerend",		/* TkNlayerend */
+	"texture",		/* TkNtexture */
+	"glyphs",		/* TkNglyphs */
+	"linear",		/* TkNlinear */
+	"shadow",		/* TkNshadow */
+	"clip",			/* TkNclip */
+	"transform",		/* TkNtransform */
+	"opacity",		/* TkNopacity */
+	"ellipse",		/* TkNellipse */
+	"ellipsefill",		/* TkNellipsefill */
+	"polyfill",		/* TkNpolyfill */
+	"spline",		/* TkNspline */
+	"clipend",		/* TkNclipend */
+	"transformend",		/* TkNtransformend */
+	"opacityend",		/* TkNopacityend */
+};
+
+/*
+ * A string field, quoted and escaped, because both of them can hold
+ * anything: a face name has spaces in no font this tree ships but a
+ * canvas text item's string has whatever the application put there,
+ * newline included.  An unquoted rest-of-line field would decode wrong
+ * the first time someone drew a two-line label.
+ */
+static void
+dumpstr(Fmt *f, char *p)
+{
+	fmtprint(f, " \"");
+	for(; p != nil && *p != '\0'; p++){
+		switch(*p){
+		case '\\':	fmtprint(f, "\\\\"); break;
+		case '"':	fmtprint(f, "\\\""); break;
+		case '\n':	fmtprint(f, "\\n"); break;
+		case '\t':	fmtprint(f, "\\t"); break;
+		default:	fmtprint(f, "%c", *p); break;
+		}
+	}
+	fmtprint(f, "\"");
+}
+
+char*
+tkscenedump(TkScene *s)
+{
+	Fmt f;
+	TkNode *n;
+	int i;
+
+	if(s == nil)
+		return nil;
+	if(fmtstrinit(&f) < 0)
+		return nil;
+	if(nelem(nodenames) != TkNopacityend+1)
+		fmtprint(&f, "tablemismatch %d %d\n",
+			nelem(nodenames), TkNopacityend+1);
+	for(n = s->head; n != nil; n = n->next){
+		if(n->type < nelem(nodenames))
+			fmtprint(&f, "%s", nodenames[n->type]);
+		else
+			fmtprint(&f, "unknown-%d", n->type);
+		fmtprint(&f, " %d %d %d %d", n->r.min.x, n->r.min.y,
+			n->r.max.x, n->r.max.y);
+		fmtprint(&f, " %d %d %d %d", n->dstr.min.x, n->dstr.min.y,
+			n->dstr.max.x, n->dstr.max.y);
+		fmtprint(&f, " %d %d", n->sp.x, n->sp.y);
+		fmtprint(&f, " %lud %d %d", n->rgba, n->radius, n->width);
+		fmtprint(&f, " %d", n->npts);
+		for(i = 0; i < n->npts && n->pts != nil; i++)
+			fmtprint(&f, " %d %d", n->pts[i].x, n->pts[i].y);
+		dumpstr(&f, n->fontname);
+		dumpstr(&f, n->text);
+		fmtprint(&f, "\n");
+	}
+	return fmtstrflush(&f);
+}
+
+/*
+ * The last tree the walk rendered, as text, when `render record' asked
+ * for one.  Off by default: it costs a serialisation on the path every
+ * repaint takes, and nothing in a running system reads it.
+ */
+static int walkrecord;
+static char *walkdump;
+
+void
+tkscenesetrecord(int on)
+{
+	walkrecord = on != 0;
+	if(!walkrecord){
+		free(walkdump);
+		walkdump = nil;
+	}
+}
+
+int
+tkscenegetrecord(void)
+{
+	return walkrecord;
+}
+
+char*
+tkscenegetdump(void)
+{
+	return walkdump;
+}
+
+static void
+recorddump(TkScene *s)
+{
+	char *d;
+
+	if(!walkrecord)
+		return;
+	d = tkscenedump(s);
+	if(d == nil)
+		return;		/* keep the previous rather than lose both */
+	free(walkdump);
+	walkdump = d;
+}
+
+/*
  * The opacity the WALK wraps each tree in, set by `render opacity'.
  * 255 is every running system, and this exists so the node has a
  * producer to be measured through.
@@ -1058,6 +1211,7 @@ tkwalkflush(void)
 		tksceneopacityend(s);
 	}
 	tkscenerenderscaled(s, w->ctxt, w->dst, scalenum, scaleden);
+	recorddump(s);			/* while the tree is still alive */
 	tkscenefree(s);
 	walk.runs++;
 }

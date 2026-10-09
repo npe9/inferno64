@@ -1,0 +1,249 @@
+.TH TKNODE 2
+.SH NAME
+tknode \- decode libtk's render-node tree
+.SH SYNOPSIS
+.EX
+include "draw.m";
+include "tknode.m";
+tknode := load Tknode Tknode->PATH;
+
+Tgroup, Tcolour, Troundfill, Tborder, Tcorners,
+Tlayer, Tlayerend, Ttexture, Tglyphs, Tlinear,
+Tshadow, Tclip, Ttransform, Topacity, Tellipse,
+Tellipsefill, Tpolyfill, Tspline, Tclipend,
+Ttransformend, Topacityend: con iota;
+Nodetypes: con Topacityend+1;
+
+Node: adt {
+    ntype:    int;
+    r:        Draw\->Rect;
+    dstr:     Draw\->Rect;
+    sp:       Draw\->Point;
+    rgba:     int;
+    radius:   int;
+    width:    int;
+    pts:      array of Draw\->Point;
+    fontname: string;
+    text:     string;
+
+    name: fn(n: self ref Node): string;
+};
+
+init:     fn();
+decode:   fn(dump: string): (array of ref Node, string);
+typename: fn(t: int): string;
+typeof:   fn(name: string): int;
+.EE
+.SH DESCRIPTION
+.I Libtk
+can describe a widget as a tree of render nodes instead of painting
+straight into an image, and can serialise the tree it rendered.
+.B Tknode
+decodes that serialisation, so a consumer \(em recording, sending a
+window somewhere else to draw, a backend that wants geometry rather
+than a raster \(em can be written outside
+.IR libtk .
+.PP
+.I Init
+must be called before
+.IR decode ,
+which loads
+.B Sys
+and
+.B Draw
+itself if it was not.
+.PP
+A node holds
+.B no display\-side resource:
+a colour is an
+.B rgba
+number rather than an allocated
+.BR Image ,
+and a face or a bitmap is a file
+.B name
+rather than a loaded
+.BR Font .
+That is what makes a tree writable down at all, and it is why a decoded
+.B Node
+is useful to a program that has no
+.B Display
+of its own.
+.SH "GETTING A TREE"
+Recording is off by default, because it costs a serialisation on the
+path every repaint takes:
+.IP
+.EX
+tk\->cmd(top, "render record 1");
+\&...                   # whatever repaints
+dump := tk\->cmd(top, "render tree");
+(nodes, err) := tknode\->decode(dump);
+.EE
+.PP
+.B "render tree"
+answers the last tree the walk rendered, and the empty string when
+nothing has been recorded.
+.B "render record 0"
+stops recording and drops the tree, so an answer after it is empty
+rather than stale.
+.SH "THE WIRE FORM"
+One node per line:
+.IP
+.EX
+NAME r.min.x r.min.y r.max.x r.max.y \e
+     dstr.min.x dstr.min.y dstr.max.x dstr.max.y \e
+     sp.x sp.y rgba radius width npts [x y]... \e
+     "fontname" "text"
+.EE
+.PP
+all on one line.
+.B NAME
+is the type's name, not its number, so a dump is readable and survives
+being looked at; the number is in
+.B ntype
+after decoding and is the enum's, which does not move.
+.PP
+The two strings are
+.B quoted and escaped
+\(em backslash, quote, newline and tab \(em because both of them can
+hold anything a program put there. A canvas text item's string can
+contain a newline, and an unquoted rest\-of\-line field would decode
+that as the start of another node.
+.SH "FIELDS THAT ARE NOT WHAT THEY LOOK LIKE"
+Three node types use the fields differently and a consumer has to know:
+.TP
+.B Tellipse, Tellipsefill
+.B r.min
+is the
+.B centre
+and
+.B sp
+is the two
+.BR radii ,
+because an ellipse is a centre and two radii and a bounding rectangle
+loses the distinction between a radius of
+.I r
+and a box
+.I 2r+1
+wide.
+.B r.max
+is a copy of
+.BR r.min .
+.TP
+.B Tspline
+.B sp
+is
+.B not a point.
+It carries the two end styles, first and last, packed \(em a canvas
+line's arrow is 25329922, which is why they are here and not in
+.BR radius ,
+which a
+.B short
+would truncate.
+.TP
+.B Tlayer
+.B r.max
+is the scratch surface's
+.BR extent ,
+.B dstr
+is where the result lands and
+.B sp
+is the source point of the blit.
+.PP
+.B Ttexture 's
+.B width
+says how the image is used: 1 for a
+.BR mask ,
+with
+.B rgba
+the colour painted through it, and 0 for a source drawn as it stands.
+.SH "SPANS"
+.BR Tclip ,
+.B Ttransform
+and
+.B Topacity
+each open a span that the matching
+.BR Tclipend ,
+.B Ttransformend
+or
+.B Topacityend
+closes, because each is a property of a
+.B run
+of nodes rather than of one and a flat list has nowhere else to put it.
+A consumer walks the list in order and maintains its own stack; the
+ends are at the end of the enum rather than beside their openers
+because a node type's number must not move once a backend has seen one.
+.PP
+.B Topacity 's
+alpha is the low byte of its
+.BR rgba .
+.B Ttransform
+carries its translation in
+.B r.min
+and a uniform scale in
+.BR sp :
+.B sp.x
+over
+.BR sp.y ,
+a rational because the renderer has no floating point. There is no
+rotation, deliberately \(em a rotation maps a rectangle to something
+that is not one.
+.SH SOURCE
+.B /appl/lib/tknode.b
+.SH SEE ALSO
+.IR tk (2),
+.IR tkscenetest (1),
+.B doc/scene\-graph\-plan.ms
+.SH DIAGNOSTICS
+.I Decode
+returns the nodes it managed and a non\-nil error describing the first
+line it could not read, rather than nothing: a truncated tree is more
+use than an empty one when the question is what went wrong.
+.PP
+.I Typeof
+returns \-1 for a name it does not know, and
+.I Node.name
+answers
+.B unknown
+for a number it does not know. That is what a tree from a newer
+.I libtk
+looks like, and a consumer should treat an unknown node as something to
+skip rather than as a corrupt dump.
+.SH BUGS
+It does not cover
+.B Tgroup ,
+.B Tlinear
+or
+.B Tshadow ,
+which are declared in the vocabulary and emitted by nothing, so no
+dump has ever contained one.
+.PP
+A dump is the tree
+.B after
+the walk rendered it, which means after any global scale was applied to
+the nodes \(em so a dump taken under
+.B "render scaled 2"
+holds the scaled geometry, not the original. The node transform is
+different: a
+.B Ttransform
+node is in the tree and its span is
+.B not
+pre\-scaled, so a consumer applies it itself.
+.PP
+There is no encoder. A dump can be read but not written back, so
+nothing yet proves a decoded tree is
+.I sufficient
+to reproduce the picture \(em only that every field survives the trip.
+Reproducing it would mean a consumer that rasterises the primitive
+subset, which is the next thing here rather than a thing in the way:
+every renderer case is built from
+.IR draw (2),
+.IR ellipse (2),
+.IR fillpoly (2)
+and
+.IR bezspline (2),
+and the three composite kinds
+.BR ( Troundfill ,
+.BR Tcorners ,
+.BR Tborder )
+are solid rectangles and a per\-row corner cut, so none of it needs
+anything a Limbo program cannot reach.

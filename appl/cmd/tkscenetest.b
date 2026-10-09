@@ -32,6 +32,9 @@ include "draw.m";
 include "tk.m";
 	tk: Tk;
 	Toplevel: import tk;
+include "tknode.m";
+	tknode: Tknode;
+	Node: import tknode;
 
 Tkscenetest: module
 {
@@ -363,6 +366,27 @@ painttwo(disp: ref Display): (array of byte, array of byte)
 # How many bytes differ, so a mismatch can be reported as a magnitude
 # rather than just a verdict.  A near-miss and a blank image are very
 # different failures.
+# Limbo has no conditional expression, and a nil error has to read as
+# something in a message.
+errstr(e: string): string
+{
+	if(e == nil)
+		return "no error";
+	return e;
+}
+
+# Is `sub' anywhere in `s'?  For the two guards the dump emits about
+# its own name table, which must be checked rather than trusted.
+contains(s, sub: string): int
+{
+	if(len sub == 0 || len s < len sub)
+		return 0;
+	for(i := 0; i <= len s - len sub; i++)
+		if(s[i:i+len sub] == sub)
+			return 1;
+	return 0;
+}
+
 differ(a, b: array of byte): int
 {
 	if(a == nil || b == nil)
@@ -478,6 +502,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		raise "fail:load";
 	}
 	tk = load Tk Tk->PATH;
+	tknode = load Tknode Tknode->PATH;
+	if(tknode != nil)
+		tknode->init();
 	if(tk == nil){
 		sys->print("tkscenetest: load $Tk: %r\n");
 		raise "fail:load";
@@ -1224,6 +1251,138 @@ init(ctxt: ref Draw->Context, argv: list of string)
 				differ(so255, so255b)));
 	else
 		report(0, "the opaque render repeated");
+
+	#
+	# EXPOSING THE TREE. `render record 1' makes the walk serialise
+	# each tree it renders and `render tree' hands back the last one,
+	# which tknode(2) decodes into an array of Node. That is item 1's
+	# API half: a consumer -- recording, remote rendering, a backend
+	# that wants geometry -- can be written outside libtk.
+	#
+	# The checks are POSITIONAL, not a round trip. Encoding the
+	# decoded nodes again and comparing strings would pass for a
+	# decoder that stored the line verbatim, which is the same shape
+	# as the identity transform that passed while TkNtransform did
+	# nothing. So this asserts field VALUES at known positions in a
+	# known fixture.
+	#
+	if(tknode == nil){
+		report(0, "tknode(2) loaded");
+	}else{
+		tk->cmd(tk->toplevel(disp, ""), "render record 1");
+		report(tk->cmd(tk->toplevel(disp, ""), "render record") == "1",
+			"render record 1 took");
+		paint(disp, "recorded frame", scaleframe);
+		dump := tk->cmd(tk->toplevel(disp, ""), "render tree");
+		report(dump != nil && len dump > 0,
+			sys->sprint("a recorded tree comes back (%d bytes)", len dump));
+
+		# The name table in scene.c is indexed by type and hand
+		# ordered against the enum, so it can drift. Both guards it
+		# emits are checked here rather than trusted to care.
+		report(!contains(dump, "tablemismatch"),
+			"the node name table is the length of the enum");
+		report(!contains(dump, "unknown-"),
+			"every node type the walk emitted has a name");
+
+		(tnodes, derr) := tknode->decode(dump);
+		report(derr == nil, sys->sprint("the tree decodes: %s", errstr(derr)));
+
+		# A raised frame, borderwidth 2, packed in a 160x60 image.
+		# Four nodes, and the frame's own box is centred: (160-44)/2
+		# is 58, and 24 is 20 plus two borders of 2.
+		report(len tnodes == 4,
+			sys->sprint("the raised frame is 4 nodes (%d)", len tnodes));
+		if(len tnodes == 4){
+			report(tnodes[0].name() == "roundfill" &&
+			       tnodes[1].name() == "colour" &&
+			       tnodes[2].name() == "roundfill" &&
+			       tnodes[3].name() == "border",
+				sys->sprint("in paint order: %s %s %s %s",
+					tnodes[0].name(), tnodes[1].name(),
+					tnodes[2].name(), tnodes[3].name()));
+			b := tnodes[3];
+			report(b.r.min.x == 58 && b.r.min.y == 0 &&
+			       b.r.max.x == 102 && b.r.max.y == 24,
+				sys->sprint("the border's box is (58,0)-(102,24): (%d,%d)-(%d,%d)",
+					b.r.min.x, b.r.min.y, b.r.max.x, b.r.max.y));
+			report(b.radius == 5 && b.width == 2,
+				sys->sprint("the border is radius 5 width 2: radius %d width %d",
+					b.radius, b.width));
+			report(b.ntype == Tknode->Tborder,
+				sys->sprint("its number is Tborder (%d, want %d)",
+					b.ntype, Tknode->Tborder));
+			# rgba must survive as a 32-bit value. 2425392895 is
+			# past 2^31, so a decoder that read it into a signed
+			# 32-bit field would come back negative.
+			# 2425392895 is past 2^31, so a decoder that read it
+			# into a signed 32-bit field would come back
+			# negative. %bd and not %d: an int is 64 bits at
+			# runtime here but %d formats the LOW 32, which
+			# printed this correct value as -1869574401 and made
+			# a passing check read as a failing one.
+			report(b.rgba > 2147483647,
+				sys->sprint("rgba survives above 2^31: %bd",
+					big b.rgba));
+		}
+
+		# A label exercises the two quoted strings, and the text has
+		# a SPACE in it, which an unquoted rest-of-line field would
+		# decode as two more numbers.
+		#
+		# A LEADING quote and no closing one: in Tk's own quoting a
+		# `\'' means the rest of the line is the string, so
+		# `-text \'two words\'' sets the text to "two words'" with
+		# the second quote in it. That is the convention every
+		# caller in this tree uses (appl/wm/logon.b, pen.b, ...) and
+		# it cost this check its first run.
+		paint(disp, "recorded label", list of {
+			"label .w -text 'two words", "pack .w"});
+		(lnodes, lerr) := tknode->decode(
+			tk->cmd(tk->toplevel(disp, ""), "render tree"));
+		report(lerr == nil, sys->sprint("a label's tree decodes: %s", errstr(lerr)));
+		gl := -1;
+		for(i = 0; i < len lnodes; i++)
+			if(lnodes[i].name() == "glyphs")
+				gl = i;
+		if(gl < 0)
+			report(0, "a label emits a glyph run");
+		else{
+			report(lnodes[gl].text == "two words",
+				sys->sprint("the glyph run's text survives a space: `%s'",
+					lnodes[gl].text));
+			report(lnodes[gl].fontname != "",
+				sys->sprint("and names a face: `%s'",
+					lnodes[gl].fontname));
+		}
+
+		# A checkbutton's tick is the one spline in the flat style,
+		# so it is the only fixture with points to decode.
+		tk->cmd(tk->toplevel(disp, ""), "render scaled 1");
+		paint(disp, "recorded checkbutton", list of {
+			"checkbutton .w -text x", "pack .w", ".w select"});
+		(cnodes, cerr) := tknode->decode(
+			tk->cmd(tk->toplevel(disp, ""), "render tree"));
+		report(cerr == nil, sys->sprint("a checkbutton's tree decodes: %s", errstr(cerr)));
+		sp := -1;
+		for(i = 0; i < len cnodes; i++)
+			if(cnodes[i].name() == "spline")
+				sp = i;
+		if(sp < 0)
+			report(0, "a selected checkbutton emits a spline");
+		else
+			report(len cnodes[sp].pts > 0,
+				sys->sprint("the spline's %d points decode, first (%d,%d)",
+					len cnodes[sp].pts,
+					cnodes[sp].pts[0].x, cnodes[sp].pts[0].y));
+
+		# And off again. An empty answer here is the only thing that
+		# distinguishes recording from a dump that was never cleared.
+		tk->cmd(tk->toplevel(disp, ""), "render record 0");
+		paint(disp, "not recorded", scaleframe);
+		report(tk->cmd(tk->toplevel(disp, ""), "render tree") == "",
+			"render record 0 stops recording and drops the tree");
+	}
 
 	smenu := paintmenu(disp, 1);
 	if(dmenu != nil && smenu != nil){
