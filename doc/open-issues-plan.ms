@@ -2957,7 +2957,7 @@ could not keep the pool down.  At the moment of failure the live set really was
 that large.  So the out-of-memory is
 .I retention ,
 not allocation rate, and the 40 per cent cut in rate
-.CW ( 3d09ea990 )
+.CW 3d09ea990 ) (
 does not address it \(em which is exactly why the fill arm still fails while the
 rate numbers improved.
 .PP
@@ -2975,7 +2975,7 @@ orders of magnitude unaccounted for.
 Not
 .CW nalloc
 per operation, which measures rate.  Live blocks
-.CW ( nalloc-nfree )
+.CW nalloc-nfree ) (
 sampled per
 .I created file ,
 against a control that creates nothing, with the +-170 noise band from E2 in
@@ -3054,7 +3054,7 @@ sent this investigation looking for a leak that does not exist \(em twice.
 .B "And the collector was being asked, and not answering."
 From
 .CW /dev/memgc
-.CW ( "bind '#%' /dev" ,
+.CW "bind '#%' /dev" , (
 which is where the counters live \(em there is no
 .CW /dev/memheap
 in this emu):
@@ -3661,7 +3661,7 @@ checks nothing.
 So
 .CW drawink (1)
 was written to close that gap
-.CW ( 6fbfd2b9a ,
+.CW 6fbfd2b9a , (
 .CW 39123e35f ):
 it draws geometry of known size and colour into the screen image and reads it
 back
@@ -4011,7 +4011,7 @@ The suite's own comment proposes it: "twenty-one mkefs-mount-write-efsck cycles
 in ONE shell process accumulate, and on a board memory is the constraint that
 bites".  Between the LAST TWO of the suite's five heap prints the heap moves
 7KB and live allocations
-.CW ( nalloc-nfree )
+.CW nalloc-nfree ) (
 go from 6785 to 6861 \(em 76 objects.  That is the end of the run only,
 because those were the two lines a truncated capture showed, and
 .CW 09f679c25 's
@@ -4057,7 +4057,7 @@ was open because nobody had asked the hardware.
 Mailbox tag 0x0004800e, waited on eight times from the board's
 .CW screenstats()
 hook
-.CW ( c942709ef ):
+.CW c942709ef ): (
 .P1
 SCREEN vsync errors 0 gaps(us)
     8612 16664 16665 16667 16665 16666 16668 16665
@@ -4317,7 +4317,7 @@ the next batch stands anyway \(em nothing heavy on this host while one runs.
 .PP
 .B "The board is WEDGED, not reset."
 Its build stamp reads correctly over JTAG
-.CW ( 1790998142 ,
+.CW 1790998142 , (
 the installed build) so kernel memory is readable and no reboot happened, and
 yet the command poller does not answer.
 .PP
@@ -4465,7 +4465,7 @@ whenever a unit has no media, and a cardless unit never acquires any, so every
 directory read of
 .CW /dev
 re-probes it.  Second, the board's config has all four drivers
-.CW ( sdemmcbcm ,
+.CW sdemmcbcm , (
 .CW sdhostbcm ,
 .CW sdhcibcm ,
 .CW sdmem ),
@@ -5057,7 +5057,7 @@ four times and a data symbol in it.
 .PP
 .B "The next fact needed"
 is the per-processor census the watchdog now prints from inside the wedge
-.CW ( 3810cbdc2 ):
+.CW 3810cbdc2 ): (
 whether any processor has the holder as its current process.  On a queue with
 four cores idle is a lost wakeup in
 .CW ready() /
@@ -5259,11 +5259,83 @@ is a design property, not a bug, and bounding it is its own piece of work.
 .PP
 .B "NOT installed with the I-cache fix, deliberately."
 Two changes and one batch makes a clean result unattributable to either.  The
-batch running now scores WEDGES against
+batch scored WEDGES against
 .CW b461ec5f1
-alone; the guard goes in afterwards, with
+alone; the guard went in afterwards, with
 .CW gcbroken
 as its own acceptance number.
+.PP
+.B "RESOLVED since, and the acceptance number came back 0 \(em but not for the reason this section expected."
+The guard is in
+.CW 6c587face , (
+two compares, always on, counting into
+.CW gcbadptr ),
+and
+.B "it has never rejected a single word."
+So the damaged chains were not an implausible pointer reaching
+.CW Setmark()
+at all.  They were the incremental sweep's own cursor:
+.CW gcsweep
+keeps
+.CW ptr
+across
+.CW rungc()
+calls, and a mutator free whose coalesce swallows the block at
+.CW ptr
+zeroes that block's magic, so the next resume fails the chain check and
+abandons the sweep
+.CW 708dbfb5f , (
+17 breaks against 17 such resumes in one run, 12 against 12 in the next).
+.PP
+The fix is two assignments that are
+.I upstream's ,
+not an invention here \(em
+.CW os/port/alloc.c
+has had them since the 20060303 import and
+.CW emu/port/alloc.c
+still does.  This kernel's copy arrived in a 9front-derived port with them
+commented out, which made sense there because that kernel had no
+.CW libinterp
+for the extern to resolve against;
+.CW libinterp
+came later and nobody turned them back on, so the native collector had been
+sweeping without them while emu's had them
+.CW f15f5ff51 ). (
+Measured on one board, one workload, one variable:
+.P1
+                               fixup OFF        fixup ON
+                              run 1  run 2
+gc sweeps                     79660  81090        79106
+chains found BROKEN              17     12            0
+resumed stale and BROKE          17     12            0
+resumed stale, passed okbhdr      3      2            0
+mutator swallows                 30     16           53
+mutator swallows REPAIRED         -      -           53
+markheap bad pointers rejected    0      0            0
+.P2
+.CW tests/efs-fault
+21 ok 0 fail in all three.
+.PP
+.B "What that leaves, and it is the honest residue."
+The
+.CW markheap()
+hazard is real as described and the guard is right to be there, but it is
+.I unexercised
+on this board \(em so nothing here establishes that the unvalidated write ever
+happened, and the comment's population of 0, 0x18 and 0x80 came from a
+different instrument. A guard that has never fired is a guard, not evidence.
+And the
+.B slowness
+is untouched: the sweep is bounded by
+.CW Quanta
+and
+.CW MaxQuanta ,
+the ROOT WALK is not, and
+.CW rootset()
+still calls
+.CW markheap()
+on every live process's every stack frame every pass.  That is the open piece,
+it is a design property rather than a defect, and bounding it is its own work.
 .NH 2
 H1a correction.  "The expensive case needs no copy" assumed the wrong frame
 .LP
@@ -6210,7 +6282,7 @@ draw3d go through other paths.
 called from devdraw's
 .CW drawpresent()
 through a function POINTER
-.CW ( screenpresent ,
+.CW screenpresent , (
 nil by default, so no board needs a stub \(em the same shape as emu's
 .CW gpudrawflush ):
 .P1
@@ -6818,7 +6890,7 @@ H4.  getcallerpc() is declared 32-bit and implemented 64-bit, and pc64 already h
 A broad
 .CW kaudit
 sweep
-.CW ( PAT=warning )
+.CW PAT=warning ) (
 gives 19 of 110 files, and almost all of it is one message:
 .CW "format mismatch #p ULONG" ,
 concentrated in
@@ -7223,7 +7295,7 @@ SCREEN flip 15 failed 0 repair 9117124 bytes in 13 rects eager-repairs 9
 DRAW ops 15 full 13 partial 2 partial-in-stale 2
 .P2
 Fifteen flips, zero failures.  The mailbox virtual-offset flip
-.CW ( mboxvirtoffset ,
+.CW mboxvirtoffset , (
 tag 0x00048009) works on real hardware, and the output is pixel-identical to the
 single-buffered path.
 .PP
@@ -7336,7 +7408,7 @@ A diagnostic that does not exist (kencc never prints
 One that exists but is not consulted (kmesg's missing stamp check).
 .IP \(bu
 One that exists, is consulted, and was deliberately silenced
-.CW ( -Wno-implicit-function-declaration ).
+.CW -Wno-implicit-function-declaration ). (
 .IP \(bu
 And this: a CONTROL that perturbs something other than the mechanism under
 test.  The check was fine, the switch was in the wrong path, and a PASS was the
@@ -7428,7 +7500,7 @@ under a client that neither reads back nor masks \(em which would make the
 dormancy measured rather than argued.
 .CW wm/gfxstress
 is in this tree with the phases that matter
-.CW ( alpha ,
+.CW alpha , (
 and
 .CW mask
 which is GREY8), so the FIRING case is runnable on the board;
@@ -7705,7 +7777,7 @@ A peer checking the claim "the inflation CAUSES the saving" rather than adopting
 it found an error in their own table:
 .CW gfxstress
 reshapes its window to 800x600
-.CW ( gfxstress.b:55 )
+.CW gfxstress.b:55 ) (
 and all its damage is inside that window, so dividing by a 1024x768 SCREEN gave
 57 per cent where the window gives 93.6 per cent.
 .PP
@@ -7924,7 +7996,7 @@ silently skipped ALL of them and left the tool reporting ticks from an address
 nothing had vouched for.
 .B "A check that can be skipped is not a check."
 Now fatal
-.CW ( 5578c0c42 ),
+.CW 5578c0c42 ), (
 with the refusal path LABELLED UNTESTED because every real kernel here carries
 both
 .CW mach0
@@ -7958,7 +8030,7 @@ one that exists but is not consulted
 had no stamp check);
 .IP \(bu
 one deliberately silenced
-.CW ( -Wno-implicit-function-declaration );
+.CW -Wno-implicit-function-declaration ); (
 .IP \(bu
 one that exists, is consulted, and can be conditionally SKIPPED.
 .PP
@@ -8479,19 +8551,19 @@ Two-tenths of one per cent to eighty-five, a span of four hundred times.
 is a property of the client's REPAINT PATTERN and nothing else:
 .IP \(bu
 a small object moving continuously barely intersects its own previous damage
-.CW ( bounce ,
+.CW bounce , (
 0.20 per cent);
 .IP \(bu
 a face redrawn in place repeats about half of it
-.CW ( clock ,
+.CW clock , (
 50.43);
 .IP \(bu
 window churn makes nested growing rectangles that mostly contain each other
-.CW ( wmtest ,
+.CW wmtest , (
 84.94);
 .IP \(bu
 and scattered disjoint fills make bounding boxes that nearly coincide
-.CW ( "gfxstress fill" ,
+.CW "gfxstress fill" , (
 99.44).
 .PP
 Four points across 0.2 to 99.4 per cent, with a mechanism for each.  That is a
@@ -9308,7 +9380,7 @@ That much is solid and reproduces across an order of magnitude in rate.
 But the walk model predicts the wrong thing for both, in opposite directions
 .LP
 Simulating the deterministic walk at each workload's measured advance
-.CW ( T/P ,
+.CW T/P , (
 averaged over 64 starting phases):
 .P1
 workload   advance    walk chi2    observed    random
@@ -9670,7 +9742,7 @@ SOLVED: byteaddr() widened two 32-bit offsets without their sign, and a thick el
 .LP
 .CW "wm/gfxstress ellipse"
 panicked this kernel on any thick ellipse, from ordinary Limbo
-.CW ( "img.ellipse(p, a, b, 2, green, ZP)" ),
+.CW "img.ellipse(p, a, b, 2, green, ZP)" ), (
 and the fault was
 .B "two separate dropped sign-extensions in the same function."
 Both are fixed and the board runs all fourteen
@@ -9878,7 +9950,7 @@ exactly that.  So the check is the bytes of
 .CW byteaddr
 decoded out of
 .CW iraspi3b
-.CW ( 0xe7c24..0xe7cf8 ,
+.CW 0xe7c24..0xe7cf8 , (
 53 words):
 .P1
 SDIVW 3   MULW/MADDW 2   SXTW 12   UMULL 0
@@ -10496,7 +10568,7 @@ FIXED, and the formerly-panicking build now boots
 .LP
 A peer took the fix in
 .CW utils/7l/span.c
-.CW ( b42059ba9 ,
+.CW b42059ba9 , (
 cherry-picked here): defer the forced pool flush past the end of a
 .CW BCASE
 run, with a lookahead on
@@ -11121,7 +11193,7 @@ root section contains
 .P2
 \(em a BARE MOUNT POINT, an empty directory with nothing bound into it.  The
 files are in the worktree
-.CW ( icons/tk/exit.bit ,
+.CW icons/tk/exit.bit , (
 .CW icons/tk/help.bit ,
 .CW icons/charon/edit.bit ,
 222, 219 and 239 bytes) and the styx export is
@@ -11232,7 +11304,7 @@ fixes the cursor up:
 has had both LIVE since the
 .CW 20060303
 import
-.CW ( 74a4d8c26 )
+.CW 74a4d8c26 ) (
 and
 .CW emu/port/alloc.c:455
 still does.
@@ -11454,7 +11526,7 @@ and
 .CW asmout.c 's
 .CW omovlit()
 picks the load width from exactly that field
-.CW ( "if(p->cond->as == ADWORD) w = 1" ).
+.CW "if(p->cond->as == ADWORD) w = 1" ). (
 .CW optab.c
 gives
 .CW LFROM
@@ -11944,7 +12016,7 @@ extension.  So
 .B "excluding TLONG \(em the obvious reading of the panic \(em would have been both wrong and incomplete."
 .CW 7c
 reserves R31
-.CW ( "reg[REGSP] = 1" ),
+.CW "reg[REGSP] = 1" ), (
 so it never allocates it for a value and a register-31 source is SP or ZR.
 .PP
 .B "The mistyped node is a real latent defect, left in place and written down:"
@@ -12107,7 +12179,7 @@ plan exists to close.
 .PP
 .B "The widening (A7): 6c is the model, and already correct."
 The same three shapes
-.CW ( "b + n" ,
+.CW "b + n" , (
 .CW "b + x*y" ,
 .CW "b + (s32)v" )
 all get an explicit sign extension:
@@ -12639,7 +12711,7 @@ The board has TWO addresses and the session rides the dead one
 The ring's only DHCP line is
 .CW ip=192.168.8.210 ,
 which is the wifi
-.CW ( #l0 ).
+.CW #l0 ). (
 .CW .105
 is the other interface, and
 .CW os/inferno/init/raspi3binit.b:1417
@@ -12724,7 +12796,7 @@ The sweep-cursor fixup is still commented out in NINE other worktrees
 .LP
 A peer verified the finding in their own tree rather than taking it, at exact
 line numbers
-.CW ( os/inferno/port/alloc.c:672-673 ,
+.CW os/inferno/port/alloc.c:672-673 , (
 .CW 682-683 ,
 the extern at
 .CW 646 ,
@@ -13094,7 +13166,7 @@ the only reason it bit here and not there.
 because it has no averaging to hide a bad member: it reports whatever is most
 broken rather than what is most typical.  A mean over the same set would have
 shrugged that file off entirely.  So an extremum needs a sanity bound
-.CW ( "$1 <= now" )
+.CW "$1 <= now" ) (
 in a way a mean does not.
 .PP
 The rules, in the order they are cheapest to apply:
@@ -13153,7 +13225,7 @@ or
 .B "Both are VALID headers, so okbhdr() passes."
 But they are in whatever arena the freed block lives in, and the sweep walks
 ONE arena at a time
-.CW ( "base = base->clink" ).
+.CW "base = base->clink" ). (
 Checked rather than assumed: this board's heap pool reports
 .CW "nbrk 6" ,
 so it has grown six arenas.
@@ -13257,7 +13329,7 @@ the commit saying why one without the other would be wrong.
 .PP
 .B "And the fault is now corroborated in the way a relayed copy is not."
 A third session, different platform
-.CW ( pc64 ),
+.CW pc64 ), (
 different boot path, reports the same signature and the same asymmetry against
 its control:
 .P1
