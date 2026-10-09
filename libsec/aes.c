@@ -31,6 +31,30 @@
 #include "os.h"
 #include <libsec.h>
 
+/*
+ * THE TABLES COST FLASH AND NOT SRAM.
+ *
+ * Te0..Te3 and Td0..Td3 are 1024 bytes each, Td4 is 256, Te4 is 256
+ * and rcon is 40: about 8.6K of initialised data.  On a part that runs
+ * its text from flash and copies its whole data segment into RAM at
+ * boot -- os/inferno/armv7m/l.s does exactly that -- every byte is
+ * charged twice, and the SRAM half is charged whether or not anything
+ * ever asks for AES.
+ *
+ * On os/inferno/stm32f407 nothing does.  The kernel links this file
+ * because registering $Keyring brings in libinterp/keyring.c, whose
+ * Keyring_aessetup calls setupAESstate; the station uses sha/rc4_256
+ * and never calls it.  Measured on the keyring kernel: datsize 31720
+ * before and 22904 after, and conf.base0 is PGROUND(end), so the
+ * core xalloc gets goes from 147456 to 155648 bytes -- two pages.
+ *
+ * They are never written: the key schedule the setup routines fill in
+ * lives in AESstate, not here.  That is what the pragma asserts and
+ * the compiler cannot check.  blowfish.c and des.c already do this
+ * for their own tables; see doc/xip.ms.
+ */
+#pragma rodata Te0 Te1 Te2 Te3 Te4 Td0 Td1 Td2 Td3 Td4 rcon
+
 typedef uchar	u8;
 typedef u32int	u32;
 #define FULL_UNROLL

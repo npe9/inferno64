@@ -317,7 +317,13 @@ static u32int pbox[BFrounds+2] = {
 	0x9216d5d9, 0x8979fb1b
 };
 
-#pragma rodata sbox		/* never written: see doc/xip.ms */
+#pragma rodata sbox pbox	/* never written: see doc/xip.ms */
+/*
+ * pbox was left out and is the same case as sbox: setupBFstate
+ * memmoves both into the per-key BFstate and modifies s->pbox and
+ * s->sbox there.  72 bytes, but the asymmetry invites the next
+ * reader to assume one of them is written.
+ */
 
 static u32int sbox[1024] = {
 	0xd1310ba6L, 0x98dfb5acL, 0x2ffd72dbL, 0xd01adfb7L, 

@@ -4360,3 +4360,86 @@ Also pre-existing:
 does not exist in
 .CW raspi3b-port
 either.
+.NH 1
+And the libraries' own tables: AES was costing SRAM on every keyring kernel
+.PP
+.CW "#pragma rodata"
+had been applied where this document was written \-
+.CW blowfish.c 's
+.CW sbox ,
+.CW des.c 's
+.CW spbox ,
+.CW smallprimes
+\- and not to the largest set of tables in
+.BR libsec .
+.CW aes.c
+carries
+.CW Te0 .. Te3
+and
+.CW Td0 .. Td3
+at 1024 bytes each, plus
+.CW Te4 ,
+.CW Td4
+and
+.CW rcon :
+about 8.6K of initialised data, charged to flash
+.I and
+to SRAM because
+.B os/inferno/armv7m/l.s
+copies the whole data segment down at boot.
+.PP
+.B "Nothing on os/inferno/stm32f407 asks for AES."
+The kernel links the file because registering
+.CW $Keyring
+brings in
+.BR libinterp/keyring.c ,
+whose
+.CW Keyring_aessetup
+calls
+.CW setupAESstate ;
+the station pushes
+.B sha/rc4_256
+and never calls it.  The whole 1024-byte
+.CW Te0
+table is at offset 0x80248 of the kernel that registers the module and
+absent from the one that does not.
+.PP
+Marking them, and
+.CW blowfish.c 's
+.CW pbox
+which had been left out beside its own
+.CW sbox ,
+on the
+.CW stm32f407auth
+kernel:
+.DS
+.CW "                   datsize   conf.base0   core to xalloc"
+.CW "before               31720   0x2000c000           147456"
+.CW "after                22904   0x2000a000           155648"
+.DE
+.PP
+.CW conf.base0
+is
+.CW PGROUND(end)
+\- os/inferno/armv7m/main.c \- so the saving arrives as whole pages:
+8816 bytes of data moved to text and two pages, 8192 bytes, reached the
+allocator.
+.B "That is 5.6% of this part's entire memory, for tables it never reads."
+.PP
+.B "A trap worth recording, because it cost an hour."
+The first reading said the change did nothing: the boot line still said
+.CW "155648 bytes free"
+and the stack array had moved 64 bytes.  Both were true and neither was
+the control \- the
+.B Inferno/thumb/lib/libsec.a
+in the tree was
+.I stale
+against its own sources, and a clean rebuild of them is 8192 bytes
+worse than the prebuilt archive, which is where the 155648 had come
+from in the first place.  Rebuilding the library is part of taking the
+measurement, and
+.CW "tl -c" 's
+.CW textsize
+and
+.CW datsize
+are the numbers to read rather than any address in the boot output.

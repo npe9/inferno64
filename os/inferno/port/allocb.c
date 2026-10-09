@@ -96,6 +96,54 @@ showblockheader(Block *b, intptr pc, char *str)
 			b->rp, b->wp, getmalloctag(b));
 }
 
+/*
+ * WHAT SIZE WAS ASKED FOR, when one cannot be had.
+ *
+ * "no free Blocks" said a Block could not be got and never said how
+ * big.  os/inferno/stm32f407's archconfinit note records why that
+ * mattered: main had 39516 bytes FREE at the moment one failed, so the
+ * fault was a shortage of a CONTIGUOUS run and not of pool -- and a
+ * pipe queue limit, which is what was tried, does not change that.
+ * The note's own next step was "find what size block is being asked
+ * for rather than make the queues smaller".  This is that.
+ *
+ * Both sizes, because they differ: _allocb asks mallocz for
+ * sizeof(Block)+size+Hdrspc+(BY2V-1), so the run the pool has to find
+ * is bigger than the caller's size, and a reader matching this against
+ * #c/poolhist needs the one the pool saw.
+ *
+ * The LARGEST failing request is kept, not just the latest: the
+ * biggest is the one that says how long a run is needed, and the
+ * latest is whichever retry happened to land last.
+ *
+ * Rate limited for the reason exhausted() is -- every caller retries,
+ * and an unbounded print on this path took a board from out of Blocks
+ * to a lockup with SP off the end of SRAM.
+ */
+static void
+allocbfailed(int size)
+{
+	static ulong lastprint, nsupp;
+	static int worst, seen;
+	ulong now;
+
+	if(size > worst)
+		worst = size;
+	now = MACHP(0)->ticks;
+	if(!seen || (long)(now - lastprint) >= HZ){
+		print("allocb failed: want %d, pool asked for %ud,"
+			" worst %d so far", size,
+			(uint)(sizeof(Block)+size+Hdrspc+(BY2V-1)), worst);
+		if(nsupp != 0)
+			print(", %lud more suppressed", nsupp);
+		print("\n");
+		seen = 1;
+		lastprint = now;
+		nsupp = 0;
+	} else
+		nsupp++;
+}
+
 Block*
 allocb(int size)
 {
@@ -104,8 +152,10 @@ allocb(int size)
 	if(0 && up == nil)
 		panic("allocb outside process: %8.8zux", getcallerpc(&size));
 	b = _allocb(size);
-	if(b == 0)
+	if(b == 0){
+		allocbfailed(size);
 		exhausted("Blocks");
+	}
 	setmalloctag(b, getcallerpc(&size));
 	/* showblockheader(b, getcallerpc(&size), "allocb()"); */
 	return b;
