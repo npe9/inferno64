@@ -9431,9 +9431,8 @@ is a fault
 .I stacking
 the exception frame, and
 .B "magic PC fffffff9"
-is a return to thread mode on MSP \- so ordinary thread code had already
-walked SP down to 0x20000000 and the next interrupt could not push its
-frame.  Everything after it is consequence: three more Data Aborts at
+is a return to thread mode on MSP \- so SP was already below the bottom
+of SRAM when the next interrupt tried to push its frame.  Everything after it is consequence: three more Data Aborts at
 0x1fffff88 and 0x1fffff18, each escalating, until
 .CW "Lockup: can't escalate 3 to HardFault" .
 .B "Nothing faults before it."
@@ -9484,11 +9483,33 @@ change
 here: 11 process stacks of 4096 is 45056 bytes already, and 8192 would
 be 90112, the whole of the SRAM region the pools live in.
 .PP
-.B "What is NOT claimed:"
-what consumed the stack.  The log says the overflow happened and says
-nothing about what recursed or what frame was large, and 28 to 31
-kilobytes is far more than one deep call \- so this names the fatal
-mechanism and not yet its cause.  Also not claimed: that silicon dies
+.B "What is NOT claimed, and the first draft of this section claimed it:"
+that SP got there by growing.  The three fault addresses descend by
+about 0x68 each, which is one exception frame, so they are three nested
+.I entry
+attempts after SP was already bad \- they are not evidence of what
+happened before the first one.  SP reaching 0x1fffffec from an initial
+0x20007a14 is 31 kilobytes, far more than one deep call, so growth
+would mean recursion; but a single clobbered SP fits the same log
+exactly, and nothing here separates the two.
+.PP
+.B "That is settleable and the instrument for it does not exist yet."
+.B KSTACKWATCH
+fills each
+.I process
+stack with 0xbe in
+.IR newproc ()
+and
+.IR kstackused ()
+reads back how far the pattern has been eaten \- which is where the
+3988-of-4096 figure comes from.  Nothing does that for MSP, the boot
+and interrupt stack, which is the one the fault reports.  Painting that
+region at boot and reading its low water in the arm that PASSES would
+say whether the stack grows anywhere near 0x20000000 in normal
+operation: if it does, this is growth, and if MSP barely moves, SP was
+clobbered and the overflow framing is wrong.
+.PP
+Also not claimed: what consumed the stack, if it was consumed.  Also not claimed: that silicon dies
 the same way.  The board's own
 .B "kstack high water 3908 of 4096"
 in the passing arm is consistent with it and is not the same evidence.
