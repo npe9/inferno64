@@ -3783,6 +3783,117 @@ and
 still cleans each dirty scanline to the point of coherency now that it has
 nothing to copy.  Both were in the patch; neither is owed.
 .NH 2
+H5.  FIXED, reported by a peer: every polygon and spline drew the wrong shape
+.LP
+.B Established,
+and not found here \(em
+.CW inferno-rio-71
+reported it and another tree had fixed the same four casts a week earlier.
+.CW libinterp/draw.c
+handed a Limbo array straight to C under a comment asserting the layouts
+matched:
+.P1
+/* sleazy: we know that Draw_Points have same shape as Points */
+fillpolyop(d, (Point*)f->p->data, f->p->len, ...)
+.P2
+They do not match, and the generated headers say so: a Limbo int is a
+.CW WORD ,
+which is
+.CW intptr ,
+so
+.CW libinterp/w8/runt.h
+gives
+.CW "Draw_Point_size 16"
+while the C
+.CW Point
+in
+.CW include/draw.h
+is two
+.CW s32
+and is 8.  Three points stored as the words 2 7 13 3 13 10 arrived as
+(2,0) (7,0) (13,0) \(em a triangle flattened onto one row.  Four sites, which
+is all of them:
+.CW Image.poly ,
+.CW Image.bezspline ,
+.CW Image.fillpoly ,
+.CW Image.fillbezspline .
+.CW DISWORD
+is 8 for this kernel and for the host emu, so both were affected for as long as
+the 64-bit port has existed; on a 32-bit build the cast is harmless, which is
+why the port inherited the bug rather than introducing it.
+.PP
+.B "The tree already contained its own refutation."
+.CW include/draw.h
+has the reinterpreting macros COMMENTED OUT and replaced with field-by-field
+conversions,
+.CW IPOINT(p)
+being
+.CW "((Point){(s32)((p).x),(s32)((p).y)})" .
+Somebody fixed the scalar path and left the four array casts with the comment
+that justified them still attached.
+.PP
+.B "Fixed in"
+.CW 900b75d6d
+with a
+.CW cvtpoints()
+converting through
+.CW IPOINT .
+It allocates, because the layouts are different sizes and there is nowhere in
+the Limbo array to put the narrower form.
+.PP
+.B "AND THE REASON IT SURVIVED IS THE PART TO KEEP: nothing compared a drawn shape against an oracle."
+.CW appl/cmd/polytest.b
+does, and the rule is that
+.I "every oracle comes from a different primitive"
+\(em
+.CW fillpoly
+of a rectangle against
+.CW draw()
+of that rectangle,
+.CW poly
+of one segment against
+.CW line()
+of it.
+.CW line()
+takes its points as scalars, through the path that was already correct, so the
+oracle cannot share the defect.  A test comparing one polygon against another
+would have passed throughout.
+.PP
+.B "Symmetry is the wrong property,"
+which the peer paid for first: a scanline fill includes one edge and excludes
+the other, so a mirrored point list draws a legitimately non-mirrored picture,
+about a pixel a row.  Translation invariance holds, and a garbled array cannot
+satisfy it because the garbling is not a translation.
+.PP
+.B "Measured on the board, both kernels, this file the only variable:"
+.P1
+                        card 1791512303   JTAG 1791547870
+fillpoly rect vs draw        0 vs 660        660 == 660
+poly segment vs line         1 vs 55          55 == 55
+triangle                     0 pixels         36, translation-invariant
+filled spline                0 pixels        932
+                          2 ok, 9 fail     11 ok, 0 fail
+.P2
+.CW bndstest
+11 ok 0 fail and
+.CW drawink
+all checks passed on the fixed kernel, so nothing else moved.
+.PP
+.B "A SEPARATE FINDING, OPEN: the host emu cannot validate draw work at all."
+An emu built from the tree now draws a 30x22 rectangle as TEN pixels \(em with
+the fix and with HEAD's
+.CW draw.c
+restored, identically, so it is not the fix \(em while the pre-existing emu
+binary, which predates the committed
+.CW libmemdraw
+AArch64 cast work, drew the correct 660.  The recently rebuilt
+.CW emu-cocoa
+is also wrong.  That localises a host-side regression to
+.CW libmemdraw
+and it is why the A/B above is on the board.  Reported, not diagnosed, and it
+matters beyond this item: any draw oracle taken under host emu right now is
+unreliable.
+.NH 2
 H1a.  OPEN.  It tears, and nothing here separates drawing from scanout
 .LP
 Stated plainly in the commit and in
