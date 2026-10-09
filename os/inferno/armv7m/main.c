@@ -270,6 +270,54 @@ mspspan(void)
 }
 
 
+/*
+ * HAS SP LEFT ITS STACK?  Asked once a tick, from clockintr, of the
+ * exception frame's own address -- which is on whatever stack was
+ * current when the exception was taken, so no register is needed.
+ *
+ * Why this exists.  os/inferno/stm32f407's keyring-plus-ssl arm dies
+ * with an exception-entry stacking fault at 0x1fffffec, the bottom of
+ * SRAM, with no fault before it and no allocation failure: SP was
+ * already outside any stack when the next interrupt tried to push its
+ * frame.  Three candidates were ruled out by measurement -- Blocks are
+ * not exhausted, the process stacks peak at 3804 to 3908 of 4096, and
+ * this array still had 2228 bytes untouched at the last sample -- and
+ * all three samples are taken from the IDLE hook, which a dying
+ * process outruns.  This is the same question asked somewhere the
+ * answer is still true.
+ *
+ * The boot stack sits at 0x200069ec with 27K of kernel data below it
+ * and no guard, so an overflow writes over that data silently and only
+ * faults on leaving SRAM.  A frame below the array but still in SRAM is
+ * that overflow, caught while SP is sane and the PC still means
+ * something.
+ *
+ * Once only, with iprint: the machine is usually dying by then and the
+ * console FIFO loses buffered prints before a panic.
+ */
+void
+stackcheck(void *frame)
+{
+	static int said;
+	uintptr a;
+
+	if(said || frame == nil)
+		return;
+	a = (uintptr)frame;
+	if(a >= (uintptr)stack && a < (uintptr)stack + KSTKSIZE)
+		return;			/* the boot and interrupt stack */
+	if(inkstack(a))
+		return;			/* some process's kernel stack */
+	said = 1;
+	iprint("STACK ESCAPED: frame %#p is in no stack;"
+		" boot %#p..%#p headroom %d",
+		frame, stack, stack + KSTKSIZE, mspheadroom());
+	if(up != nil)
+		iprint(", up pid %d %s kstack %#p", up->pid, up->text,
+			up->kstack);
+	iprint("\n");
+}
+
 void
 machinit(void)
 {

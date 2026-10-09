@@ -2256,6 +2256,37 @@ pidfree(Proc *p)
 	p->pid = p->noteid = p->parentpid = 0;
 }
 
+/*
+ * Is this address inside ANY process's kernel stack?
+ *
+ * For a caller that has an exception frame and wants to know whether SP
+ * was somewhere legitimate when the exception was taken.  Every proc
+ * and not just up: on a port where the kernel runs on one stack and
+ * switches SP to a proc's, an exception during a context switch is
+ * momentarily on neither the old nor the new one by the obvious test,
+ * and a diagnostic that cries wolf there is worse than none.
+ *
+ * procalloc is private to this file, which is why this lives here
+ * rather than beside the caller.
+ */
+int
+inkstack(uintptr a)
+{
+	Proc *p;
+	uintptr k;
+	int i;
+
+	for(i = 0; i < conf.nproc; i++){
+		p = &procalloc.arena[i];
+		if(p->kstack == nil)
+			continue;
+		k = (uintptr)p->kstack;
+		if(a >= k && a < k + KSTACK)
+			return 1;
+	}
+	return 0;
+}
+
 #ifdef KSTACKWATCH
 /*
  * How much of any proc's kernel stack has ever been written, counted

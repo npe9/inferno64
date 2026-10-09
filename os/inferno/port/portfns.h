@@ -169,6 +169,7 @@ void		kproc(char*, void(*)(void*), void*, int);
 void		kprocchild(Proc*, void (*)(void*), void*);
 void	(*kproftick)(ulong);
 void		ksetenv(char*, char*, int);
+int		inkstack(uintptr);
 void		kstrcpy(char*, char*, int);
 void		kstrdup(char**, char*);
 long		latin1(Rune*, int);

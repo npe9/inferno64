@@ -90,6 +90,9 @@ clockintr(Ureg *u)
 	if(kproftick != nil && u != nil)
 		kproftick((ulong)u->pc);
 
+	/* Has SP left its stack?  See stackcheck() in main.c. */
+	stackcheck(u);
+
 	checkalarms();
 	timercheck(u);
 

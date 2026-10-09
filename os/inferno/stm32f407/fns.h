@@ -19,6 +19,7 @@ uvlong	fastticks(uvlong*);
 int	mspheadroom(void);
 int	mspspan(void);
 void	mspwatchinit(void);
+void	stackcheck(void*);
 void	mspwatchreport(void);
 ulong	tk2ms(ulong);
 void	coherence(void);
