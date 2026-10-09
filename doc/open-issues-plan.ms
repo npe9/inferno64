@@ -5559,14 +5559,92 @@ markheap guard has still never rejected a word, and
 .CW ptr-repaired
 7 is the mutator swallows that would have been broken chains.
 .PP
-.B "What is still missing is one number, and it is now a short job rather than an open question."
-The fraction of wall time the token is held by the walk, under the LOADED
-condition that produced the 53-to-91-tick holds \(em epochs per second and max
-hold ticks read from the same
-.CW sched
-write while a suite is running.  Both terms come from one command, so this is a
-measurement and not a build.  Until it exists, "the root walk makes the board
-slow" has one term measured idle and neither measured under load.
+.NH 2
+H4 residue, ANSWERED: one hold every nine seconds under load, none at all idle
+.LP
+.B "RETRACT FIRST."
+The section above read
+.CW "idlegc 2412 max 5 ticks"
+out of
+.CW SCHED-COUNTS
+and concluded the 53-to-91-tick holds had not reproduced.  That was wrong.  They
+reproduce, they are in the ring as
+.CW VMHELD
+lines, and
+.CW idlegc
+counts a different event \(em an idle collection \(em so its maximum says
+nothing about them.  Reading one instrument and concluding about another is the
+same error this file records four other times.
+.PP
+.B "The right instrument, and why its printed lines are not the measurement."
+.CW os/inferno/raspi3b/clock.c
+reports a hold at
+.CW "Vmheldfloor = 50"
+ticks, so the printed distribution is
+.I truncated
+at 50 and cannot give a mean; and it prints only the first SIXTEEN, while
+.CW nvmheld
+counts them all.
+.CW tools/jtag/vmheld
+reads the counter over JTAG, which is what makes a rate possible.
+.PP
+.B "Measured by difference, bracketed, with an idle control \(em on the card-booted four-core kernel:"
+.P1
+idle,  243s:   41 ->  41 holds      0.000 /s     NONE
+loaded, 254s:  41 ->  68 holds      0.106 /s     one every 9s
+longest hold since boot: 121 ticks (1.21s); floor 50 ticks (0.50s)
+time with the token held: 13.5-32.7s of 254s = 5.3% to 12.9%
+.P2
+The load is
+.CW tests/efs-fault
+running on the board, 44 to 45 Dis processes against 36 idle.  The idle control
+is the half that matters: zero in four minutes means this is a property of the
+workload and not of the clock.
+.PP
+.B "So it is a LATENCY problem and not a throughput one,"
+which is the shape H4 could not see.  Five to thirteen per cent of wall time is
+not why a board fails to finish anything; a 1.21-second episode arriving every
+nine seconds, with no bound on how many a single request can meet, is.  And
+.CW vmheld
+reports
+.CW "bootwdog 0" ,
+which means
+.CW diswdog()
+never arms the hardware watchdog \(em so a hold that does not end has nothing
+behind it.
+.PP
+.B "AND THE HOLDS ARE NOT ALL THE ROOT WALK, which corrects the section above."
+Every
+.CW "last kernel pc"
+in thirteen reported holds, resolved against the running build's own symbol
+table:
+.P1
+markheap+0x4, +0x114, +0x124        the ROOT WALK
+rungc+0x274, +0x278, +0x27c,
+     +0x28c, +0x2bc                 the SWEEP
+okbhdr+0x14                         the sweep's header check
+cacheinval+0x8                      cache maintenance
+.P2
+So the sweep appears in the same hold distribution as the root walk.  Its
+.CW quanta
+bound is a bound on
+.I blocks ,
+not on time, and at
+.CW MaxQuanta
+750 blocks with
+.CW okbhdr()
+on each it lands in the same half-second class.  The earlier framing \(em the
+sweep is bounded, the root walk is not, therefore the holds are the root walk
+\(em was half right and the conclusion did not follow.
+.PP
+.B "What that leaves, stated as the next question rather than a plan:"
+bounding the root walk alone would not remove these episodes, because some of
+them are the sweep.  Anything built here has to bound BOTH, and the root walk
+still cannot be bounded without a snapshot or a write barrier for the reasons
+given above.  The cheap half is
+.CW bootwdog :
+a hold with no watchdog behind it is a separate and much smaller problem than
+the hold itself.
 .PP
 .B "One unexplained diagnostic appeared in the same window, recorded and not diagnosed:"
 .P1
