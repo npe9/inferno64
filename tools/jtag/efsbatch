@@ -41,6 +41,36 @@
 set -u
 HERE=`cd \`dirname "$0"\` && pwd`
 ROOT=`cd "$HERE/../.." && pwd`
+
+#
+# ONE OPERATOR ON THE COMMAND CHANNEL.
+#
+# This writes os/inferno/raspi3b/board.cmd, which is one file, one
+# command deep, with nothing in it recording whose command it holds.  A
+# second writer silently replaces the command another run is waiting
+# for, and the victim then reports a board that stopped answering -- a
+# sentence about the kernel describing a collision between two local
+# processes.  That happened: a boardrun of mine killed a kinstall that
+# way.  boardlock.sh was first given only to the tools that drive the
+# ADAPTER, which was the wrong line; what matters is who owns board.cmd.
+#
+# A run invoked BY a holder inherits the lock, so nesting still works.
+# The lock is taken BEFORE any cleanup handler is armed, because a
+# handler armed first fires on the refusal path and overwrites the
+# holder's command -- which is how the guard managed to commit the
+# collision it exists to prevent.
+#
+. "$HERE/boardlock.sh"
+boardlock efsbatch || {
+	echo "efsbatch: another board operation owns the command channel" >&2
+	exit 1
+}
+#
+# Released on every exit, and armed only now: boardunlock releases just
+# the lock, and only if this process is the holder, so it cannot take
+# the channel away from anyone.
+#
+trap 'boardunlock' EXIT INT TERM
 N=${N:-30}
 WAIT=${WAIT:-900}
 OUT=${OUT:-${TMPDIR:-/tmp}/efsbatch.$$}
