@@ -3,6 +3,7 @@
 int xtramodes(Reg*, Adr*);
 
 static int	extcopy(Reg*);
+static int	deadreload(Reg*);
 
 /*
  * peepgen -- a generation counter in place of clearing Reg.active.
@@ -93,6 +94,8 @@ loop1:
 		 * AArch64, so an int -1 became 0xffffffff downstream
 		 * (doc/inferno-ports.ms).
 		 */
+		if(deadreload(r))
+			t++;
 		if(p->as == AMOV || p->as == AFMOVS || p->as == AFMOVD
 		|| extcopy(r))
 		if(regtyp(&p->to)) {
@@ -467,6 +470,70 @@ sameext(Reg *r, Adr *src, int as)
 			&& q->from.type == D_REG;
 	}
 	return 0;
+}
+
+/*
+ * deadreload -- a store to a stack slot immediately followed by a load of
+ * that same slot back into the SAME register.  The register already holds
+ * the value, so the load is dead.
+ *
+ * 155 of these reach the shipping raspi3b kernel, counted in the linked
+ * image rather than in a listing: adjacent STR/LDR with identical Rt, Rn and
+ * imm12 and Rn == SP.  The mask scores zero on a random-bytes control.
+ *
+ * TWO RESTRICTIONS, and both are the difference between 155 and 225.
+ *
+ * ONLY AMOV, never AMOVW and friends.  A narrow load re-extends: `MOVW
+ * slot,R0' sign-extends the 32 bits it read, so even though the value round
+ * trips, deleting the load loses an extension the register may need -- the
+ * same hazard as the width-aware propagation above, and 31 of the 225 are
+ * this shape.
+ *
+ * ONLY D_AUTO, a local's own frame slot.  The other 39 of the 225 use a
+ * general register, which may address anything, including a device: deleting
+ * a load from MMIO changes what the program does.  kencc has no volatile
+ * tracking in peep, so the only base safe by construction is the frame.
+ *
+ * Note the representation, which cost a build to learn: a stack slot is
+ * D_OREG with name D_AUTO and reg == NREG -- the SP is implied and the
+ * loader supplies it.  A first version tested `to.reg == REGSP' and matched
+ * nothing at all, firing zero times on a full kernel while the linked image
+ * still held all 155 pairs.
+ *
+ * The pair must be adjacent on a single edge in both directions -- uniqs
+ * from the store and uniqp back to it -- so no other path reaches the load
+ * and nothing can run between them.
+ */
+static int
+deadreload(Reg *r)
+{
+	Reg *r1;
+	Prog *p, *p1;
+
+	p = r->prog;
+	if(p->as != AMOV)
+		return 0;
+	if(p->from.type != D_REG)
+		return 0;
+	if(p->to.type != D_OREG || p->to.name != D_AUTO || p->to.reg != NREG)
+		return 0;
+	r1 = uniqs(r);
+	if(r1 == R || uniqp(r1) != r)
+		return 0;
+	p1 = r1->prog;
+	if(p1->as != AMOV)
+		return 0;
+	if(p1->to.type != D_REG || p1->to.reg != p->from.reg)
+		return 0;
+	if(p1->from.type != D_OREG || p1->from.name != D_AUTO
+	|| p1->from.reg != p->to.reg)
+		return 0;
+	if(p1->from.offset != p->to.offset)
+		return 0;
+	if(p1->from.sym != p->to.sym || p1->from.name != p->to.name)
+		return 0;
+	excise(r1);
+	return 1;
 }
 
 static int

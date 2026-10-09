@@ -898,7 +898,7 @@ The tradespace
 duplicate RETURN       77   0.57       1  none    HIGH   NO, see below
 shift fold (shiftprop)164   1.21     ~30  flow    med    DONE, ported
 branch to next instr  153   1.13      ~8  none    low    LISTING only
-adjacent spill/reload  69   0.51      ~8  none    low    marginal
+adjacent spill/reload 107   0.79     ~30  flow    low    DONE, 108 instrs
 width-aware copyprop   5231  38.66     ~55  flow    HIGH   bndstest ok
 MUL+ADD -> MADD        18   0.13     ~20  flow    med    NO -- too rare
 extension pair         14   0.10       1  none    med    DONE (see below)
@@ -1519,6 +1519,98 @@ standing \(em the
 that printed the listing is the only reason it was seen at all, and the same
 selftest is why it did not become a correction to the 6c number that did not
 need correcting.
+.NH 2
+The spill/reload row: 69 was a listing count and the answer is 108
+.LP
+The table's last unmeasured row said
+.B "69 sites, 0.51 per 1000, marginal"
+\(em and 69 came from a listing, which is the mistake the duplicate-RETURN row
+turned out to be.
+.B "Measured in the linked kernel instead:"
+adjacent
+.CW "STR / LDR"
+with identical Rt, Rn and imm12, a mask that scores
+.B zero
+on a random-bytes control.
+.P1
+adjacent store/reload, same slot, same register, shipping kernel
+
+  64-bit, base SP      155   SAFE: no extension to lose
+  32-bit, base SP       31   UNSAFE: the reload re-extends
+  64-bit, base != SP    29   excluded: base could address anything
+  32-bit, base != SP    10   excluded, both reasons
+.P2
+.LP
+.B "Two restrictions, and they are the difference between 155 and 225."
+A narrow reload
+.I re-extends :
+.CW "MOVW slot,R0"
+sign-extends the 32 bits it read, so although the value round-trips, deleting
+the load loses an extension the register may need \(em
+.B "the same hazard as the width-aware pass above,"
+and 41 of the 225 are that shape.  And only a
+.CW D_AUTO
+frame slot is safe as a base: the other 39 use a general register, which may
+address a device, and
+.CW peep
+has no volatile tracking.
+.LP
+.B "Implemented in about 30 lines, and it removes 108 instructions."
+.CW iraspi3b
+3332333 to 3331899 bytes, which is 434, which is 108 instructions; the 64-bit
+SP pairs fall 155 to 48 while
+.B "the 31 unsafe 32-bit pairs are untouched,"
+which is the guard doing its job and is worth more than the 108.
+.LP
+.B "A first version matched NOTHING, and the reason is a representation I"
+.B "guessed instead of reading."
+It tested
+.CW "to.reg == REGSP" .
+A stack slot is
+.CW D_OREG
+with
+.CW "name == D_AUTO"
+and
+.CW "reg == NREG"
+\(em the SP is implied and the loader supplies it, which
+.CW list.c
+shows by printing
+.CW "%s-%lld(SP)"
+from the
+.CW D_AUTO
+arm with no register at all.  The pass fired zero times across a full kernel
+build and the image still held all 155 pairs.
+.B "A peephole that matches nothing is indistinguishable from one that is"
+.B "switched off,"
+and only the before/after image count said which.
+.NH 2
+And 155 was itself an over-count, by 47
+.LP
+Completing the enumeration rather than assuming the residue:
+.P1
+after the pass, adjacent same-slot same-register pairs in 7c's output
+
+  kernel's 152 sources    0 safe (26 remain, all narrow: 12 MOVW 8 MOVWU 6 MOVHU)
+  270 library sources     1 safe (16 remain, 14 MOVW + 1 MOVWU + 1 MOV)
+  linked image           48
+.P2
+.LP
+.B "So 47 of the 48 residual pairs were never the compiler's pattern at all."
+.B "Byte-adjacency in a linked image is not adjacency in the IR:"
+the mask cannot tell a spill followed by its reload from two unrelated
+instructions the loader happened to place in sequence touching the same slot.
+The kernel also has five hand-written assembly files, which
+.CW 7c
+never sees.
+.LP
+.B "Which makes 155 an upper bound and 107 the population,"
+and the two reconcile exactly: 107 pairs removed, 108 instructions by the
+mask-free byte count, one safe pair left in a library that fails the adjacency
+guard.
+.B "A mask over a linked image answers how many LOOK like this and not how"
+.B "many ARE this,"
+which is the third time in this document that an image count and a compiler
+count have had to be reconciled rather than compared.
 .NH 1
 Making the compiler itself faster
 .LP
