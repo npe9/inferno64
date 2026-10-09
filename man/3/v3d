@@ -115,6 +115,101 @@ and
 .B "wrote 0 bytes"
 means it was processed and answered nothing.
 .TP
+.B gpumem
+Where the block the GPU is pointed at came from, and the fields naming
+it. The
+.B source
+is the load\-bearing word:
+.B firmware
+means
+.B gpualloc
+got memory from the firmware and locked it,
+.B FAKE
+means
+.B gpufake
+pointed the driver at a static block of its own and
+.B no firmware was asked anything,
+and
+.B none
+means neither.
+.B "The two used to print identically,"
+so a run that meant to execute from firmware memory and a run that
+meant to execute from the driver's own block could not be told apart in
+the output.
+.TP
+.B gpualloc
+How far the last
+.B gpualloc
+got, kept even when it failed:
+.B tried
+or
+.BR "never tried" ,
+then whether
+.B ALLOCATE_MEMORY
+and
+.B LOCK_MEMORY
+were
+.B answered
+or got
+.BR "no reply" .
+.PP
+.B "Answered is not the same as useful,"
+and both are reported because they decide different things. A tag that
+answered says the firmware was listening; the address it returned is a
+separate fact, in
+.B gpumem
+above, and this driver refuses one with no bus\-alias bits in it
+because deriving an ARM pointer from such an address would fault the
+board rather than merely mislead it.
+.PP
+.B "And kept across the failure on purpose."
+Every failure path in
+.B gpualloc
+releases what it got, which used to reset the source to
+.B none
+\(em so a firmware refusal read exactly like a driver that had never
+tried. Those are different answers to the question of whether
+.B EXECUTE_QPU
+will run from firmware memory, and a silence is only attributable to
+the execute if the allocation demonstrably happened.
+.TP
+.B block
+The first six words of the block the GPU is pointed at:
+.BR ubus ,
+.BR kbus ,
+then four uniforms.
+.PP
+.B "It is read BEFORE the mailbox exchange,"
+so it reports what this driver wrote and
+.B not
+what the GPU produced. It cannot show that a program ran, and a
+question built on comparing it before and after would be comparing one
+snapshot with itself. Making it answer that would mean seeding the
+words a program is meant to write, re\-reading them after the exchange
+with an invalidate, and reporting the two side by side; none of that
+exists yet, and
+.B tools/jtag/qpubattery.sh
+says so where it would otherwise be assumed.
+.TP
+.B ident
+.B V3D_IDENT0
+read from the register block directly, with
+.B V3D
+for
+.BR 0x02443356 ,
+.B "ZERO (block off?)"
+for zero and
+.B unread
+before any
+.B ident
+command.
+.PP
+This is the only reading here that does not go through the firmware, so
+it answers a question the mailbox cannot: whether the hardware is
+there, whatever the firmware will say about it. It can also stall the
+bus on this chip if the block's power domain is off, which is why it is
+a separate command rather than part of every status read.
+.TP
 .B value
 .BR buf[5..8] " after the call,"
 so an echo of the request can never be mistaken for an answer again.
