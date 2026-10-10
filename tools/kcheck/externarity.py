@@ -175,7 +175,7 @@ def check(dirs, known, quiet=False):
               ' linker could resolve it to, and NO TOOL IN THIS BUILD'
               ' COMPARES THEM; fix it, or if it is understood say why in'
               ' tools/kcheck/externarity.known', file=sys.stderr)
-    return reported, len(files)
+    return reported, (len(files), sum(len(v) for v in defs.values()))
 
 
 def inconsistent(dirs):
@@ -254,11 +254,20 @@ def selftest():
         # executed.  The control read BROKEN, so the table was not
         # unanimous and a reader could tell; this makes every row tell.
         #
-        # It is FILES SCANNED and not declarations compared, which was
-        # the first attempt and was wrong: `never-report' disables the
-        # declaration regex, so comparing nothing is precisely what it
-        # mutates, and it read HARNESS DEAD.  A liveness signal has to
-        # be independent of the mutation under test.
+        # The signal is DEFINITIONS FOUND, which needs two properties
+        # and my first two attempts each had one.  Declarations
+        # compared is zero for empty fixtures but is also zero for the
+        # `never-report' mutation, which disables the declaration
+        # regex -- so a healthy run read HARNESS DEAD.  Files scanned
+        # is immune to every mutation but is 3 for three EMPTY files,
+        # so it cannot see fixtures with no content.  Definitions
+        # found has both: no mutation here touches how defs are
+        # COLLECTED, only how they are compared, and it is zero when
+        # the files are empty.  That signal is the raspi3b session's.
+        #
+        # A liveness signal has to be independent of the mutation
+        # under test -- the same error as a control sharing a code
+        # path with its subject.
         #
         return check([d], {}, quiet=True)
 
@@ -296,8 +305,10 @@ def selftest():
     ok = True
     base = rows[0][1][0]
     for nm, (got, ncmp), want in rows:
-        if ncmp == 0:
-            verdict = 'HARNESS DEAD (scanned no files)'
+        nfile, ndef = ncmp
+        if nfile == 0 or ndef == 0:
+            verdict = ('HARNESS DEAD (scanned %d file(s), found %d'
+                       ' definition(s); wanted 3 and 4)' % (nfile, ndef))
         elif nm == 'unmutated':
             verdict = 'OK' if got == want else 'BROKEN'
         elif got == base:
@@ -320,7 +331,7 @@ def selftest():
         if verdict != 'OK' and verdict != 'CAUGHT':
             ok = False
         print('    %-22s %s' % (nm, verdict))
-        if ncmp and got != want and nm != 'unmutated':
+        if nfile and ndef and got != want and nm != 'unmutated':
             print('        reported %s' % (sorted(got) or '{}',))
             print('        wanted   %s' % (sorted(want) or '{}',))
     for nm in FIXTURES:
