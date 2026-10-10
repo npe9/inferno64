@@ -175,7 +175,7 @@ def check(dirs, known, quiet=False):
               ' linker could resolve it to, and NO TOOL IN THIS BUILD'
               ' COMPARES THEM; fix it, or if it is understood say why in'
               ' tools/kcheck/externarity.known', file=sys.stderr)
-    return reported
+    return reported, len(files)
 
 
 def inconsistent(dirs):
@@ -243,6 +243,23 @@ def selftest():
         open(os.path.join(d, nm), 'w').write(body)
 
     def run():
+        #
+        # THE NUMBER OF FILES SCANNED comes back as well as the set,
+        # and every row requires it to be non-zero.  Two of these mutations expect
+        # the empty set, so a harness that ran nothing at all -- a
+        # scan root that does not exist, fixtures never written --
+        # satisfies them and reads CAUGHT.  Measured, by pointing the
+        # scan at a nonexistent directory: never-report and
+        # arity-constant both reported CAUGHT while nothing had
+        # executed.  The control read BROKEN, so the table was not
+        # unanimous and a reader could tell; this makes every row tell.
+        #
+        # It is FILES SCANNED and not declarations compared, which was
+        # the first attempt and was wrong: `never-report' disables the
+        # declaration regex, so comparing nothing is precisely what it
+        # mutates, and it read HARNESS DEAD.  A liveness signal has to
+        # be independent of the mutation under test.
+        #
         return check([d], {}, quiet=True)
 
     rows = [('unmutated', run(), {'a.c:bad'})]
@@ -277,15 +294,17 @@ def selftest():
 
     print('externarity selftest:')
     ok = True
-    for nm, got, want in rows:
-        if nm == 'unmutated':
+    for nm, (got, ncmp), want in rows:
+        if ncmp == 0:
+            verdict = 'HARNESS DEAD (scanned no files)'
+        elif nm == 'unmutated':
             verdict = 'OK' if got == want else 'BROKEN'
         else:
             verdict = 'CAUGHT' if got == want else 'MISSED'
-        if verdict in ('BROKEN', 'MISSED', 'CHANGED'):
+        if verdict != 'OK' and verdict != 'CAUGHT':
             ok = False
         print('    %-22s %s' % (nm, verdict))
-        if got != want and nm != 'unmutated':
+        if ncmp and got != want and nm != 'unmutated':
             print('        reported %s' % (sorted(got) or '{}',))
             print('        wanted   %s' % (sorted(want) or '{}',))
     for nm in FIXTURES:
@@ -303,7 +322,7 @@ def main():
               file=sys.stderr)
         print('       externarity.py --selftest', file=sys.stderr)
         return 2
-    bad = len(check(args, loadknown()))
+    bad = len(check(args, loadknown())[0])
     inc = inconsistent(args)
     if inc:
         print('externarity: names with two NON-static definitions that'
