@@ -785,7 +785,6 @@ drawsplinepoly(void *fp, int smooth, int op)
 	checkflush(f->dst);
 	if(locked)
 		unlockdisplay(d->display);
-	free(pts);
 }
 
 void
@@ -915,7 +914,6 @@ drawfillsplinepoly(void *fp, int smooth, int op)
 	checkflush(f->dst);
 	if(locked)
 		unlockdisplay(d->display);
-	free(pts);
 }
 
 void

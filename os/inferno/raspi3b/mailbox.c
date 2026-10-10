@@ -1245,3 +1245,83 @@ qpucmdinit(void)
 
 	archqpucmd = qpucmd;
 }
+
+/*
+ * Wait for the next vertical sync (tag 0x0004800e, SET_VSYNC).
+ *
+ * WHY: doc/open-issues-plan.ms item H1a.  Drawing straight into the
+ * scanout buffer tears, and the cure is to flip between two buffers --
+ * but a flip that does not land in vertical blank MOVES the tear instead
+ * of removing it, so double buffering without this is not a fix.  The
+ * mailbox already does everything else the flip needs: virtual height is
+ * pinned to physical with 0x00048004 and the virtual offset 0x00048009
+ * is sent as 0,0, and asking for twice the height returns twice the
+ * allocation with y=h moving the scanout.
+ *
+ * WHETHER THE FIRMWARE IMPLEMENTS IT IS AN OPEN QUESTION, which is why
+ * this returns rather than being wired into the flush.  The tag is
+ * documented and present in Linux's firmware driver; a Pi 3B's blob may
+ * answer it, may return immediately, or may not know it.  Those three
+ * are told apart by TIMING, not by the return code: a real vsync gives a
+ * stable frame period and an unimplemented one returns at once.
+ *
+ * IT BLOCKS THE CALLING CORE for up to a frame, so nothing in a draw
+ * path may call it until that has been measured.
+ */
+int
+mboxvsync(void)
+{
+	static u32 raw[8+4];
+	u32 *buf;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf[0] = 7*4;			/* total bytes */
+	buf[1] = 0;			/* request */
+	buf[2] = 0x0004800e;		/* tag: set vsync */
+	buf[3] = 4;			/* value buffer size */
+	buf[4] = 0;			/* request code */
+	buf[5] = 0;			/* value: in/out */
+	buf[6] = 0;			/* end tag */
+	if(mboxprop(buf) < 0)
+		return -1;
+	return 0;
+}
+
+/*
+ * Move the scanout window within a framebuffer allocated with a virtual
+ * height larger than its physical height.  THIS IS THE PAGE FLIP: with
+ * vh == 2*h, an offset of y=0 shows the first buffer and y=h the second,
+ * and nothing is copied.
+ *
+ * Tag 0x00048009 is SET_VIRTUAL_OFFSET, the same tag mboxfballoc sends once
+ * with (0,0) during setup, so this is a re-send and not a new capability.
+ * The firmware answers with the offset it actually took, which is checked --
+ * it clamps rather than failing if the offset would scan past the allocation,
+ * and a silently clamped flip would show the WRONG buffer with a success
+ * code, which is the shape of bug mboxprop()'s missing lock used to have.
+ *
+ * Returns 0 on success, -1 if the exchange failed or the firmware took a
+ * different offset than asked.  doc/open-issues-plan.ms H1a.
+ */
+int
+mboxvirtoffset(int x, int y)
+{
+	static u32 raw[8+4];
+	u32 *buf, *val;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf[2] = 0x00048009;		/* tag: set virtual offset */
+	buf[3] = 8;			/* value buffer bytes */
+	buf[4] = 0;			/* request */
+	val = &buf[5];
+	buf[5] = x;
+	buf[6] = y;
+	buf[7] = 0;			/* end tag */
+	buf[0] = 8 * 4;
+	buf[1] = 0;
+	if(mboxprop(buf) < 0)
+		return -1;
+	if((int)val[0] != x || (int)val[1] != y)
+		return -1;		/* clamped: NOT the buffer we asked for */
+	return 0;
+}

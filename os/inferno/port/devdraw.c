@@ -3556,7 +3556,38 @@ drawmesg(Client *client, void *av, int n)
 					r.max.x++;
 					r.max.y++;
 				}
-				dstflush(dstid, dst, r);
+				/*
+				 * THE FOURTH ARGUMENT IS 0 FOR EVERY draw3d
+				 * OPERATION, and it is a classification rather
+				 * than a request.
+				 *
+				 * These nine call sites arrived from rio-pi-tk,
+				 * where dstflush() takes three arguments; here
+				 * it takes a `full' flag as well.  The two
+				 * branches had changed the same function in
+				 * different ways, and git merged the texts
+				 * WITHOUT A CONFLICT -- the definition from one
+				 * side, the calls from the other -- so nothing
+				 * was reported until 7c counted the arguments.
+				 *
+				 * `full' reaches only chargeop(), which
+				 * classifies the operation as a whole-rectangle
+				 * overwrite or a partial one for the page-flip
+				 * damage accounting.  It changes no pixels and
+				 * no flush.  Every draw3d primitive -- the
+				 * polygons here, line3, plot3, the sprite3
+				 * family, the immediate-mode ellipse -- paints
+				 * a SUBSET of its bounding rectangle, so
+				 * partial is the true answer for all of them
+				 * and 0 is what they get.
+				 *
+				 * Getting it wrong would not draw a wrong
+				 * picture; it would make nopfull and
+				 * noppartial lie about which scheme the frame
+				 * used, which is the thing those counters exist
+				 * to answer.
+				 */
+				dstflush(dstid, dst, r, 0);
 				poperror();
 				free(vx);
 				poperror();
@@ -3779,7 +3810,7 @@ drawmesg(Client *client, void *av, int n)
 					}
 					r.max.x++;
 					r.max.y++;
-					dstflush(dstid, dst, r);
+					dstflush(dstid, dst, r, 0);
 					poperror();
 					free(pp2);
 				}
@@ -3822,7 +3853,7 @@ drawmesg(Client *client, void *av, int n)
 					d3linez(client, dst, pa, pb, j, src, op, eza, ezb);
 				if(dst == screenimage || dst->layer != nil){
 					r = memlinebbox(pa, pb, Endsquare, Endsquare, j);
-					dstflush(dstid, dst, insetrect(r, -(1+1+j)));
+					dstflush(dstid, dst, insetrect(r, -(1+1+j)), 0);
 				}
 			}
 			continue;
@@ -3870,7 +3901,7 @@ drawmesg(Client *client, void *av, int n)
 						memdraw(dst, Rect(pa.x, pa.y, pa.x+1, pa.y+1),
 							src, ZP, memopaque, ZP, op);
 				}
-				dstflush(dstid, dst, Rect(pa.x, pa.y, pa.x+1, pa.y+1));
+				dstflush(dstid, dst, Rect(pa.x, pa.y, pa.x+1, pa.y+1), 0);
 			}
 			continue;
 
@@ -3939,10 +3970,10 @@ drawmesg(Client *client, void *av, int n)
 				if(!gpudone){
 					d3spritez(client, dst, sp, sw, sh, ez, src, mask, degz, 0, 1, op);
 					dr = Rect(sp.x - sw, sp.y - sh, sp.x + sw + 1, sp.y + sh + 1);
-					dstflush(dstid, dst, dr);
+					dstflush(dstid, dst, dr, 0);
 				}else
 					dstflush(dstid, dst, Rect(sp.x - sw/2, sp.y - sh/2,
-						sp.x - sw/2 + sw, sp.y - sh/2 + sh));
+						sp.x - sw/2 + sw, sp.y - sh/2 + sh), 0);
 			}
 			continue;
 
@@ -4006,10 +4037,10 @@ drawmesg(Client *client, void *av, int n)
 					d3spritez(client, dst, sp, sw, sh, 0.0f, src,
 						mask, degz, flipx, 0, op);
 					dstflush(dstid, dst, Rect(sp.x - sw - sh, sp.y - sw - sh,
-						sp.x + sw + sh + 1, sp.y + sw + sh + 1));
+						sp.x + sw + sh + 1, sp.y + sw + sh + 1), 0);
 				}else
 					dstflush(dstid, dst, Rect(sp.x - sw - sh, sp.y - sw - sh,
-						sp.x + sw + sh + 1, sp.y + sw + sh + 1));
+						sp.x + sw + sh + 1, sp.y + sw + sh + 1), 0);
 			}
 			continue;
 
@@ -4047,7 +4078,7 @@ drawmesg(Client *client, void *av, int n)
 				if(!gpudone)
 					d3ellipsez(client, dst, pa, rx, ry, thick, fill, src, op, ez);
 				dstflush(dstid, dst, Rect(pa.x - rx - thick - 1, pa.y - ry - thick - 1,
-					pa.x + rx + thick + 2, pa.y + ry + thick + 2));
+					pa.x + rx + thick + 2, pa.y + ry + thick + 2), 0);
 			}
 			continue;
 
