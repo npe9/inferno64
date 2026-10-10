@@ -45,6 +45,39 @@ ELF=${ELF:-$ROOT/os/inferno/raspi3b/iraspi3b}
 IMG=${IMG:-$ROOT/os/inferno/raspi3b/kernel8.img}
 
 #
+# THE BOARD LOCK, TAKEN BEFORE THE samekernel CHECK AND NOT AFTER IT.
+#
+# openocd does not queue: a second one dies with LIBUSB_ERROR_ACCESS,
+# which boardlock.sh describes as reading like a dead board rather than
+# a busy one.  The lock had been added to the WRITERS -- boardrun,
+# kinstall.sh, boot.sh, hardreset -- and to none of the four readers,
+# all of which run openocd.
+#
+# IT HAS TO BE HERE, ABOVE THE samekernel CALL, AND THAT IS THE WHOLE
+# POINT RATHER THAN TIDINESS.  samekernel touches the board too, and it
+# now takes the lock itself -- so with the acquisition further down,
+# samekernel would lock, read, RELEASE, and only then would this script
+# lock and take its own reads.  Another operator fits in that gap, which
+# means the "is the tree's image what is running" guard directly above
+# could be satisfied in one lock epoch and the reads it guards taken in
+# another.  That is the exact failure the guard exists to prevent --
+# addresses from one kernel read off a board running a different one --
+# reintroduced by the lock that was supposed to help.  I put it below
+# first and the refusal message came back from samekernel, which is how
+# the ordering came to light.
+#
+# A nested call inherits instead of being refused: boardlock.sh exports
+# BOARDLOCK_HELD, so samekernel below asks for a lock this script
+# already holds and gets it.  Measured both ways -- an unrelated reader
+# IS refused while a writer holds it, and a nested samekernel returns
+# SAME -- rather than read off the code.
+#
+. "$ROOT/tools/jtag/boardlock.sh"
+boardfree || { echo "alive: another openocd holds the adapter" >&2; exit 1; }
+boardlock alive || { echo "alive: another board operation is running" >&2; exit 1; }
+trap 'boardunlock' 0 1 2 15
+
+#
 # IS THE TREE'S IMAGE WHAT IS RUNNING?  Every address below comes from
 # $ELF's symbol table, and symbols move with every build, so reading
 # them on a board running something else lands on an unrelated variable
@@ -123,6 +156,7 @@ o = addr - 0x80000
 print(int.from_bytes(d[o:o+4], "little") if 0 <= o <= len(d)-4 else "")
 PYEOF`
 fi
+
 
 #
 # One debugger session reads both words, so checking the ELF costs no extra

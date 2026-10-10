@@ -63,7 +63,24 @@ print(int.from_bytes(d[o:o+4], "little") if 0 <= o <= len(d)-4 else "")
 PYEOF`
 fi
 TMP=${TMPDIR:-/tmp}/jtag-where.$$
-trap 'rm -f "$TMP"' 0 1 2 15
+
+#
+# THE BOARD LOCK.  This halts all four cores through openocd, which does
+# not queue: a second one dies with LIBUSB_ERROR_ACCESS, reading like a
+# dead board rather than a busy one.  The lock had been added to the
+# writers and to none of the four readers, all of which run openocd --
+# this one four times.
+#
+# TAKEN BEFORE THE TRAP IS ARMED, and that order is deliberate: arming a
+# handler before holding the lock is precisely how kinstall.sh's own
+# cleanup came to overwrite the channel of the run it had been refused
+# in favour of.  Before the lock there is nothing to clean up, and $TMP
+# does not exist yet either.
+#
+. "$ROOT/tools/jtag/boardlock.sh"
+boardfree || { echo "where: another openocd holds the adapter" >&2; exit 1; }
+boardlock where || { echo "where: another board operation is running" >&2; exit 1; }
+trap 'rm -f "$TMP"; boardunlock' 0 1 2 15
 
 #
 # HALT EACH CORE, and say so when one cannot be read.

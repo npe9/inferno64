@@ -107,6 +107,27 @@ fi
 # are not the same news.  boot.sh took the silent version for "the board
 # printed no banner" and called a running kernel four failed attempts.
 #
+#
+# THE BOARD LOCK, taken once outside the retry loop.
+#
+# This runs openocd, and openocd does not queue -- a second one dies
+# with LIBUSB_ERROR_ACCESS, which reads like a dead board rather than a
+# busy one.  The lock was on the writers and on none of the four
+# readers.  Outside the loop because the lock belongs to the run, not to
+# an attempt; inside it, a retry would release and retake it and leave a
+# gap for exactly the collision being prevented.
+#
+# boot.sh CALLS THIS WHILE HOLDING THE LOCK (boot.sh:187), so the
+# inheritance rule is what makes this safe rather than a deadlock:
+# boardlock.sh exports BOARDLOCK_HELD and a child asking for a lock its
+# parent holds inherits it.  Checked with tests/boardlock.sh, not by
+# reading.
+#
+. "$ROOT/tools/jtag/boardlock.sh"
+boardfree || { echo "kmesg: another openocd holds the adapter" >&2; exit 1; }
+boardlock kmesg || { echo "kmesg: another board operation is running" >&2; exit 1; }
+trap 'boardunlock' 0 1 2 15
+
 ntry=0
 while :; do
 	rm -f "$OUT"

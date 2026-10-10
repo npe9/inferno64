@@ -74,6 +74,38 @@ IMGHEX=`python3 "$ROOT/tools/jtag/kread" "$ELF" "$KDADDR" 2>/dev/null`
 if [ -n "${SAMEKERNEL_BOARD:-}" ]; then
 	BRDHEX=$SAMEKERNEL_BOARD
 else
+	#
+	# TAKE THE BOARD LOCK, because this drives openocd and openocd does
+	# not queue -- a second one dies with LIBUSB_ERROR_ACCESS, which
+	# boardlock.sh's own comment describes as reading like a dead board
+	# rather than a busy one.
+	#
+	# THE LOCK WAS ADDED TO THE WRITERS AND NOT TO THE READERS, which
+	# was a hole big enough to drive the exact collision the lock
+	# exists to stop.  boardrun, kinstall.sh, boot.sh and hardreset took
+	# it; samekernel, alive, kmesg and where did not, and all four run
+	# openocd.  So a read here and an install there were never
+	# serialised against each other -- and this file's own comment above
+	# records a board read that happened while someone else owned the
+	# board as the reason the guard exists.  A comment saying so did not
+	# make this script take the lock.  Found when a peer announced a
+	# read-only samekernel while this session was about to write the
+	# card, and the honest answer was that nothing would have stopped
+	# them.
+	#
+	# INSIDE THE else BRANCH ON PURPOSE.  SAMEKERNEL_BOARD exists so the
+	# comparison can be tested with no hardware at all; requiring a
+	# board lock on that path would make the host test depend on the
+	# adapter, which is the opposite of why it is there.  The lock
+	# belongs to the openocd call, not to the script.
+	#
+	. "$ROOT/tools/jtag/boardlock.sh"
+	boardfree || { echo "UNKNOWN another openocd holds the adapter"; exit 2; }
+	boardlock samekernel || {
+		echo "UNKNOWN another board operation is running"
+		exit 2
+	}
+	trap 'boardunlock' 0 1 2 15
 	BRDHEX=`timeout 90 openocd -f interface/ftdi/olimex-arm-usb-tiny-h.cfg \
 		-f "$ROOT/tools/jtag/raspi3b.cfg" \
 		-c init -c 'targets bcm2837.cpu0' -c halt \
