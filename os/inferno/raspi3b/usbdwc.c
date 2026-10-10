@@ -1086,7 +1086,16 @@ ctltrans(Ep *ep, uchar *req, long n)
 	Epio *epio;
 	Block *b;
 	uchar *data, *buf;
-	int datalen;
+	int datalen, wanted;
+	usize bufsz;
+	/*
+	 * Initialised because 7c cannot see that the only reader of these
+	 * is inside the same `if(req[Rtype] & Rd2h)' that sets them, and
+	 * it warns -- which would leave a dirty build for a case that
+	 * cannot happen.  Zero is never used.
+	 */
+	bufsz = 0;
+	wanted = 0;
 
 	epio = ep->aux;
 	if(epio->cb != nil){
@@ -1101,8 +1110,17 @@ ctltrans(Ep *ep, uchar *req, long n)
 		if(datalen <= 0 || datalen > Maxctllen)
 			error(Ebadlen);
 		/* aligned DMA target, whole cache lines */
-		buf = dmabufalloc(ROUND(datalen, ep->maxpkt));
-		cacheflushinv(buf, ROUND(datalen, ep->maxpkt));
+		/*
+		 * REMEMBER HOW BIG THE BUFFER IS.  The length handed to
+		 * cacheinval() below comes back from the transfer, and
+		 * cacheinval takes a usize -- so a value larger than this
+		 * allocation is not a long invalidate, it is dcivac walked
+		 * off the end of mapped memory.  See the check there.
+		 */
+		bufsz = ROUND(datalen, ep->maxpkt);
+		wanted = datalen;
+		buf = dmabufalloc(bufsz);
+		cacheflushinv(buf, bufsz);
 		data = buf;
 		epio->cb = b = allocb(datalen);
 	}else{
@@ -1129,6 +1147,50 @@ ctltrans(Ep *ep, uchar *req, long n)
 		}else
 			datalen = chanio(ep, hc, Epin, DATA1, data, datalen);
 		chanio(ep, hc, Epout, DATA1, nil, 0);
+		/*
+		 * VALIDATE THE LENGTH BEFORE INVALIDATING WITH IT.
+		 *
+		 * A full-speed USB-serial adapter PANICKED this kernel here,
+		 * twice:
+		 *
+		 *	panic: trap
+		 *	vectrap <- dcivac <- cacheinval <- ctltrans
+		 *
+		 * cacheinval() is declared void cacheinval(void*, usize) --
+		 * an UNSIGNED length -- and its body computes
+		 * e = (uintptr)va + len and then walks dcivac up to e.  So a
+		 * datalen that is negative or merely larger than the
+		 * allocation does not produce a short or long invalidate: it
+		 * invalidates its way across unmapped memory until the MMU
+		 * stops it, which is a trap in a kernel that has no handler
+		 * installed for one.
+		 *
+		 * WHAT THE PANIC'S CAUSE IS, HONESTLY, IS NOT ESTABLISHED.
+		 * Static reading says datalen cannot be out of range:
+		 * chanio() returns len - nleft, nleft starts at len and is
+		 * clamped (`if(n > nleft) n = nleft'), so the result is 0..len
+		 * and buf is ROUND(len, maxpkt) >= len.  Every cheap
+		 * hypothesis -- a negative return, an unclamped overrun --
+		 * was checked against the source and does not hold.  So this
+		 * does not claim to fix the panic.
+		 *
+		 * WHAT IT DOES IS MAKE THE FAILURE SURVIVABLE AND LEGIBLE.
+		 * Walking an unvalidated range through dcivac is wrong on its
+		 * own terms whatever supplies the length, and a kernel that
+		 * crashes tells you less than one that prints the three
+		 * numbers and carries on.  If the panic returns, this says
+		 * which of them was wrong; if it does not, the values here
+		 * were never the cause and the next reader is not sent after
+		 * them.
+		 */
+		if(datalen < 0 || (usize)datalen > bufsz){
+			print("usbdwc: ep%d.%d ctltrans: datalen %d outside"
+				" buf %#p size %lud (asked %d) -- clamped,"
+				" NOT invalidating past the allocation\n",
+				ep->dev->nb, ep->nb, datalen, buf,
+				(ulong)bufsz, wanted);
+			datalen = datalen < 0? 0: (int)bufsz;
+		}
 		cacheinval(data, datalen);
 		memmove(b->wp, data, datalen);
 		b->wp += datalen;
