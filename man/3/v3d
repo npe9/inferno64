@@ -77,19 +77,54 @@ being derived by setting the bus alias bits rather than clearing them,
 which would have faulted the board the first time a real allocation
 succeeded.
 .TP
-.B ident
+.BI "ident force " [ nwords ]
 Read
-.B V3D_IDENT0..2
-from the register block directly, which answers a question the mailbox
-cannot: whether the hardware is there at all.
+.B V3D_IDENT0
+from the register block directly \(em and
+.BI IDENT1 , IDENT2
+too if
+.I nwords
+says so, one at a time, default one. This answers a question the
+mailbox cannot: whether the hardware is there at all.
 .B 0x02443356
 is
-.RB ` V3D ';
-zero suggests the block is powered off, which would explain a firmware
-that does not answer.
-.B "This can hang the board."
-A peripheral whose power domain is off does not politely return zero on
-this chip; the access can stall the bus. It is a separate command for
+.RB ` V3D '.
+.PP
+.B "THIS WEDGES THE BOARD, measured on silicon, and the only way back is"
+.B "the power switch."
+The word
+.B force
+is required for that reason: without it the command refuses and says so.
+.PP
+Read over JTAG with controls in the same boot, the three outcomes are
+distinguishable and only one of them was anticipated:
+.IP
+.EX
+0x3f10001c   00000102               the read path works
+0x00080000   the first instruction  DRAM reads fine
+0x3f900000   abort, dscr 0x06047d53 a REAL hole aborts cleanly
+0x3fc00000   debug-access timeout   V3D does neither
+.EE
+.PP
+So an unmapped address has a signature on this chip, and V3D does not
+have it: the access neither answers nor returns zero, it stalls the bus.
+.I Hardreset
+cannot recover it, because it arms the watchdog
+.I through
+the core and the core is what is stalled; the measurement cost one power
+cycle. A single earlier read returned
+.B 0xdeadbeef
+for all three words, which is the debugger's filler for an access that
+never completed and not a value \(em the hole control above is what
+proves that, since a real unmapped address aborts rather than filling.
+.PP
+That measurement is
+.B rasberry pi inferno's,
+not this driver's: this file had only predicted that the access "can
+stall the bus", and the status string offered two outcomes, zero or a
+version word, where silicon gave a third.
+.PP
+It is a separate command for
 that reason, never part of a status read.
 .PP
 Reading
@@ -198,11 +233,32 @@ read from the register block directly, with
 for
 .BR 0x02443356 ,
 .B "ZERO (block off?)"
-for zero and
-.B unread
+for zero,
+.B untried
 before any
 .B ident
-command.
+command, and
+.B STALLED
+when a read was begun and did not finish.
+.PP
+.B tried
+and
+.B read
+are how far the command got: the marker is set BEFORE each read and the
+value stored after it, so
+.B "tried 1 read 0"
+is a read that stalled on
+.BR IDENT0 .
+.B "Neither this line nor the STALLED word can ever be seen on the board"
+.B "that stalled,"
+because nothing in the kernel runs again to print them \(em they are
+there to be read out of a halted target over JTAG, which is why
+.B tried
+is a plain
+.B int
+in
+.B v3d
+and not a local.
 .PP
 This is the only reading here that does not go through the firmware, so
 it answers a question the mailbox cannot: whether the hardware is

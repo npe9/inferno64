@@ -153,6 +153,77 @@ So the handler is
 .B "provoked by anything else #Q does,"
 each by a measurement rather than by argument.
 .PP
+.B "H5 is ANSWERED, on silicon, and it is neither outcome this plan
+.B "anticipated: reading V3D_IDENT0 stalls the bus."
+Measured over JTAG by
+.I "rasberry pi inferno,"
+with no code on the board and controls in the same boot:
+.DS
+.CW
+0x3f10001c   00000102               PM_RSTC, so the read path works
+0x00080000   the first instruction  DRAM reads fine
+0x3f900000   abort, dscr 0x06047d53 a REAL hole aborts CLEANLY
+0x3fc00000   debug-access timeout   V3D does neither
+.R
+.DE
+.PP
+The hole control is the finding, not the V3D read: an unmapped address
+on this chip has a signature, a clean bus abort the debugger survives,
+and V3D does not have that signature. It neither answers nor returns
+zero \(em it stalls, and
+.I hardreset
+cannot recover it because it arms the watchdog
+.I through
+the stalled core. One power cycle. A single earlier read gave
+.CW 0xdeadbeef
+for all three words, which the hole control proves is the debugger's
+filler for an access that never completed and not a value.
+.PP
+.B "This plan and devv3d both offered two outcomes where there were
+.B "three."
+.CW man/3/v3d
+said the access "can stall the bus" as a caution and the status string
+chose between
+.CW V3D
+and
+.CW "ZERO (block off?)" ,
+so the third outcome could not be reported even in principle \(em and
+could not be reported from that board in any case, since nothing in the
+kernel runs again. Corrected: the read now needs
+.CW "ident force" ,
+reads ONE word by default, and sets a
+.CW tried
+marker before each read so a halted target says which read died.
+.PP
+.B "What it leaves is a conflict worth stating plainly."
+The domain query answers
+.CW 0xa
+state 1 \(em on \(em while the register block does not answer the bus.
+Something is answering about power that is not the thing being read. If
+.CW SET_ENABLE_QPU
+ungates the block, then
+.CW IDENT0
+should read after it and the next measurement says so; if it still
+stalls, the block is never on and
+.CW EXECUTE_QPU
+entering a handler and never returning is the firmware's own first V3D
+access stalling exactly as the debugger's did. That reading is asked
+for: IDENT0 after
+.CW enable ,
+in one boot, with the same three controls.
+.PP
+.B "And a clock the driver never sets."
+.CW devv3d
+asks for the domain and sends
+.CW SET_ENABLE_QPU
+but never sets the V3D clock. If
+.CW IDENT0
+reads only after a
+.CW SET_CLOCK_RATE
+(0x38002, clock id 5), every V3D access this driver has ever made was to
+an unclocked block, and that is a driver defect rather than a firmware
+mystery.
+.PP
 .B "What is left is h2."
 If
 .CW EXECUTE_QPU

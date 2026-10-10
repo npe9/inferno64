@@ -263,6 +263,15 @@ static struct {
 	u32	blk[6];		/* first words of the block exec wrote */
 	u32	ident[3];	/* V3D_IDENT0..2, if ever read */
 	int	identread;
+	/*
+	 * How far v3dident() got, set BEFORE each read.  A V3D read that
+	 * stalls never returns, so nothing after it runs and the status
+	 * file cannot be asked -- but this word is in the kernel's data
+	 * and a halted target can be read over JTAG.  It is the only way
+	 * to learn WHICH read died, which is why the reads are one at a
+	 * time and default to one.
+	 */
+	int	identtried;
 } v3d;
 
 static Lock v3dlk;
@@ -656,14 +665,25 @@ v3dgpufake(void)
  * deliberately not reachable by accident.
  */
 static int
-v3dident(void)
+v3dident(int nwords)
 {
 	u32 *r = (u32*)(uintptr)V3dbase;
+	int i;
 
-	v3d.ident[0] = r[V3dident0];
-	v3d.ident[1] = r[V3dident1];
-	v3d.ident[2] = r[V3dident2];
-	v3d.identread = 1;
+	if(nwords < 1)
+		nwords = 1;
+	if(nwords > 3)
+		nwords = 3;
+	/*
+	 * One read per iteration with the marker set first.  If the
+	 * access stalls, identtried names the word that did it and
+	 * everything below here never runs.
+	 */
+	for(i = 0; i < nwords; i++){
+		v3d.identtried = i + 1;
+		v3d.ident[i] = r[V3dident0 + i];
+		v3d.identread = i + 1;
+	}
 	return 0;
 }
 
@@ -740,7 +760,7 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			"gpumem %s handle %#ux bus %#ux size %d ctlbus %#ux\n"
 			"gpualloc %s alloc %s lock %s\n"
 			"block %#ux %#ux %#ux %#ux %#ux %#ux\n"
-			"ident %s %#ux %#ux %#ux\n"
+			"ident %s tried %d read %d %#ux %#ux %#ux\n"
 			"value %#ux %#ux %#ux %#ux\n",
 			v3d.clockok? "hz" : "unknown", v3d.clock,
 			v3d.enabled,
@@ -767,10 +787,28 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			v3d.memlockack? "answered" : "no reply",
 			v3d.blk[0], v3d.blk[1], v3d.blk[2],
 			v3d.blk[3], v3d.blk[4], v3d.blk[5],
-			v3d.identread?
+			/*
+			 * This used to offer two outcomes, "V3D" or "ZERO
+			 * (block off?)", and SILICON GAVE A THIRD: the read
+			 * neither answers nor returns zero, it stalls the
+			 * bus.  Measured over JTAG with controls in the same
+			 * boot -- PM_RSTC read fine, DRAM read fine, a
+			 * genuine peripheral hole gave a clean abort with
+			 * dscr 0x06047d53, and V3D gave a debug-access
+			 * timeout instead.  So "unmapped" has a signature
+			 * here and V3D does not have it.
+			 *
+			 * That outcome can never appear in this string,
+			 * because nothing in this kernel runs again to
+			 * print it.  `tried\' above it is what distinguishes
+			 * a read that stalled from one never attempted, and
+			 * it is readable from a halted target.
+			 */
+			!v3d.identtried? "untried" :
+			  v3d.identread < v3d.identtried? "STALLED" :
 			  (v3d.ident[0] == 0x02443356? "V3D" :
-			   v3d.ident[0] == 0? "ZERO (block off?)" : "unknown")
-			  : "unread",
+			   v3d.ident[0] == 0? "ZERO (block off?)" : "unknown"),
+			v3d.identtried, v3d.identread,
 			v3d.ident[0], v3d.ident[1], v3d.ident[2],
 			v3d.lastval[0], v3d.lastval[1],
 			v3d.lastval[2], v3d.lastval[3]);
@@ -844,7 +882,19 @@ v3dwrite(Chan *c, void *a, int n, vlong offset)
 			v3dgpualloc(cb->nf > 1?
 				strtol(cb->f[1], nil, 0) : 4096);
 		}else if(strcmp(cb->f[0], "ident") == 0){
-			v3dident();
+			/*
+			 * ident force [nwords]
+			 *
+			 * The force is not ceremony.  This read has been
+			 * measured on silicon to STALL THE BUS: the core
+			 * stops answering, hardreset cannot recover it
+			 * because it arms the watchdog through the core,
+			 * and the only way back is the power switch.  So it
+			 * must not be one `echo ident' away.
+			 */
+			if(cb->nf < 2 || strcmp(cb->f[1], "force") != 0)
+				error("ident WEDGES THE BOARD until power is cycled; say `ident force [nwords]'");
+			v3dident(cb->nf > 2? (int)strtol(cb->f[2], nil, 0) : 1);
 		}else if(strcmp(cb->f[0], "gpufake") == 0){
 			v3dgpufake();
 		}else if(strcmp(cb->f[0], "gpufree") == 0){
