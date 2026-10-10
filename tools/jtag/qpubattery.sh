@@ -5,6 +5,17 @@
 #	sh tools/jtag/qpubattery.sh list        # the questions and the order
 #	sh tools/jtag/qpubattery.sh control     # emit one question's commands
 #
+# WRITE THESE TO board.cmd; DO NOT TYPE THEM AT A CONSOLE.  A console
+# can deliver a character twice -- seen under QEMU as `/dev//v3dctl' --
+# and a doubled digit here is silent and wrong: in
+#
+#	echo exec 1 1 0 1 1000 2000 >/dev/v3dctl
+#
+# a doubled 0 changes the timeout tenfold, and the answer you get is to
+# a question you did not ask.  Every line below is meant to go into
+# board.cmd as a file, where nothing retypes it.  Under QEMU, drive it
+# with os/inferno/raspi3b/qemufeed.sh, which checks what arrived.
+#
 # IT USED TO BE ONE RUN AND THAT WAS WRONG.  The questions were ordered
 # so an early failure would make the later ones meaningful, which is the
 # right instinct for independent lines and the wrong model for these:
@@ -146,17 +157,6 @@
 # against 250 on silicon -- so a baseline says the request is
 # well-formed and says NOTHING about the value.  There is no
 # nonsense-VALUE control, only the nonsense-TAG one.
-#
-# WRITE THESE TO board.cmd; DO NOT TYPE THEM AT A CONSOLE.  A console
-# can deliver a character twice -- seen under QEMU as `/dev//v3dctl' --
-# and a doubled digit here is silent and wrong: in
-#
-#	echo exec 1 1 0 1 1000 2000 >/dev/v3dctl
-#
-# a doubled 0 changes the timeout tenfold, and the answer you get is to
-# a question you did not ask.  Every line below is meant to go into
-# board.cmd as a file, where nothing retypes it.  Under QEMU, drive it
-# with os/inferno/raspi3b/qemufeed.sh, which checks what arrived.
 #
 set -e
 cd "$(dirname "$0")/../.."
