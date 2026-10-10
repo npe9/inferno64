@@ -49,6 +49,48 @@ Not slower.
 at any bound, and it stays dead across separate board runs within the
 same boot. Only a reboot brings it back.
 .PP
+.B "CORRECTION: that UNTOUCHED is not what a FIRST exec gives."
+Two fresh CARD boots give
+.CW "tag 0x80000004 PROCESSED wrote 4 bytes"
+for the first
+.CW EXECUTE_QPU
+of the boot, so the firmware does write the response header. The
+.CW UNTOUCHED
+in the table above came from a JTAG boot, and a JTAG boot is fresh for
+the KERNEL and not for the FIRMWARE \(em this plan records elsewhere
+that the V3D ungated state survives a JTAG boot and does not survive
+.IR hardreset .
+So that run's "first" exec was not the first of its firmware session,
+and what it measured was a channel already dead.
+.PP
+.B "The control for that already exists, by accident."
+The raspi3b session doubted its own
+.CW PROCESSED
+reading, re-ran the exec three times in the same boot, got
+.CW UNTOUCHED
+three times, and recorded the first as refuted. Read the other way
+round that is exactly the discriminator:
+.DS
+.CW
+virgin firmware session, first exec   PROCESSED, 4 bytes, about 1.0 s
+same session, any exec after it       UNTOUCHED, no reply
+.R
+.DE
+.PP
+so
+.CW UNTOUCHED
+is the signature of a POISONED channel and not of an exec the firmware
+ignored. One
+.I hardreset
+followed by a single exec would confirm it directly and nobody has the
+adapter plugged in; it is not needed to read the two sets of numbers
+consistently.
+.PP
+.B "Which moves a hypothesis."
+The firmware accepts the message and writes a reply header, then the
+job never completes \(em so "the firmware never sees it" is out, and
+what is left is between the submission and the QPU.
+.PP
 .B "So the exec has to be the last thing a boot does."
 The battery was one run, ordered so that an early failure would make
 the later lines meaningful \(em which is right for independent
