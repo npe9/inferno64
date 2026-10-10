@@ -10,5 +10,21 @@
 # build, that nobody had looked at.  A baseline that over-matches is the
 # same defect as a check that cannot fail.
 #
-# Each line is a claim someone verified.  Re-verify before adding one.
-os/inferno/port/lib.h:log	devbench.c defines a kernel logger log(char*, ...) at file scope while lib.h declares libc's double log(double).  A NAME COLLISION between two different functions, not a miscounted call: nothing calls log() expecting the maths function in a kernel that links devbench.o.  The fix is to rename the logger, which is a change to devbench.c and not to this tool.
+# EMPTY, AND THAT IS THE POINT.  It had two entries and neither
+# survived being looked at properly:
+#
+#   kdynloadfd  was FIXED rather than excused.  devdynld.c and
+#               devdynldx.c each declared and called four parameters
+#               where every implementation defines three.
+#
+#   log         was NEVER A MISMATCH.  The entry said devbench.c's
+#               log(char*, ...) collides with libc's double log(double)
+#               declared in lib.h, and called it unfixable.  It is
+#               `static void log(char *msg, ...)' -- file-local, so it
+#               cannot collide at link time and lib.h's declaration
+#               cannot refer to it.  The entry described a non-problem
+#               and was written before this tool knew about static.
+#
+# So: add nothing here that has not survived the question "could the
+# linker actually resolve that declaration to that definition".  Each
+# line is a claim someone verified; re-verify before adding one.
