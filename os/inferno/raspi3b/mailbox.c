@@ -1118,3 +1118,60 @@ mboxqpuenable(int on, u32 *reply)
 		*reply = buf[5];
 	return 0;
 }
+
+/*
+ * The board half of devcons's QPU experiment commands.
+ *
+ * Installed as archqpucmd from main.c, so that os/inferno/port/devcons.c
+ * holds no raspi3b addresses or symbols -- it is shared by twelve boards
+ * and the first version of this broke all but one of them.
+ *
+ *	echo qpuenable > /dev/sysctl	SET_ENABLE_QPU, and the reply word
+ *	echo qpuident  > /dev/sysctl	ONE read of V3D_IDENT0
+ *
+ * ident is the second independent reader of 0x3fc00000.  openocd over
+ * JTAG is the first, and it reports 0xdeadbeef there; nobody can say yet
+ * whether that is the bus or the debugger's filler, and two readers of
+ * one address is the only discriminator available that does not risk the
+ * board.  If both say deadbeef it IS the bus; if this one differs, the
+ * deadbeef belongs to openocd.
+ *
+ * ONE WORD, NOT THREE.  Reading IDENT0, 1 and 2 in sequence would leave
+ * a stall unattributable to any particular read -- the mistake made in
+ * both trees today, in a peer's ident command and in this session's own
+ * JTAG harness.
+ *
+ * iprint and a marker BEFORE the access, because this can hang the core
+ * and then there is no ring to read: TRY with no READ is the signature
+ * of dying in the read, and it is all this side can offer.  A JTAG read
+ * at least leaves a halted target; this does not.
+ */
+static void
+qpucmd(int ident)
+{
+	u32 v, rep;
+	int ok;
+
+	if(!ident){
+		rep = 0;
+		ok = mboxqpuenable(1, &rep);
+		if(ok < 0)
+			print("QPU-ENABLE unanswered"
+				" (mailbox or response bit)\n");
+		else
+			print("QPU-ENABLE answered, reply %#ux"
+				" (0 = accepted)\n", rep);
+		return;
+	}
+	iprint("QPU-IDENT-TRY %#p\n", (void*)(BCMPERIPH + 0xc00000));
+	v = *(u32*)(BCMPERIPH + 0xc00000);
+	iprint("QPU-IDENT-READ %#ux (0x02443356 = \"V3D\")\n", v);
+}
+
+void
+qpucmdinit(void)
+{
+	extern void (*archqpucmd)(int);
+
+	archqpucmd = qpucmd;
+}

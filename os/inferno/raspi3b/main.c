@@ -436,6 +436,12 @@ main(void)
 	iprint("links\n");
 	links();
 	iprint("screeninit\n");
+	/*
+	 * Install the board hook for devcons's two QPU experiment
+	 * commands.  Here rather than in devcons.c because that file is
+	 * shared by twelve boards; see qpucmd() in mailbox.c.
+	 */
+	qpucmdinit();
 	screeninit();
 	iprint("fdtinit\n");
 	{

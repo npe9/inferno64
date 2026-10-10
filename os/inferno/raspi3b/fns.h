@@ -78,6 +78,7 @@ void	intrdisable(int, void (*)(Ureg*, void*), void*, int, char*);
 void	intrenable(int, void (*)(Ureg*, void*), void*, int, char*);	/* (irq, handler, arg, tbdf, name): the portable order */
 int	islo(void);
 void	kbdinit(void);
+void	qpucmdinit(void);	/* installs archqpucmd; see mailbox.c */
 void	screeninit(void);
 void	links(void);
 void	microdelay(int);

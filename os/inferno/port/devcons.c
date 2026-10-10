@@ -11,6 +11,12 @@
 
 extern int cflag;
 extern int bflag;
+
+/*
+ * Board hook for the two QPU experiment commands, nil on every board
+ * that does not install one.  See the CMqpuident case.
+ */
+void	(*archqpucmd)(int);
 extern int keepbroken;
 extern int rdbstarted;
 extern u32 kerndate;
@@ -124,6 +130,7 @@ enum
 	CMsignfault,
 	CMbflag,
 	CMqpuenable,
+	CMqpuident,
 };
 
 /*
@@ -267,6 +274,28 @@ static Cmdtab sysctlcmd[] =
 	 * a disable would be a different experiment.
 	 */
 	CMqpuenable,	"qpuenable",	0,
+	/*
+	 * THE SECOND INDEPENDENT READER of V3D_IDENT0, which is the only
+	 * non-destructive discriminator anybody has for the deadbeef
+	 * openocd reports at 0x3fc00000.  Two readers of one address: if
+	 * the debugger and the kernel both say deadbeef then the bus
+	 * returns it and it is a VALUE; if the kernel reads something
+	 * else, the deadbeef belongs to the instrument.  One reader
+	 * agreeing with itself proves nothing.  The peer's idea, and the
+	 * same shape as checking a Limbo encoder against libtk's own C
+	 * output rather than against its own round trip.
+	 *
+	 * THIS CAN HANG THE BOARD, and unlike the JTAG read there is no
+	 * halted target left to interrogate -- if cpu0 stalls, the ring
+	 * cannot be read either.  So it prints a marker BEFORE the access
+	 * and the value after: TRY with no READ in the ring is the
+	 * signature of dying in the read, and it is the most this side can
+	 * offer.  One word only, deliberately: three reads in sequence
+	 * would leave you unable to say which one died, which is the
+	 * mistake both this session and the peer made today in different
+	 * places.
+	 */
+	CMqpuident,	"qpuident",	0,
 	/*
 	 * THE POSITIVE CONTROL FOR trap.c's LOST-SIGN-EXTENSION HINT, and the
 	 * reason it is a facility rather than a one-off patch: the hint claims
@@ -1528,28 +1557,35 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 					x);
 			}
 			break;
+		case CMqpuident:
 		case CMqpuenable:
-			{
-				extern int mboxqpuenable(int, u32*);
-				u32 rep;
-				int ok;
-
-				rep = 0xdeadbeef;
-				ok = mboxqpuenable(1, &rep);
-				/*
-				 * Three outcomes printed apart, because
-				 * "answered and refused" is a result and
-				 * not a failure, and collapsing it into
-				 * one verdict is what hid the pixel clock
-				 * earlier today.
-				 */
-				if(ok < 0)
-					print("QPU-ENABLE unanswered"
-						" (mailbox or response bit)\n");
-				else
-					print("QPU-ENABLE answered, reply"
-						" %#ux (0 = accepted)\n", rep);
-			}
+			/*
+			 * A BOARD HOOK, not board code in a port file.  The
+			 * first version of this put BCMPERIPH and a call to
+			 * raspi3b's mboxqpuenable() directly here, and that
+			 * breaks every other board: devcons.c is shared, and
+			 * compiling it with virtarm64's includes gives
+			 *
+			 *   devcons.c: name not declared: BCMPERIPH
+			 *
+			 * while mboxqpuenable would have been an undefined
+			 * symbol at link time.  Caught by compiling this file
+			 * against another board's includes, which is the only
+			 * way to catch it -- it builds perfectly for the board
+			 * you are working on.
+			 *
+			 * A function pointer costs nothing, needs no #ifdef
+			 * (this tree does not conditional-compile) and needs
+			 * no stub in each board, unlike the screenstats()
+			 * hook.  devkprof.c's kproftick is the precedent.
+			 * Boards that do not set it say so rather than
+			 * failing to link.
+			 */
+			if(archqpucmd == nil)
+				print("QPU: no hook on this board\n");
+			else
+				archqpucmd((ulong)c->qid.path == Qsysctl &&
+					ct->index == CMqpuident);
 			break;
 		case CMsched:
 			/*
