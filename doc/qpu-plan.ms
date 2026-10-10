@@ -531,11 +531,26 @@ ident V3D tried 3 read 3 0x2443356 0xc1102431 0x121
 .EE
 .PP
 .CW IDENT0
-is the "V3D" magic. Decoding
+is the "V3D" magic, and
+.B "that part is a replication and not a result"
+\(em H5 above already had
+.CW 0x02443356
+from two independent readers. What it adds is that it reproduces
+through the merged kernel booted
+.I "from the card,"
+where H5 read it under JTAG, so the unification did not cost the one
+thing that was working.
+.PP
+.B "IDENT1 and IDENT2 are new, and they say how big the block is."
+Decoding
 .CW IDENT1
-= 0xc1102431 gives NSLC 3 and QUPS 4 \(em three slices of four, so
+= 0xc1102431: NSLC 3, QUPS 4 \(em three slices of four, so
 .B "twelve QPUs,"
-which is the VideoCore IV in a BCM2837. The clock is
+which is the VideoCore IV a BCM2837 should have. So the thing that will
+not answer
+.CW EXECUTE_QPU
+is not a stub or a cut\-down part; it reports a full VideoCore IV.
+The clock is
 .B "250 MHz and not the 700 MHz QEMU reported,"
 so the V3D\-BLIND guard earned its place on the first real run.
 .PP
@@ -582,12 +597,35 @@ in
 .CW config.txt
 is the knob, and it is a card edit and a reboot, not a code change.
 .NH 2
-ONE CLEAN EXECUTE_QPU MEASUREMENT PER BOOT, which invalidates repetition
+PROCESSED where this document recorded UNTOUCHED, on a card boot
 .PP
-.B "This is the methodological finding and it outranks the rest."
-The first
+.B "FIRST, A CORRECTION TO WHAT I ALMOST CLAIMED HERE."
+I wrote this section up as the discovery that one exec poisons the
+property channel and that only the first reading of a boot counts. That
+is already the FIRST NUMBERED SECTION of this document \(em "One
 .CW EXECUTE_QPU
-of a boot reads:
+attempt kills the property channel until a reboot" \(em measured on
+silicon by the session that owns the board, with the same control before
+and after, and
+.CW tools/jtag/qpubattery.sh
+was already rewritten to one question per invocation because of it. I
+appended to this file having read only its tail and its section
+headings, rediscovered a documented result, and presented it as new.
+.PP
+.B "The habit that failed is worth naming:"
+I treated the plan as a place to write conclusions rather than a thing
+to read first, so the one document guaranteed to contain the prior art
+was the one I did not consult. Nothing below is offered as new unless it
+disagrees with what is already above.
+.PP
+.B "WHAT IS ACTUALLY NEW IS A DISAGREEMENT, and it is small and specific."
+This document records the first exec of a boot as
+.CW "tag 0x0 UNTOUCHED wrote 0 bytes"
+from a
+.B JTAG
+boot. On a
+.B card
+boot of the unified kernel the first exec of a boot reads:
 .IP
 .EX
 exec refused code 0x0 tag 0x80000004 PROCESSED wrote 4 bytes 1008631 us
@@ -595,29 +633,33 @@ wait OUT OF TIME (no reply) after 1000000 us (asked 1000000)
 .EE
 .PP
 .B "PROCESSED, four bytes written"
-\(em the firmware does touch the response buffer, where this file
-previously recorded
-.CW "tag 0x0 UNTOUCHED wrote 0 bytes"
-from a JTAG\-booted run. Every LATER attempt in the same boot reads
-UNTOUCHED, and after the first attempt
-.B "GET_CLOCK_RATE and SET_ENABLE_QPU are both refused as well"
-\(em tags that answered seconds earlier on the same channel. The status
-file still shows
-.CW "clock hz 250000000"
-at that point, because that is the driver's cached last\-good value and
-not a fresh read; the tell is
-.CW "enable REFUSED"
-on the line beside it.
+\(em the firmware
+.I does
+touch the response buffer. Reproduced on two separate fresh card boots,
+one exec each. That is the only reading here that contradicts the
+sections above, and the candidate explanation is in those sections'
+own terms: they record that the ungated state
+.B "survives a JTAG boot and does not survive"
+.IR hardreset ,
+so a JTAG boot inherits whatever the previous firmware session left and
+is not a clean slate. A card boot is a firmware restart. If that is the
+difference, then
+.B "the tag response is written only when the firmware session is fresh,"
+which is testable with one
+.I hardreset
+and one exec and would be worth the boot.
 .PP
-.B "So the property channel is poisoned by the first unanswered exec,"
-and a second measurement in the same boot is a measurement of a
-different machine. I read the first PROCESSED result as a one\-off,
-"replicated" it three times, got UNTOUCHED three times and recorded the
-first as refuted \(em and that was wrong in both directions. Rebooting
-and taking exactly one reading reproduced PROCESSED exactly. The three
-replications had changed a variable I did not know existed, which is
-the shape worth keeping: repetition is only evidence when the state
-between repetitions is the same, and here the first trial destroys it.
+.B "AND MY REPLICATION OF IT WAS WORTHLESS, by this document's own rule."
+I read PROCESSED, doubted it, ran it three more times in the SAME boot,
+got UNTOUCHED three times and wrote the first down as refuted. Then a
+reboot and a single reading reproduced PROCESSED exactly. The three
+"replications" ran on the channel the first exec had already killed \(em
+which is precisely what the first section of this plan says happens,
+and precisely why
+.CW qpubattery.sh
+takes one question per boot. Repetition is evidence only when the state
+between repetitions is the same, and here the first trial destroys it;
+I had the rule in front of me and repeated into a dead channel anyway.
 .PP
 .B "Program content makes no difference, which answers item 3 as planned."
 This plan proposed discriminating by elapsed time between garbage that
@@ -647,3 +689,66 @@ back, no counter moved. The headline remains that the block identifies
 itself, is clocked and is ungated, and that the mailbox's execute path
 does not complete; the software rasteriser is still what draws 3D on
 this board.
+.NH 2
+What the unification cost, and the one number that justifies it
+.PP
+.B "The merge broke the display and the fix is committed."
+rio\-pi\-tk's
+.CW mboxfballoc
+has five parameters where this branch's has six \(em the sixth is the
+VIRTUAL height, which is what makes a page flip a
+.CW SET_VIRTUAL_OFFSET
+instead of a copy. Rebuilding
+.CW mailbox.c
+from their copy dropped it, and
+.CW screenbcm.c
+went on passing six arguments to five parameters, so the framebuffer
+allocation failed and the kernel booted with no framebuffer at all. The
+only symptom was
+.CW "no frame buffer"
+from two unrelated Dis tests.
+.PP
+.B "7c and 7l could not have caught it."
+.CW screenbcm.c
+declares its own
+.CW extern
+rather than taking one from
+.CW fns.h ,
+so the prototype and the definition are in different translation units;
+the compiler checks a prototype only against uses in the same unit and
+the loader does not compare signatures. It compiled, linked and booted
+silently. There is a test for the class now,
+.CW tests/extern-arity.py ,
+whose positive control is this exact bug.
+.PP
+.B "AND THE DRAW3D LETTERS RASTERISE IDENTICALLY ON THE BOARD."
+This is the number that makes the merge worth having.
+.CW os/inferno/port/devdraw.c
+gained 1581 lines and ten protocol letters that previously existed only
+in emu, and the board's config asked the right question about them:
+does the kernel rasterise them, and the same way.
+.CW draw3dkerntest
+on the real Pi 3B against the same test under hosted emu:
+.IP
+.EX
+poly   device 4356  software 4128  228 differ  sums 0x1124da01 0x16bcf9c5
+line   device  675  software  657   18 differ  sums -0x208b1d40 0x4273e1e4
+plot   device    3  software    3    0 differ  sums equal
+.EE
+.PP
+.B "Every figure is identical between the two,"
+to the byte and to the checksum. The native kernel's draw3d
+implementation and emu's agree exactly, so the hosted path is a valid
+oracle for the board one from here on \(em which is worth more than any
+single measurement, because it means this work no longer needs the board
+to check a rasteriser change.
+.PP
+The rest of the gate on silicon, same boot:
+.CW drawink
+all checks passed (21 lines, not the empty pass that
+.CW drawink
+can silently become),
+.CW polytest
+13 ok 0 fail, and
+.CW bndstest
+11 ok 0 fail \(em so bounds checks are still armed with the JIT on.
