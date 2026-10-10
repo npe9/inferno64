@@ -136,6 +136,7 @@ def check(dirs, known, quiet=False):
     defs = collect(files)
 
     bad = nodef = checked = excused = 0
+    reported = set()
     for f in files:
         src = open(f, errors='replace').read()
         for m in DECL.finditer(src):
@@ -163,6 +164,7 @@ def check(dirs, known, quiet=False):
                     print('    ' + known[key])
             else:
                 bad += 1
+                reported.add('%s:%s' % (os.path.basename(f), name))
                 print(msg, file=sys.stderr)
     if not quiet:
         print('externarity: %d declarations checked, %d NEW mismatch(es),'
@@ -173,7 +175,7 @@ def check(dirs, known, quiet=False):
               ' linker could resolve it to, and NO TOOL IN THIS BUILD'
               ' COMPARES THEM; fix it, or if it is understood say why in'
               ' tools/kcheck/externarity.known', file=sys.stderr)
-    return bad
+    return reported
 
 
 def inconsistent(dirs):
@@ -211,38 +213,66 @@ FIXTURES = {
 
 
 def selftest():
-    """Three fixtures and three mutations.  Two fixtures cannot tell the
-    static rule from a last-one-wins scanner; the third is what does."""
+    """Three fixtures and four mutations, asserting the EXACT SET the
+    scanner should report.
+
+    Not a count.  A count is satisfied by one true positive plus one
+    false positive as readily as by the right answer, so a scanner that
+    has gone both blind and loud passes it; set equality demands a true
+    positive AND no false positive in one statement.  That correction is
+    the raspi3b session's.
+
+    MEASURED, because I had this wrong twice.  An arity() that returns a
+    CONSTANT does not make the scanner loud, and does not leave it
+    unchanged: it makes it BLIND.  Every declaration and definition gets
+    the same number, they all agree, and it reports the EMPTY SET -- so
+    `arity-constant' expects set() and is caught.  To make it loud the
+    mutation must make each call DIFFER, which is what the counter in
+    `report-everything' does.  I first labelled the constant as
+    report-everything, read its silence as the mutation testing nothing,
+    and told a peer so; it tests blindness, and set equality catches
+    both directions where a count reliably catches neither.
+
+    Two of the three fixtures cannot tell the static rule from a
+    last-one-wins scanner.  The third is what does: a STATIC definition
+    of the same name at a different arity, in a file that sorts LAST so
+    it is exactly what a last-wins scanner would keep.
+    """
     d = tempfile.mkdtemp(prefix='externarity-')
     for nm, body in FIXTURES.items():
         open(os.path.join(d, nm), 'w').write(body)
 
-    rows = []
-    rows.append(('unmutated', check([d], {}, quiet=True), 1))
+    def run():
+        return check([d], {}, quiet=True)
+
+    rows = [('unmutated', run(), {'a.c:bad'})]
 
     global DECL
     keep = DECL
     DECL = re.compile(r'(?!x)x')                      # matches nothing
-    rows.append(('never-report', check([d], {}, quiet=True), 0))
+    rows.append(('never-report', run(), set()))
     DECL = keep
 
     keepa = globals()['arity']
+    everything = {'a.c:ok', 'a.c:bad', 'a.c:shadowed'}
 
-    # A constant here would NOT report everything: both sides would get
-    # the same wrong number and still agree.  The mutation has to make
-    # each call differ, which is why it counts.
     ctr = [0]
 
     def never_agrees(params):
         ctr[0] += 1
         return ctr[0]
     globals()['arity'] = never_agrees
-    rows.append(('report-everything', check([d], {}, quiet=True), 3))
+    rows.append(('report-everything', run(), everything))
+    globals()['arity'] = keepa
+
+    globals()['arity'] = lambda params: 999           # a CONSTANT
+    rows.append(('arity-constant', run(), set()))
     globals()['arity'] = keepa
 
     keeps = globals()['isstatic']
-    globals()['isstatic'] = lambda src, at: False     # judge against static
-    rows.append(('judge-against-static', check([d], {}, quiet=True), 2))
+    globals()['isstatic'] = lambda src, at: False
+    rows.append(('judge-against-static', run(),
+                 {'a.c:bad', 'a.c:shadowed'}))
     globals()['isstatic'] = keeps
 
     print('externarity selftest:')
@@ -252,10 +282,12 @@ def selftest():
             verdict = 'OK' if got == want else 'BROKEN'
         else:
             verdict = 'CAUGHT' if got == want else 'MISSED'
-        if verdict in ('BROKEN', 'MISSED'):
+        if verdict in ('BROKEN', 'MISSED', 'CHANGED'):
             ok = False
-        print('    %-22s %d mismatch(es), want %d: %s'
-              % (nm, got, want, verdict))
+        print('    %-22s %s' % (nm, verdict))
+        if got != want and nm != 'unmutated':
+            print('        reported %s' % (sorted(got) or '{}',))
+            print('        wanted   %s' % (sorted(want) or '{}',))
     for nm in FIXTURES:
         os.unlink(os.path.join(d, nm))
     os.rmdir(d)
@@ -271,7 +303,7 @@ def main():
               file=sys.stderr)
         print('       externarity.py --selftest', file=sys.stderr)
         return 2
-    bad = check(args, loadknown())
+    bad = len(check(args, loadknown()))
     inc = inconsistent(args)
     if inc:
         print('externarity: names with two NON-static definitions that'
