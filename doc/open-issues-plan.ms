@@ -15408,7 +15408,7 @@ So every
 .CW /dev/v3dctl
 write worked, being their kernel, and the one step needing their Limbo command
 did not.  The status after it still showed the control's mailbox op
-.CW ( "args 0x5 0x0 0x0 0x0 ctlidx -1" ,
+.CW "args 0x5 0x0 0x0 0x0 ctlidx -1" , (
 .CW "tag 0x80000008" ),
 and their predicted "ENDS THE BOOT" did not happen for the same reason.  The
 control after was still alive.
