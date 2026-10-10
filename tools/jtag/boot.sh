@@ -29,6 +29,21 @@
 set -u
 ROOT=`cd \`dirname "$0"\`/../.. && pwd`
 #
+# SERIALISE AGAINST EVERY OTHER BOARD TOOL, including the ones in other
+# worktrees.  This is a READ-ONLY tool and it still needs the lock: it
+# drives openocd, openocd holds the FTDI adapter exclusively, and a
+# collision surfaces as LIBUSB_ERROR_ACCESS -- which reads as a dead
+# board rather than a busy one.  The readers here took no lock at all
+# until the raspi3b session measured it; the mechanism had been added
+# to the writers and the long-runners and never to the tools either of
+# us reaches for first.
+#
+. "$ROOT/tools/jtag/boardlock.sh"
+boardfree || { echo "boot.sh: another openocd holds the adapter" >&2; exit 2; }
+boardlock boot.sh || { echo "boot.sh: another board operation is running" >&2; exit 2; }
+trap 'boardunlock' 0 1 2 15
+
+#
 # Scratch for this run.  This defaulted to a session scratchpad in a
 # DIFFERENT worktree, which exists only while that session does, and
 # nothing here created it: with it absent every write into $S went
