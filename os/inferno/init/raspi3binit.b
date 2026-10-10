@@ -3078,6 +3078,26 @@ init()
 	schedlat();
 	rngcheck();
 	sys->bind("#S", "/dev", sys->MAFTER);
+	#
+	# #Q is the V3D device, bound here because NOTHING bound it.
+	#
+	# devv3d.c serves v3dctl and v3dcode, man/3/v3d says to reach them
+	# with "bind -a '#Q' /dev", and qputry(1) prints that very sentence
+	# in its own error message -- so every user of the GPU had to know
+	# the incantation, and a fresh boot answered "file does not exist"
+	# for a device the kernel had already reset.  I walked into it on
+	# the first boot of the unified kernel and briefly read it as the
+	# merge having failed to wire the device in at all.
+	#
+	# MAFTER and not MREPL, like every other device here: #c is already
+	# on /dev and replacing it would take the console with it.
+	#
+	# No check on the result, deliberately.  Every other bind in this
+	# suite that can fail reports it, but this one cannot usefully: the
+	# device is compiled in or it is not, there is no board where it is
+	# optional, and a board without it has no /dev/v3dctl to miss.
+	#
+	sys->bind("#Q", "/dev", sys->MAFTER);
 	sdcheck();
 	drawtest();
 	tktest();

@@ -118,7 +118,7 @@ That also disposes of the other reading the two timeouts allowed:
 writes its
 .B own
 .CW exec
-.CW ( appl/cmd/qputry.b :163),
+.CW "(appl/cmd/qputry.b:163),"
 so the earlier run's first timeout was its submission and the second
 was the explicit one \(em two execs, not an exec preceded by something
 else. Which means the battery's
@@ -503,3 +503,147 @@ If item 3 shows the QPU can fetch and the tag still goes unanswered,
 there is nothing further to try through the mailbox and the next step
 would be the V3D registers directly \(em a driver project, not a step,
 and one to decide on rather than drift into.
+.NH 1
+Silicon, 10 October 2026: the unified kernel, and one measurement per boot
+.PP
+.B "The two tracks are one tree now."
+.CW rio-pi-tk
+was merged into
+.CW raspi3b-port
+and the result built, booted in QEMU, written to the card and booted on
+the real Pi 3B. That matters to this plan for a specific reason: item
+h2 was recorded VOID on a cross\-tree seam, because the experiment needed
+a kernel from one tree and a
+.CW qputry
+from the other. There is no seam now.
+.PP
+.B "V3D answers on silicon through this kernel."
+.CW "bind -a '#Q' /dev"
+then
+.CW "echo enable"
+and
+.CW "ident force 3" :
+.IP
+.EX
+clock hz 250000000
+enabled 1          enable accepted
+ident V3D tried 3 read 3 0x2443356 0xc1102431 0x121
+.EE
+.PP
+.CW IDENT0
+is the "V3D" magic. Decoding
+.CW IDENT1
+= 0xc1102431 gives NSLC 3 and QUPS 4 \(em three slices of four, so
+.B "twelve QPUs,"
+which is the VideoCore IV in a BCM2837. The clock is
+.B "250 MHz and not the 700 MHz QEMU reported,"
+so the V3D\-BLIND guard earned its place on the first real run.
+.PP
+.B "The two-tag alias experiment, both arms in one boot."
+This was the free experiment this plan asked for, and it settles which
+window a flag value buys:
+.IP
+.EX
+flags 0x4   handle 0x4   bus 0xfeaccf60   top 0xC...  uncached
+flags 0xc   handle 0x5   bus 0xbeacbf20   top 0x8...  L2-cached
+.EE
+.PP
+So
+.CW "Memflags = 0xc"
+in
+.CW devv3d.c
+asks for the L2\-cached non\-allocating window, not an uncached one, and
+its comment ("as a QPU program wants") is at best unverified. The code
+is not therefore wrong \(em it calls
+.CW cacheflush()
+on the code, uniform and control buffers before executing, which is the
+compensation that window requires. But the comment asserts a property
+nobody measured, and now it is measured.
+.PP
+.B "AND THE ALLOCATION IS IN THE WRONG PLACE, not merely the wrong window."
+.CW gpualloc
+succeeds \(em alloc answered, lock answered, handle 0x4, bus 0xbeaccf60,
+4096 bytes \(em and then
+.CW exec
+refuses it:
+.IP
+.EX
+qputry: exec: gpu memory is not in RAM this kernel can reach
+.EE
+.PP
+Strip the L2 alias from 0xbeaccf60 and the physical address is
+0x3eaccf60, about 1002 MB. The boot log says
+.CW "arm-mem base 0x0 size 0x3c000000"
+\(em 960 MB. The firmware allocated above the ARM/VideoCore split, so
+the ARM cannot write the code it is being asked to run, and the driver
+is right to refuse. Changing the window would not fix that; changing
+.CW gpu_mem
+in
+.CW config.txt
+is the knob, and it is a card edit and a reboot, not a code change.
+.NH 2
+ONE CLEAN EXECUTE_QPU MEASUREMENT PER BOOT, which invalidates repetition
+.PP
+.B "This is the methodological finding and it outranks the rest."
+The first
+.CW EXECUTE_QPU
+of a boot reads:
+.IP
+.EX
+exec refused code 0x0 tag 0x80000004 PROCESSED wrote 4 bytes 1008631 us
+wait OUT OF TIME (no reply) after 1000000 us (asked 1000000)
+.EE
+.PP
+.B "PROCESSED, four bytes written"
+\(em the firmware does touch the response buffer, where this file
+previously recorded
+.CW "tag 0x0 UNTOUCHED wrote 0 bytes"
+from a JTAG\-booted run. Every LATER attempt in the same boot reads
+UNTOUCHED, and after the first attempt
+.B "GET_CLOCK_RATE and SET_ENABLE_QPU are both refused as well"
+\(em tags that answered seconds earlier on the same channel. The status
+file still shows
+.CW "clock hz 250000000"
+at that point, because that is the driver's cached last\-good value and
+not a fresh read; the tell is
+.CW "enable REFUSED"
+on the line beside it.
+.PP
+.B "So the property channel is poisoned by the first unanswered exec,"
+and a second measurement in the same boot is a measurement of a
+different machine. I read the first PROCESSED result as a one\-off,
+"replicated" it three times, got UNTOUCHED three times and recorded the
+first as refuted \(em and that was wrong in both directions. Rebooting
+and taking exactly one reading reproduced PROCESSED exactly. The three
+replications had changed a variable I did not know existed, which is
+the shape worth keeping: repetition is only evidence when the state
+between repetitions is the same, and here the first trial destroys it.
+.PP
+.B "Program content makes no difference, which answers item 3 as planned."
+This plan proposed discriminating by elapsed time between garbage that
+does not end and a candidate end\-of\-program sequence. Both were run,
+one clean boot each:
+.IP
+.EX
+0xdeadbeef 0xcafebabe                      PROCESSED 4 bytes 1008631 us
+thrend + two nops (6 words, canonical VC4)  PROCESSED 4 bytes 1004254 us
+.EE
+.PP
+Four milliseconds apart, on a one\-second bound, with the same response
+in both. A terminating program is not treated differently from
+nonsense, so the firmware is not getting as far as running the code and
+the "stuck in a program that never ends" reading is refuted. Combined
+with the refusal above, the likeliest remaining account is that
+.CW EXECUTE_QPU
+will not complete for code the ARM placed in its own RAM rather than in
+firmware memory the QPU can fetch \(em and the only way to give it the
+latter is to move the
+.CW gpu_mem
+split so that firmware memory is also ARM\-addressable.
+.PP
+.B "What this does NOT show."
+Nothing here says the QPU ran anything. No pixel, no uniform written
+back, no counter moved. The headline remains that the block identifies
+itself, is clocked and is ungated, and that the mailbox's execute path
+does not complete; the software rasteriser is still what draws 3D on
+this board.

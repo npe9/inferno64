@@ -33,7 +33,7 @@ in
 .CW os/inferno/raspi3b/mmu.c
 maps every 2MB block below
 .CW BCMPERIPH
-.CW ( 0x3f000000 )
+.CW "(0x3f000000)"
 as
 .CW Pnormal .
 So the VideoCore framebuffer is ordinary cacheable memory to the CPU.
@@ -403,7 +403,7 @@ The vblank question above is settled, and not by this branch: the
 raspi3b-port session measured tag
 .CW 0x0004800e
 on silicon
-.CW ( c942709ef ).
+.CW "(c942709ef)."
 The tag exists and it
 .I blocks .
 Eight successive waits gave gaps of 8612, 16664, 16665, 16667, 16665,
@@ -510,10 +510,10 @@ was corrected on this exact point.  Every
 .CW TkNode
 carries its own
 .CW "Rectangle r"
-.CW ( include/tk.h:600 ),
+.CW "(include/tk.h:600),"
 so a union over a frame is one walk of the node list; but
 .CW TkScene
-.CW ( include/tk.h:612 )
+.CW "(include/tk.h:612)"
 is a block allocator, a head, a tail and a count, with no extent field
 and nothing accumulating one.
 .PP
@@ -534,7 +534,7 @@ exists.  What is left is a consumer.
 .B "And the stored field is NOT that consumer."
 Measured rather than assumed, on
 .CW inferno-rio
-.CW ( 5e8980f8d ):
+.CW "(5e8980f8d):"
 .CW tkscenebounds()
 has exactly one caller, the stats block in
 .CW tkwalkflush() ,
@@ -736,7 +736,7 @@ It is gfxstress
 .I fill 's
 mean, a pathologically scattered workload. Measured on the host with a
 per-rectangle histogram weighted by lines
-.CW ( FRAMEPERLINE ,
+.CW "(FRAMEPERLINE,"
 .CW inferno-rio
 .CW 9716386e7 ),
 gfxstress reproduces the board closely \(em fill 80 against 82, text

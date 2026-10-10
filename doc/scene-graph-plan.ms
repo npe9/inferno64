@@ -90,7 +90,7 @@ says so, and the GPU route below becomes the next candidate instead.
 .PP
 .B "1.1 IS ANSWERED, and it moves 1.2's target."
 .CW "render types"
-.CW ( libtk/scene.c ,
+.CW "(libtk/scene.c,"
 .CW inferno-rio
 .CW 343e1635b )
 counts, per widget type, how many times its draw ran and how many of
@@ -604,7 +604,7 @@ What a size\-selection step would need, if text at a scale is wanted:
 the node holds a face
 .I name
 and the families here ship discrete sizes
-.CW ( ascii.10.font ,
+.CW "(ascii.10.font,"
 .CW ascii.12.font ,
 .CW ascii.16.font ),
 so a scaled render would pick the nearest available size rather than
@@ -675,7 +675,7 @@ building anything.
 .B "The alternative if retention is impossible:"
 hand the tree to the GPU rather than caching it. This tree already has
 real Metal compute and a vertex path
-.CW ( gpu (2),
+.CW "(gpu(2),"
 .CW draw3d ),
 so a node tree is the natural input to it, and that is the form the
 "generalised 3D infrastructure" takes if the CPU-side caching does not
@@ -1036,7 +1036,7 @@ the symbol resolves.
 .B "AND ELEVEN OF TWELVE WORKTREES HAVE THE DEFECT."
 Surveyed comment-aware, because comment state is not line-local and the
 live fix carries an extra condition
-.CW ( "if(p == heapmem && c == ptr)" ):
+.CW "(if(p == heapmem && c == ptr)):"
 .DS
 .CW
 	raspi3b-port                                   FIXED
