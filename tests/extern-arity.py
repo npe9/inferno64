@@ -256,8 +256,33 @@ def scan(paths):
 # that matters most here because a false positive would send someone
 # editing correct declarations.
 #
-# MEASURED BY MUTATION rather than argued, which is what makes the two
-# fixtures more than decoration:
+# MEASURED BY MUTATION rather than argued, which is what makes the
+# fixtures more than decoration.
+#
+# HOW TO REPRODUCE IT, and the method is load-bearing because the first
+# harness I used was wrong.  Copy this file, sed one line, and run the
+# copy WITH EXPLICIT DIRECTORIES:
+#
+#	cp tests/extern-arity.py tests/.mut.py
+#	sed -i '' 's|if got != want:|if False:|' tests/.mut.py
+#	python3 tests/.mut.py os/inferno/raspi3b os/inferno/port
+#
+# then grep the output for `SELF-TEST FAILED'.
+#
+# TWO WAYS THAT GOES WRONG AND LOOKS RIGHT.  Put the mutant in a
+# scratch directory and its HERE resolves there, so the default roots
+# do not exist and it exits 1 with "is not a directory" -- which is
+# indistinguishable from "the self-test caught it" IF YOU ONLY READ THE
+# EXIT CODE.  Every entry below first appeared to pass that way, for
+# mutations that had never been exercised at all.  And passing the two
+# roots through an unquoted shell variable is worse, because zsh does
+# not word-split: both paths arrive as ONE argument, the control itself
+# exits 1, and the table reads unanimous.
+#
+# So the verdict is taken from the self-test's OWN message and the
+# unmutated control is run FIRST and required to exit 0.  Discriminate
+# by WHICH failure, never by failure.  The table below is the result of
+# the corrected harness; the earlier numbers were right by coincidence.
 #
 #	scanner mutation                    self-test
 #	never report a mismatch             exit 1, CAUGHT
@@ -268,20 +293,33 @@ def scan(paths):
 #	arity() always returns 1            exit 1, CAUGHT
 #	unmutated                           exit 0
 #
-# THE LAST TWO ARE THE ONES THAT NEARLY DO NOT COUNT, and they pass for
-# a reason worth stating rather than by luck.  A constant arity gives
-# the declaration and the definition THE SAME WRONG NUMBER, so they
-# still agree and nothing is reported -- a mutation that leaves the
-# comparison satisfiable tests nothing, and in a checker that only
-# looked for absence of false reports it would sail through.  This one
-# is caught because the assertion is SET EQUALITY against exactly
-# ['fballoc']: it demands a true positive AND no false positives in one
-# statement, so a scanner that has gone blind fails it just as surely as
-# one that has gone loud.  A peer hit exactly this and their
-# report-everything mutation initially missed.
+# THE LAST TWO MAKE THE SCANNER BLIND RATHER THAN LOUD, which is the
+# direction a weak self-test misses.  A constant arity gives the
+# declaration and the definition the same wrong number, so everything
+# agrees, nothing is reported, and the scan returns the EMPTY SET.
 #
-# So: assert the exact set the scanner should produce.  Not a count --
-# one true positive plus one false positive is also two.
+# That is caught here because the assertion is SET EQUALITY against
+# exactly ['fballoc']: it demands a true positive AND no false positives
+# in one statement, so a scanner that has gone quiet fails it just as
+# surely as one that has gone loud.  An assertion on the COUNT would not
+# have caught it, and would also have accepted a false positive on one
+# fixture plus a miss on another -- one plus one is also two.
+#
+# WHAT THIS COMMENT SAID AND GOT WRONG, because the mistake is the
+# instructive part.  It read: "a mutation that leaves the comparison
+# satisfiable tests nothing."  That is false, and it contradicted the
+# next sentence of the same comment, which explained how the mutation is
+# detected.  A constant arity does not leave the comparison untestable;
+# it silences the tool, which is a real and detectable failure.  The
+# claim came from a peer who had labelled that mutation
+# `report-everything', expected three reports, got none, and read the
+# silence as the mutation being inert rather than as the scanner going
+# quiet -- then retracted it.  I had written it down as received.
+#
+# So the rule is: assert the exact set the scanner should produce, and
+# keep loud and quiet mutations as SEPARATE cases, because a mutation
+# must make each call differ to make a checker loud and a constant makes
+# it quiet.
 #
 def selftest():
     d = tempfile.mkdtemp(prefix='extern-arity-self.')
