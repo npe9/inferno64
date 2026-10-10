@@ -779,7 +779,36 @@ mboxsetpower(int devid, int on)
  * success, -1 otherwise.
  */
 int
-mboxfballoc(int w, int h, uintptr *fbpa, u32 *pitch, u32 *fbsize)
+/*
+ * vh IS THE VIRTUAL HEIGHT AND IT IS NOT OPTIONAL HERE, however much the
+ * 0x00048004 tag below looks like it could take h twice.
+ *
+ * THIS ARGUMENT WENT MISSING IN THE rio-pi-tk MERGE AND TOOK THE DISPLAY
+ * WITH IT.  That branch's mboxfballoc has five parameters; this branch's
+ * has six, because screenbcm.c asks for a framebuffer TALLER than the
+ * screen -- vh == 2*ScrY -- so that a page flip is a SET_VIRTUAL_OFFSET
+ * and copies nothing.  Rebuilding this file from their version to get
+ * their mailbox timeout work dropped the parameter, and then:
+ *
+ *	screenbcm.c:31    extern int mboxfballoc(int,int,int,uintptr*,u32*,u32*);
+ *	screenbcm.c:1102  mboxfballoc(ScrX, ScrY, Dbuf? 2*ScrY: ScrY, ...)
+ *
+ * passed six arguments to a five-parameter function.  Every argument
+ * after the second shifted by one: vh landed in fbpa, &fbpa in pitch.
+ * The allocation failed, the kernel came up with no framebuffer at all,
+ * and polytest and draw3dkerntest both reported "no frame buffer" on a
+ * board whose monitor had been working an hour earlier.
+ *
+ * NOTHING COULD HAVE CAUGHT IT.  screenbcm.c declares its own extern
+ * rather than taking one from a shared header, so the six-argument
+ * prototype and the five-parameter definition are in different
+ * translation units; 7c type-checks neither against the other and this
+ * loader does not compare signatures.  It compiled silently, linked
+ * silently, and booted.  A locally declared extern defeats cross-file
+ * type checking completely -- which is the argument for fns.h and
+ * against the convenience of declaring it where it is used.
+ */
+mboxfballoc(int w, int h, int vh, uintptr *fbpa, u32 *pitch, u32 *fbsize)
 {
 	static u32 raw[40+4];
 	u32 *buf, *tag, *pitchslot;
@@ -790,7 +819,7 @@ mboxfballoc(int w, int h, uintptr *fbpa, u32 *pitch, u32 *fbsize)
 	buf[i++] = 0x00048003; buf[i++] = 8; buf[i++] = 0;	/* set phys w,h */
 		buf[i++] = w; buf[i++] = h;
 	buf[i++] = 0x00048004; buf[i++] = 8; buf[i++] = 0;	/* set virt w,h */
-		buf[i++] = w; buf[i++] = h;
+		buf[i++] = w; buf[i++] = vh;	/* vh, NOT h: see above */
 	buf[i++] = 0x00048005; buf[i++] = 4; buf[i++] = 0;	/* set depth */
 		buf[i++] = 32;
 	buf[i++] = 0x00048006; buf[i++] = 4; buf[i++] = 0;	/* set pixel order */
