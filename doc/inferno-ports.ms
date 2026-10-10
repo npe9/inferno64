@@ -24589,6 +24589,36 @@ the entry path the card uses;
 .CW os/inferno/raspi3b/qemu.sh
 does it.
 .PP
+.B "Driving that console from a script needs a check, because it corrupts
+.B "input intermittently."
+Observed:
+.CW "cat /dev/v3dctl"
+arriving as
+.CW "cat /dev/v3"
+\(em the shell then reports a file nobody asked for \(em and
+.CW "cat /dev//v3dctl" ,
+a character delivered twice. A doubled slash is harmless; a doubled
+digit in
+.CW "echo exec 1 1 0 1 1000 2000"
+changes a timeout tenfold and says nothing. Four boots went to this
+before it was recognised as corruption rather than as results.
+.CW os/inferno/raspi3b/qemufeed.sh
+feeds commands and then requires every one to appear VERBATIM in the
+log, which the console echo makes checkable, and calls the run VOID
+otherwise.
+.PP
+Feeding slowly is
+.I not
+the fix and the tool says so: one character at a time with a 20 ms
+delay was the first theory, and a control at zero delay \(em the rate
+where corruption had been seen \(em came back intact too. The fault is
+intermittent, so a clean run says nothing about the next one and the
+check is the only thing that does.
+.CW QEMUFEED_SELFTEST=1
+adds an expectation that was never sent and the tool must then report
+VOID, since a checker that cannot fail is indistinguishable from no
+checker.
+.PP
 The board also shed the rest of its QEMU virt inheritance, each piece a
 hardware defect QEMU hid.
 .CW archvirtarm64.c ,
