@@ -1094,6 +1094,23 @@ copyu(Prog *p, Adr *v, Adr *s)
 		}
 		if(copyas(&p->to, v)) {
 			if(p->reg == NREG)
+				/*
+				 * NOT A DEAD STORE, and a caller audit cannot
+				 * show that.  copyu() is a query, so normalising
+				 * p->reg here looks removable once you have
+				 * checked that no caller reads the queried
+				 * instruction's reg -- and that audit comes back
+				 * clean.  The mutation PERSISTS IN THE Prog and
+				 * later passes read it: removing these two lines
+				 * and rebuilding 7c compiled one file to the same
+				 * SIZE differing at char 2042.  Measured by the
+				 * raspi3b session, which then reverted it and
+				 * confirmed the revert byte-identically.
+				 *
+				 * So the cheap instrument for this is ONE FILE
+				 * COMPILED BOTH WAYS, not an audit of the callers
+				 * and not a kernel pair.  5c carries the same arm.
+				 */
 				p->reg = p->to.reg;
 			if(copyau(&p->from, v))
 				return 4;

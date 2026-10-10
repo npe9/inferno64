@@ -1005,6 +1005,22 @@ copyu(Prog *p, Adr *v, Adr *s)
 		}
 		if(copyas(&p->to, v)) {
 			if(p->reg == NREG)
+				/*
+				 * NOT A DEAD STORE -- see the long note at the
+				 * same arm in utils/7c/peep.c.  copyu() is a
+				 * query, so this looks removable once a caller
+				 * audit comes back clean, and the audit DOES come
+				 * back clean: the mutation persists in the Prog
+				 * and later passes read it.  One file compiled
+				 * both ways is the instrument; 7c's removal
+				 * changed output at char 2042 with the size
+				 * unchanged.
+				 *
+				 * The store in subprop() above is a different
+				 * thing: that function exists to transform, so a
+				 * write there is not surprising.  This one is in
+				 * a function that answers questions.
+				 */
 				p->reg = p->to.reg;
 			if(copyau(&p->from, v))
 				return 4;
