@@ -294,11 +294,27 @@ def selftest():
 
     print('externarity selftest:')
     ok = True
+    base = rows[0][1][0]
     for nm, (got, ncmp), want in rows:
         if ncmp == 0:
             verdict = 'HARNESS DEAD (scanned no files)'
         elif nm == 'unmutated':
             verdict = 'OK' if got == want else 'BROKEN'
+        elif got == base:
+            #
+            # A mutation that does not CHANGE the outcome has not been
+            # shown to do anything, whatever it matches.  This is what
+            # files-scanned could not see: fixtures that exist but are
+            # EMPTY give 3 files and no content, so the unmutated run
+            # and the two mutations expecting the empty set all return
+            # it, and both read CAUGHT off a harness with nothing in
+            # it.  Measured by writing the fixtures empty.
+            #
+            # It assumes no mutation's expected answer equals the
+            # unmutated one, which holds for all five here and should
+            # be checked when adding a sixth.
+            #
+            verdict = 'INERT (outcome unchanged -- harness suspect)'
         else:
             verdict = 'CAUGHT' if got == want else 'MISSED'
         if verdict != 'OK' and verdict != 'CAUGHT':
