@@ -670,7 +670,15 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 	iters = 0;
 	i = 0;
 	chan = hc - r->hchan;
-	hcdma = hctsiz = 0;
+	/*
+	 * hcdma and hctsiz are NOT pre-set to zero any more, and 7c is
+	 * what proves that is safe: with the baseline read moved above the
+	 * goto, it reports `set and not used' for this initialisation --
+	 * i.e. every path that reaches the subtraction now passes the save,
+	 * which is exactly the invariant the panic violated.  A zero here
+	 * would re-arm the bug by making the unset case look valid instead
+	 * of being impossible.
+	 */
 	for(;;){
 		/*
 		 * Every way out of this loop is a condition the device has to
@@ -705,10 +713,52 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		i = ctlr->hcintr[chan];
 		ctlr->hcintr[chan] = 0;
 		iunlock(ctlr);
-		if(split && (i & ~(Chhltd|Nak|Ack|Nyet)) != 0 && (i & Chhltd))
-			goto Result;
+		/*
+		 * THE BASELINE IS READ BEFORE THE goto, AND THAT IS THE FIX
+		 * FOR A KERNEL PANIC.
+		 *
+		 * `n = hc->hcdma - hcdma' below measures the transfer by how
+		 * far the DMA pointer moved, so the saved hcdma is the
+		 * baseline.  These two reads used to sit AFTER the goto --
+		 * and `Result:' is inside this loop, ABOVE that subtraction,
+		 * so the split-error path jumped over the save, fell through
+		 * the error handling, and reached the subtraction with hcdma
+		 * still 0 from its initialisation.
+		 *
+		 * Then n became the raw DMA BUS ADDRESS, which carries the
+		 * 0xC0000000 alias and is therefore NEGATIVE as an int:
+		 *
+		 *	n      = hc->hcdma - 0   = 0xC3B4A808 = -1011570680
+		 *	clamp  if(n > nleft)     does not catch a negative
+		 *	nleft -= n               = 8 + 1011570680
+		 *	return len - nleft       = -1011570680
+		 *
+		 * ctltrans then handed that to cacheinval(void*, usize) --
+		 * UNSIGNED -- which walked dcivac from the buffer across
+		 * unmapped memory until the MMU stopped it:
+		 *
+		 *	panic: trap
+		 *	vectrap <- dcivac <- cacheinval <- ctltrans
+		 *
+		 * MEASURED, not deduced: with a validating print in
+		 * ctltrans, a full-speed USB-serial adapter produced
+		 * `datalen -1011570680 outside buf 0x3b4a800 size 64
+		 * (asked 8)' twenty-four times, and dmaaddr(0x3b4a800) + 8 is
+		 * 0xC3B4A808 exactly -- the length WAS the device's own DMA
+		 * address plus the eight bytes it had moved.
+		 *
+		 * hctsiz is moved for the same reason: the Tbulk IN path
+		 * differences it against hc->hctsiz and had the same unset
+		 * baseline.
+		 *
+		 * The WRITE below stays where it was on purpose -- clearing
+		 * Dopng has a side effect on the channel, and the error path
+		 * deliberately does not do it.
+		 */
 		hcdma = hc->hcdma;
 		hctsiz = hc->hctsiz;
+		if(split && (i & ~(Chhltd|Nak|Ack|Nyet)) != 0 && (i & Chhltd))
+			goto Result;
 		hc->hctsiz = hctsiz & ~Dopng;
 		if(hc->hcchar&Chen){
 			hc->hcchar |= Chen | Chdis;
