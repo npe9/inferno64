@@ -32,14 +32,28 @@ declarations that exist.
 
 HOW IT COUNTS.  Top-level commas between the parentheses, with `void'
 and empty treated as zero.  A function-pointer or array parameter would
-be miscounted; none in this directory has one, and the summary line
+be miscounted; none in these directories has one, and the summary line
 prints how many declarations it actually compared so that a reader can
 tell a clean run from a run that looked at nothing -- the failure this
 tree keeps finding in its own tools.
 
-Only functions DEFINED in the same directory are checked.  An extern for
-something in port/ or libc is skipped rather than guessed at, so a zero
-here does not mean every extern in the file is right.
+WHAT IT WILL AND WILL NOT JUDGE, which bounds what a clean run means:
+
+  - Only functions DEFINED in the directories scanned.  An extern for
+    libc, libmemdraw or anything else outside them is skipped rather
+    than guessed at, so a zero does not mean every extern is right.
+  - Only against a definition that is NON-STATIC, or in the SAME FILE
+    as the declaration.  A static definition is file-local and an
+    extern elsewhere cannot refer to it; judging against one turns a
+    correct declaration into a reported defect.  91 names in scope have
+    more than one definition and 16 of those disagree in arity, almost
+    all through a static, so this rule is load-bearing rather than
+    pedantic.
+  - All matching definitions, not one.  A name with several
+    implementations chosen by config (cache.c/nocache.c,
+    dynld.c/nodynld.c, screenbcm.c/screennone.c/noscreen.c) is checked
+    against each, and a disagreement names every file it disagrees
+    with.
 
 EXIT CODES FOLLOW tests/toolchain, WHICH IS NOT THE OBVIOUS ORDER:
 
@@ -116,31 +130,70 @@ def scan(paths):
     # the brace too is what keeps a CALL inside a function from being
     # read as a definition.
     #
+    # A LIST PER NAME, NOT ONE ENTRY, and `static' is recorded.  This
+    # used to be `defs[name] = ...', so when two files defined the same
+    # name the LAST ONE SCANNED silently won and every declaration of
+    # that name was compared against whichever that happened to be.
+    #
+    # It is not a rare case: in os/inferno/raspi3b plus os/inferno/port
+    # there are 91 such names and 16 of them have definitions whose
+    # arities DISAGREE -- `reset' in nine driver files, `etherread' at 1
+    # and 4, `pmreset' at 0 and 1.  Each of those comparisons was a coin
+    # flip between a false pass and a false report, decided by sort
+    # order.  The result happened to come out right, which is the worst
+    # way for it to come out.
+    #
+    # Nearly all of them are STATIC, i.e. file-local, and an extern in
+    # another file cannot possibly refer to one -- so the rule is that a
+    # declaration may only be judged against a definition that is either
+    # non-static, or in the same file as the declaration.  Checked: no
+    # name in scope has two NON-static definitions whose arities
+    # disagree, so the alternative-implementation pattern this tree uses
+    # everywhere (cache.c/nocache.c, dynld.c/nodynld.c, screenbcm.c/
+    # screennone.c/noscreen.c) is consistent and stays silent.
+    #
+    # A peer found the same defect in the baseline of their equivalent
+    # check -- keyed by name, so one entry about one file excused the
+    # same mismatch in another -- which is what sent me looking here.
+    #
     defs = {}
     for path in paths:
+        base = os.path.basename(path)
         with open(path, errors='surrogateescape') as f:
             lines = f.read().split('\n')
         for i, line in enumerate(lines):
             m = re.match(r'^([a-zA-Z_][a-zA-Z0-9_]*)\((.*)\)\s*$', line)
-            if m and i + 1 < len(lines) and lines[i + 1].startswith('{'):
-                defs[m.group(1)] = (arity(m.group(2)),
-                                    os.path.basename(path), i + 1)
+            if not (m and i + 1 < len(lines) and lines[i + 1].startswith('{')):
+                continue
+            #
+            # The return type sits on the line immediately above, and
+            # carries `static' when there is one.  Only that line is
+            # looked at: reaching further back picks up comment text and
+            # unrelated code, which would call a global function static
+            # and then quietly stop checking it.
+            #
+            above = lines[i - 1] if i else ''
+            isstatic = re.match(r'^\s*static\b', above) is not None
+            defs.setdefault(m.group(1), []).append(
+                (base, i + 1, arity(m.group(2)), isstatic))
 
     found, compared = [], 0
     for path in paths:
+        base = os.path.basename(path)
         with open(path, errors='surrogateescape') as f:
             for i, line in enumerate(f, 1):
                 m = DECL.search(line)
                 if not m:
                     continue
                 name, want = m.group(1), arity(m.group(2))
-                if name not in defs:
-                    continue        # defined elsewhere; not ours to judge
-                got, where, dline = defs[name]
+                cand = [d for d in defs.get(name, ())
+                        if not d[3] or d[0] == base]
+                if not cand:
+                    continue        # only file-local elsewhere, or absent
                 compared += 1
-                if got != want:
-                    found.append((name, os.path.basename(path), i, want,
-                                  where, dline, got))
+                for where, dline, got, _ in cand:
+                    if got != want:
+                        found.append((name, base, i, want, where, dline, got))
     return found, compared
 
 
@@ -164,17 +217,19 @@ def scan(paths):
 # MEASURED BY MUTATION rather than argued, which is what makes the two
 # fixtures more than decoration:
 #
-#	scanner mutation                 self-test
-#	never report a mismatch          exit 1, CAUGHT
-#	report every pair as a mismatch  exit 1, CAUGHT
-#	unmutated                        exit 0
+#	scanner mutation                    self-test
+#	never report a mismatch             exit 1, CAUGHT
+#	report every pair as a mismatch     exit 1, CAUGHT
+#	judge against static definitions    exit 1, CAUGHT
+#	unmutated                           exit 0
 #
 def selftest():
     d = tempfile.mkdtemp(prefix='extern-arity-self.')
     try:
         with open(os.path.join(d, 'caller.c'), 'w') as f:
             f.write('extern int fballoc(int, int, int, void*, void*, void*);\n'
-                    'extern int agree(int, int);\n')
+                    'extern int agree(int, int);\n'
+                    'extern int shadowed(int);\n')
         with open(os.path.join(d, 'callee.c'), 'w') as f:
             f.write('int\n'
                     'fballoc(int w, int h, void *a, void *b, void *c)\n'
@@ -182,12 +237,29 @@ def selftest():
                     '\n'
                     'int\n'
                     'agree(int a, int b)\n'
+                    '{\n\treturn 0;\n}\n'
+                    '\n'
+                    'int\n'
+                    'shadowed(int a)\n'
+                    '{\n\treturn 0;\n}\n')
+        #
+        # A STATIC definition of the same name, in a third file, with a
+        # DIFFERENT arity.  An extern in caller.c cannot refer to it, so
+        # it must not be reported -- and because this file sorts after
+        # callee.c it is also the one a last-one-wins scanner would have
+        # kept, which is exactly how the old version would have turned a
+        # correct declaration into a mismatch.
+        #
+        with open(os.path.join(d, 'zlocal.c'), 'w') as f:
+            f.write('static int\n'
+                    'shadowed(int a, int b, int c)\n'
                     '{\n\treturn 0;\n}\n')
         found = scan(sorted(glob.glob(os.path.join(d, '*.c'))))[0]
         names = sorted(n for n, *_ in found)
         if names != ['fballoc']:
-            return (f'planted one 6-vs-5 mismatch and one matching pair;'
-                    f' scanner reported {names or "nothing"}')
+            return (f'planted a 6-vs-5 mismatch, a matching pair, and a'
+                    f' static same-name decoy; scanner reported'
+                    f' {names or "nothing"} (want exactly fballoc)')
         return None
     finally:
         shutil.rmtree(d, ignore_errors=True)
@@ -199,8 +271,8 @@ if why is not None:
     print('extern-arity: the detector does not work, so a clean result below'
           ' would mean nothing.', file=sys.stderr)
     sys.exit(1)
-print('extern-arity: self-test ok (a 6-vs-5 mismatch is caught, a matching'
-      ' pair is not flagged)')
+print('extern-arity: self-test ok (a 6-vs-5 mismatch is caught; a matching'
+      ' pair and a static same-name decoy are not)')
 
 bad, checked = scan(sources)
 
