@@ -50,7 +50,25 @@ static	QLock	dllock;
 static	Dyndev**	finddyndev(char*);
 static	int	matched(Dyndev*, char*, char*);
 
-extern	Dynobj*	kdynloadfd(int, Dynsym*, int, ulong);
+/*
+ * THREE PARAMETERS, NOT FOUR.  Both definitions -- dynld.c and
+ * nodynld.c -- take (int, Dynsym*, int); this declared a fourth
+ * ulong and the call below passed 0 for it, which neither
+ * implementation ever read.
+ *
+ * Latent rather than live, and saying which matters: no board
+ * config lists dynld, so this file is compiled by nothing, while
+ * nodynld.c IS linked (kdynloadfd appears in iraspi3b.listing).
+ * So the disagreement never reached a compiler.  It would have
+ * become a wrong argument on the stack the first time a board
+ * enabled the device.
+ *
+ * Found by tests/extern-arity.py once it was pointed at port/ as
+ * well as the board directory -- a peer's equivalent check found
+ * the same pair in their tree, which is how the gap in mine came
+ * to light.
+ */
+extern	Dynobj*	kdynloadfd(int, Dynsym*, int);
 
 static void
 dlfree(Dyndev *l)
@@ -88,7 +106,7 @@ dlload(char *path, Dynsym *tab, int ntab)
 	l->path = strdup(path);
 	if(l->path == nil)
 		error(Enomem);
-	l->o = kdynloadfd(fd, tab, ntab, 0);
+	l->o = kdynloadfd(fd, tab, ntab);
 	if(l->o == nil)
 		error(up->env->errstr);
 	poperror();

@@ -59,19 +59,32 @@ import shutil
 import sys
 import tempfile
 
+#
+# BOTH DIRECTORIES BY DEFAULT, because both are in the same link.
+#
+# This checked only os/inferno/raspi3b at first, which is the directory
+# the bug that motivated it was in.  A peer wrote the equivalent check
+# against their board directory AND os/inferno/port and found a 4-vs-3
+# in port/devdynld.c; mine could not see it, because a declaration and
+# its definition can sit in different directories of one kernel just as
+# easily as in different files of one directory.  Scanning the board
+# directory alone makes a clean result mean less than it reads.
+#
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT = os.path.join(HERE, '..', 'os', 'inferno', 'raspi3b')
-root = sys.argv[1] if len(sys.argv) > 1 else DEFAULT
+DEFAULTS = [os.path.join(HERE, '..', 'os', 'inferno', 'raspi3b'),
+            os.path.join(HERE, '..', 'os', 'inferno', 'port')]
+roots = sys.argv[1:] if len(sys.argv) > 1 else DEFAULTS
 
-if not os.path.isdir(root):
-    print(f'extern-arity: {root} is not a directory; nothing to check',
-          file=sys.stderr)
-    sys.exit(1)
+for r in roots:
+    if not os.path.isdir(r):
+        print(f'extern-arity: {r} is not a directory; nothing to check',
+              file=sys.stderr)
+        sys.exit(1)
 
-sources = sorted(glob.glob(os.path.join(root, '*.c')))
+sources = sorted(p for r in roots for p in glob.glob(os.path.join(r, '*.c')))
 if not sources:
-    print(f'extern-arity: no .c files under {root} -- refusing to report clean',
-          file=sys.stderr)
+    print(f'extern-arity: no .c files under {", ".join(roots)}'
+          f' -- refusing to report clean', file=sys.stderr)
     sys.exit(1)
 
 
@@ -204,7 +217,7 @@ if bad:
           ' the copy.')
     sys.exit(2)
 
+where = ', '.join(os.path.basename(os.path.normpath(r)) for r in roots)
 print(f'extern-arity: ok -- {checked} declaration(s) compared against'
-      f' definitions in {os.path.basename(os.path.normpath(root))},'
-      f' {len(sources)} source(s) read')
+      f' definitions in {where}, {len(sources)} source(s) read')
 sys.exit(0)
