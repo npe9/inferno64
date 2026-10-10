@@ -449,10 +449,34 @@ v3dexecraw(int ctlidx, u32 w0, u32 w1, u32 w2, u32 w3, uvlong waitus)
 		 * address outside RAM would fault just as surely as the bug
 		 * did, and this driver cannot assume the firmware's answer
 		 * is sane -- the emulator's was not.
+		 *
+		 * THE BOUND IS BCMPERIPH AND NOT DRAMSIZE, and getting that
+		 * wrong is what stopped the one h2 attempt on silicon.  The
+		 * firmware allocated 4096 bytes at bus 0xbeaccf60, which is
+		 * physical 0x3eaccf60, about 1002 MB -- above arm-mem's
+		 * 960 MB, because allocating above the ARM/VideoCore split
+		 * is what the firmware is SUPPOSED to do.  This test used
+		 * DRAMSIZE, which is 256 MB here, so it refused an
+		 * allocation the kernel can perfectly well reach and the
+		 * question could not be asked.
+		 *
+		 * What the kernel can reach is what mmuinit() maps:
+		 * os/inferno/raspi3b/mmu.c fills 512 2 MB L2 entries over
+		 * 0..1GB, Pdevice from BCMPERIPH up and Pnormal below it,
+		 * so every address under BCMPERIPH is mapped cached RAM --
+		 * the GPU window at 0x3c000000..0x3f000000 included.  That
+		 * mapping is incidental rather than written for this, which
+		 * is why it is cited here: if mmuinit stops covering it,
+		 * this breaks and the comment says where to look.
+		 *
+		 * The mapping is CACHED, which is why v3dexecraw
+		 * cacheflush()es the code, uniforms and control list below
+		 * before the exchange.  That was already necessary for
+		 * Memflags 0xc and is necessary for this too.
 		 */
 		pa = v3d.membus & ~0xc0000000U;
-		if(pa == 0 || pa + v3d.memsize > DRAMSIZE)
-			error("gpu memory is not in RAM this kernel can reach");
+		if(pa == 0 || pa + v3d.memsize > BCMPERIPH)
+			error("gpu memory is not in RAM this kernel maps");
 		m = (u32*)(uintptr)pa;
 		cbus = v3d.membus;
 		ubus = v3d.membus + 2*4;
