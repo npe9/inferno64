@@ -16,12 +16,25 @@ and refuses a nonsense tag, so the property channel works and the
 answers mean something.
 .CW EXECUTE_QPU
 is
-.I "never answered:"
+.I "never completed."
+On the FIRST exec of a virgin firmware session the firmware writes a
+four\-byte tag header \(em
+.CW "tag 0x80000004 PROCESSED"
+\(em and then no reply ever arrives and
 .CW buf[1]
-and
+stays as the driver left it; on any exec after that in the same session
 .CW buf[4]
-come back as the driver left them and the value buffer holds the
-request verbatim.
+is untouched too, because the first attempt kills the channel. This
+paragraph used to say the request was never answered at all and that
+both words came back as the driver left them, which was a reading taken
+from poisoned\-channel runs. The sections below have the measurements
+and the correction.
+.PP
+.B "And the memory arrangement is eliminated as of the h2 run:"
+the exec has now been issued against firmware memory the kernel maps and
+demonstrably wrote, with the block ungated and the code loaded, in a
+virgin session, twice \(em same result. The remaining space is between
+the submission and the QPU.
 .PP
 .B "What is NOT the question."
 The argument layout. Fitting parameters to a request nobody replies to
@@ -592,27 +605,63 @@ Strip the L2 alias from 0xbeaccf60 and the physical address is
 \(em 960 MB. So the allocation is outside what the firmware told the
 kernel its RAM is.
 .PP
-.B "BUT THE REFUSAL IS THE KERNEL'S POLICY, NOT A MEASURED FAULT,"
-and the distinction matters because the reasoning is otherwise circular.
-The driver refuses because the address is outside what
-.CW confinit
-mapped, and
-.CW confinit
-mapped what the same mailbox report described. Nothing here has shown
-that an ARM access to
-.CW 0x3eaccf60
-actually faults \(em only that this kernel declined to map it. The
-refusal is almost certainly right, and it is still an assumption.
+.B "AND THAT WAS THE WRONG CONCLUSION: THE KERNEL MAPS IT ANYWAY."
+Resolved by rio\-pi\-tk in
+.CW 62dfad33a ,
+cherry\-picked here. The bound tested against
+.CW DRAMSIZE ,
+which is 256 MB on this board, when what the kernel can reach is what
+.CW mmuinit()
+maps. Checked against this tree's own
+.CW mmu.c
+rather than taken on trust:
+.IP
+.EX
+mmu.c:73   for(i = 0; i < 512; i++)      512 entries
+mmu.c:74   pa = (uintptr)i << L2SHIFT    2 MB each, so 0..1GB
+mmu.c:75   pa >= BCMPERIPH -> Pdevice    peripherals
+mmu.c:86   else            -> Pnormal    RAM, CACHED
+
+mem.h      DRAMSIZE  0x10000000 =  256 MB
+mem.h      BCMPERIPH 0x3f000000 = 1008 MB
+.EE
 .PP
-.B "The cheap test is a mapping, not a card edit."
-Mapping the VideoCore region read\-only and reading one word says
-whether the ARM can reach it at all, for the cost of a kernel rebuild.
-Only if it cannot is
+1002 MB is below
+.CW BCMPERIPH ,
+so the allocation was mapped
+.CW Pnormal
+all along and the guard was the only thing refusing it. No
 .CW gpu_mem
-in
+edit, no card change.
+.PP
+.B "I stopped one step short of this and should say where."
+I had already softened "the ARM cannot write it" to "the kernel does
+not map it, and the driver refuses on that basis", on the grounds that
+the refusal and its premise came from one source and nothing had shown
+an access would fault. That caution was right and insufficient: the
+kernel
+.I does
+map it, so even the softened version was wrong. The circularity was
+real and the thing to read was
+.CW mmuinit ;
+I named
 .CW config.txt
-the answer, and that is a card edit and a reboot. Doing the card edit
-first would answer a question nobody has asked yet.
+instead, which would have changed the machine for every other question
+to fix a constant.
+.PP
+Two limits kept from the author: the change is
+.B "untested on silicon by itself"
+\(em QEMU's
+.CW LOCK_MEMORY
+returns an address with no alias bits and errors before the bound is
+reached \(em and the mapping is
+.B incidental,
+falling out of
+.CW mmuinit 's
+else branch rather than written for this, which is why the comment
+cites
+.CW mmu.c
+by name.
 .NH 2
 PROCESSED where this document recorded UNTOUCHED, on a card boot
 .PP
@@ -787,3 +836,63 @@ can silently become),
 13 ok 0 fail, and
 .CW bndstest
 11 ok 0 fail \(em so bounds checks are still armed with the JIT on.
+.NH 1
+h2 ANSWERED, and the answer is no: firmware memory was not the fault
+.PP
+With the reachability bound corrected, h2 could finally be asked. Two
+virgin firmware sessions, one exec each, card boots of this tree:
+.IP
+.EX
+clock hz 250000000                 channel alive before the question
+enable accepted                    block ungated
+code 24 bytes                      thrend + two nops, canonical VC4
+gpumem firmware handle 0x4 bus 0xbeaccf60 size 4096
+args 0x1 0xbeaccf60 0x3e8 0x0      ctlidx 1 -- FIRMWARE memory
+block 0xbeaccf68 0xbeaccf78        base+8 and base+24, inside it
+exec refused code 0x0 tag 0x80000004 PROCESSED wrote 4 bytes
+wait OUT OF TIME (no reply) after 1000000 us
+.EE
+.PP
+1004140 us and 1007087 us, three milliseconds apart.
+.PP
+.B "Every condition the question needed was met."
+The control address passed to
+.CW EXECUTE_QPU
+is
+.CW 0xbeaccf60 ,
+the firmware's own allocation, where every previous attempt passed
+.CW 0xc0361430 ,
+a kernel buffer with the uncached alias bolted on. The block entries
+land at base+8 and base+24, inside the 4096 bytes. The block was
+ungated, the code was loaded, the session was virgin, and the channel
+was alive immediately before.
+.PP
+.B "So the memory arrangement is eliminated."
+Not the window, not the placement, not the alias. That was the last
+hypothesis in this plan with a cheap test attached, and it is spent.
+.PP
+.B "What the block pair does NOT show,"
+because it would be easy to over\-read. The
+.CW block
+line went from all zeros to two addresses across the exec, but it is
+populated by
+.CW v3dexecraw
+on its way in and read back from the driver's own record \(em so the
+difference says the DRIVER wrote a control list into firmware memory,
+which is what was wanted, and says
+.I nothing
+about whether the GPU read it. The same caveat this plan already
+records for
+.CW arith .
+A readback that cannot distinguish the writer from the reader is not
+evidence about the reader.
+.PP
+.B "Where that leaves it,"
+combining this with the end\-of\-program result above: the firmware
+accepts the message and writes a four\-byte reply header, and the job
+never completes. "The firmware never sees it" is out, "the code is
+unreachable" is out, and "stuck in a program that never ends" is out.
+The remaining space is between the submission and the QPU, and nothing
+left in it is answerable through the property channel \(em which is
+what this plan's last section already says the decision is: the V3D
+registers directly, a driver project rather than a step.
