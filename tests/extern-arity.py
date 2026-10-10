@@ -140,7 +140,7 @@ DECL = re.compile(r'\bextern\s+[a-zA-Z_][a-zA-Z0-9_ *]*?\s*\*?\s*'
 
 
 def scan(paths):
-    """Return (mismatches, how_many_compared, inconsistent_defs)."""
+    """Return (mismatches, compared, inconsistent_defs, files_read)."""
     #
     # A definition is a line at column 0 of the form name(params) whose
     # NEXT line opens a brace -- the Plan 9 style this tree is written
@@ -236,7 +236,7 @@ def scan(paths):
                 for where, dline, got, _ in cand:
                     if got != want:
                         found.append((name, base, i, want, where, dline, got))
-    return found, compared, inconsistent
+    return found, compared, inconsistent, len(paths)
 
 
 #
@@ -283,6 +283,25 @@ def scan(paths):
 # unmutated control is run FIRST and required to exit 0.  Discriminate
 # by WHICH failure, never by failure.  The table below is the result of
 # the corrected harness; the earlier numbers were right by coincidence.
+#
+# AND THE VERDICT IS THREE-WAY, not two, which is the same bug one level
+# in.  Two rows expect the EMPTY SET -- never-report and arity-constant
+# -- and a self-test whose own fixtures were not scanned also produces
+# the empty set, fails, and prints SELF-TEST FAILED.  So a dead harness
+# read as a CATCH on every row, satisfied by the absence of the thing
+# being tested.  Demonstrated by stubbing the fixture scan.  The
+# self-test now reports its liveness separately:
+#
+#	HARNESS DEAD ...   the self-test never ran; not a catch
+#	SELF-TEST FAILED   the detector is broken, or a mutation was caught
+#	exit 0             clean
+#
+# A peer found this in their harness first and named the trap in fixing
+# it: their liveness signal was DECLARATIONS COMPARED, and their
+# never-report mutation disables the declaration regex, so comparing
+# nothing is exactly what that mutation does and a healthy run reported
+# the harness dead.  A liveness signal must be independent of every
+# mutation it guards.
 #
 #	scanner mutation                    self-test
 #	never report a mismatch             exit 1, CAUGHT
@@ -352,7 +371,31 @@ def selftest():
             f.write('static int\n'
                     'shadowed(int a, int b, int c)\n'
                     '{\n\treturn 0;\n}\n')
-        found = scan(sorted(glob.glob(os.path.join(d, '*.c'))))[0]
+        found, _, _, nread = scan(sorted(glob.glob(os.path.join(d, '*.c'))))
+        #
+        # LIVENESS FIRST, AND INDEPENDENT OF THE MUTATION UNDER TEST.
+        #
+        # Two rows of the mutation table below expect the EMPTY SET --
+        # never-report and arity-constant -- and a harness that scanned
+        # nothing also returns the empty set.  So both would read CAUGHT
+        # with nothing executed: satisfied by the absence of the thing
+        # they test.  Proven in this file by stubbing the fixture scan,
+        # which printed SELF-TEST FAILED and would have been recorded as
+        # a catch for every row.
+        #
+        # FILES READ, not declarations compared.  A peer tried
+        # declarations-compared first and it was wrong for a reason
+        # worth keeping: their never-report mutation disables the
+        # declaration regex, so comparing nothing is exactly what that
+        # mutation DOES and a healthy run reported the harness dead.
+        # The liveness signal has to be independent of every mutation it
+        # guards -- the same error as a control sharing a code path with
+        # its subject.  Three fixture files is immune to all six here.
+        #
+        if nread != 3:
+            return ('HARNESS DEAD -- the self-test scanned'
+                    f' {nread} file(s), not its 3 fixtures, so nothing'
+                    ' below was exercised')
         names = sorted(n for n, *_ in found)
         if names != ['fballoc']:
             return (f'planted a 6-vs-5 mismatch, a matching pair, and a'
@@ -364,15 +407,24 @@ def selftest():
 
 
 why = selftest()
+if why is not None and why.startswith('HARNESS DEAD'):
+    #
+    # A DISTINCT MESSAGE, because "the detector works and caught the
+    # mutation" and "the detector never ran" must not print the same
+    # line.  A mutation harness that greps for SELF-TEST FAILED would
+    # otherwise record a dead run as a catch, on every row.
+    #
+    print(f'extern-arity: {why}', file=sys.stderr)
+    sys.exit(1)
 if why is not None:
     print(f'extern-arity: SELF-TEST FAILED -- {why}', file=sys.stderr)
     print('extern-arity: the detector does not work, so a clean result below'
           ' would mean nothing.', file=sys.stderr)
     sys.exit(1)
-print('extern-arity: self-test ok (a 6-vs-5 mismatch is caught; a matching'
-      ' pair and a static same-name decoy are not)')
+print('extern-arity: self-test ok -- 3 fixtures scanned; a 6-vs-5 mismatch'
+      ' is caught, a matching pair and a static same-name decoy are not')
 
-bad, checked, inconsistent = scan(sources)
+bad, checked, inconsistent, _nread = scan(sources)
 
 for name, dfile, dline, want, sfile, sline, got in bad:
     print(f'extern-arity: {name}: {dfile}:{dline} declares {want} argument(s),'
