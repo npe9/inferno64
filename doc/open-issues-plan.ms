@@ -15969,3 +15969,64 @@ The validating print exists to catch a length outside the allocation; it
 fired 24 times before the baseline was moved and does not fire at all
 now, which says the lengths are correct rather than merely survivable.
 A fix that silenced the panic by clamping would still have printed.
+.NH 2
+Three independent devices, one signature: it is our start\-split
+.PP
+A SECOND, different full\-speed USB\-serial adapter, substituted because
+the first might itself have been faulty, fails identically:
+.IP
+.EX
+port 2: device descriptor (full speed): endpoint stalled (retrying)
+port 2: device descriptor (full speed): endpoint stalled (gave up ...)
+port 2: detached
+port 2: device descriptor (full speed): endpoint stalled (retrying)
+.EE
+.PP
+with the same
+.CW "START-split (the HUB answered)"
+at
+.CW "speed 0"
+and
+.CW "hctsiz 60080008" .
+So the population is now:
+.IP
+.EX
+IBM 3-button mouse      low speed    SETUP start-split stalled
+USB-serial adapter #1   full speed   SETUP start-split stalled
+USB-serial adapter #2   full speed   SETUP start-split stalled
+.EE
+.PP
+.B "Three devices, two speeds, two vendors, one signature."
+A device\-specific fault would have to be shared by three unrelated
+devices; the driver is the only thing common to all of them. This is
+our start\-split.
+.PP
+.B "ONE HONEST LIMIT on that population."
+Enumeration fails BEFORE the device descriptor is read, so the ring
+never records a vid/did for any of the three \(em the log cannot tell
+them apart. That they are different devices rests on their having been
+physically swapped, not on evidence in the trace. It is still three
+swaps and the signature never varied.
+.PP
+.B "And the retry machinery behaved exactly as designed,"
+which is incidental confirmation worth having:
+.CW "port 2: detached"
+appears between the two devices, and the second got a fresh six
+attempts rather than inheriting the first's exhausted budget \(em the
+.CW "pp.nfail = 0"
+in
+.CW portdetach() .
+No panic and no clamp line across the whole sequence, so the
+.CW hcdma
+fix holds for a third device too.
+.PP
+.B "What a hub is permitted to answer, which is the next thread."
+USB 2.0 gives a hub three replies to a start\-split: ACK, NAK (the TT
+buffer is full) or NYET.
+.B "STALL is not among them."
+So either the controller is reporting a condition that is not a device
+stall, or the hub is objecting to the start\-split as issued. Both are
+in
+.CW chansetup()
+and the initial channel enable rather than in the retry path, and
+neither needs another device to investigate.
