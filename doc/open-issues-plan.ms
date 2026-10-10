@@ -15898,3 +15898,74 @@ trap is somewhere else in
 .CW cacheinval 's
 arguments than the length, which is the only remaining place for it to
 be.
+.NH 2
+ANSWERED: the split path is broken for EVERY TT device, not just low speed
+.PP
+.B "The discriminator came back negative, which is the useful direction."
+A full\-speed USB\-serial adapter on the same hub port fails exactly as
+the low\-speed mouse does:
+.IP
+.EX
+usbdwc: ep6.0 STALL hcint 0000000a hcchar 01900040 hcsplt 8000c102
+        hctsiz 60080008 speed 0 START-split (the HUB answered)
+usbd: ep2.0: port 2: device descriptor (full speed): endpoint stalled
+        (gave up after 6 attempts)
+.EE
+.PP
+.CW "speed 0"
+is
+.CW Fullspeed
+.RB ( usb.h :
+.CW "Fullspeed 0, Lowspeed 1" ),
+and
+.CW "hcchar ...040"
+is a packet size of 64, correct for full speed \(em so the packet size
+is right and the preamble bit is irrelevant. It is not a low\-speed
+quirk.
+.PP
+.B "And every stage of the control transfer stalls, not one:"
+.IP
+.EX
+21 x hctsiz 60080008   PID 3 = SETUP, 8 bytes
+ 3 x hctsiz 40080040   PID 2 = DATA1, 64 bytes   (data stage)
+ 6 x hctsiz 40080000   PID 2 = DATA1, 0 bytes    (status stage)
+.EE
+.PP
+All 30 are
+.CW "START-split"
+with
+.CW Compsplt
+clear, so the hub is answering in every case. So the scope is
+.B "the start-split mechanism itself,"
+for every device behind a transaction translator, at either speed, for
+every stage \(em which is a far more tractable target than a corner of
+the low\-speed path and makes the whole of
+.CW splitcontinue()
+and the initial channel enable fair game rather than a corner case.
+.PP
+.B "What this supersedes."
+The earlier framing \(em "is it low\-speed specific" \(em is answered no,
+so
+.CW Lspddev ,
+the preamble, and anything keyed to
+.CW Lowspeed
+are off the list. The LAN9514 is also exonerated as a special case: it
+refuses both speeds identically, so this is our start\-split and not a
+quirk of one hub model.
+.NH 2
+And the panic fix is CONFIRMED under its own reproducer
+.PP
+The same full\-speed device that panicked this kernel twice was plugged
+into the same port of the same hub, and:
+.IP
+.EX
+ctltrans clamp lines   0   (was 24)
+panic lines            0   (was `panic: trap')
+board                  alive on the network throughout
+.EE
+.PP
+.B "Zero clamp lines is the stronger of the two numbers."
+The validating print exists to catch a length outside the allocation; it
+fired 24 times before the baseline was moved and does not fire at all
+now, which says the lengths are correct rather than merely survivable.
+A fix that silenced the panic by clamping would still have printed.
