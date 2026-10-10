@@ -15721,3 +15721,126 @@ and trace paths \(em
 on all 153 compile lines, so the code is live rather than excluded. And
 an incremental build reports zero for all 92, which is the thing to
 remember when a clean build log is offered as evidence about the tree.
+.NH 1
+A full-speed USB device PANICS this kernel, in ctltrans's cacheinval
+.PP
+.B "This was found looking for something else and it matters more."
+The question was whether a FULL\-speed device behind the Pi's
+high\-speed LAN9514 enumerates, to tell a low\-speed\-specific bug from a
+broken split path. The answer is neither: a USB\-serial adapter
+.B "crashes the kernel."
+.PP
+.B "Reproduced twice"
+\(em once hot\-plugged into a running board, once present at boot after
+a
+.I hardreset
+\(em so it is the device and not a one\-off.
+.IP
+.EX
+panic: trap
+dumpstack:
+  vectrap <- dcivac <- cacheinval <- ctltrans <- epwrite
+          <- usbwrite <- Sys_write <- xec
+.EE
+.PP
+.CW dcivac
+is invalidate\-data\-cache\-by\-VA, and it trapped. The only
+.CW cacheinval
+on that path is
+.CW usbdwc.c :1132,
+.CW "cacheinval(data, datalen)" ,
+on the buffer of a control transfer whose data stage has just finished.
+Frames with unaligned offsets in that dump
+.RB ( "cachechars+0x297" )
+are data words in a raw stack and were discarded rather than read as
+callers.
+.PP
+.B "WHAT IS NOT ESTABLISHED, and I floated it before checking:"
+that the length is negative.
+.CW chanio
+returns
+.CW "len - nleft" ,
+which cannot be negative, so that story does not hold for this call
+site and is withdrawn.
+.PP
+.B "What IS a standing sharp edge is the signature:"
+.CW fns.h :64
+declares
+.CW "void cacheinval(void*, usize)"
+\(em an UNSIGNED length \(em and the body computes
+.CW "e = (uintptr)va + len"
+then walks
+.CW dcivac
+to
+.CW e .
+So any wrong value there is not a short invalidate but a walk across
+unmapped memory, which is exactly the trap seen. A signed length that
+could be rejected would fail safely; an unsigned one cannot.
+.NH 2
+The dead network was the crash's CLEANUP, not its cause
+.PP
+I first reported that plugging the adapter in killed the board's
+network. It did not, and the distinction matters because it sent me to
+the wrong subsystem.
+.CW exit(inpanic)
+runs
+.CW chandevshutdown() ,
+which calls
+.CW usbdwc 's
+shutdown, which does a controller\-wide
+.B "core reset"
+\(em and that destroyed the ethernet's in\-flight transfers:
+.IP
+.EX
+usbdwc: core reset for shutdown
+usbdwc: ep3.1 completion missed ...
+usbdwc: ep3.2 completion timeout channel 2
+usbdwc: ep3.2 channel won't halt hcchar c0d81200
+etherusb: ep3.0: transmit: i/o error
+.EE
+.PP
+.B "And the board's own instruments said which it was."
+.CW alive
+over JTAG read the clock ADVANCING while nothing answered on the
+network \(em because
+.CW exit()
+arms the watchdog only
+.CW if(!inpanic) ,
+so a panicking kernel sits in
+.CW "for(;;) clockpoll()"
+rather than restarting. A board that pings nothing but whose clock
+advances is a panic, not a hang, and that is readable in one JTAG
+command.
+.NH 2
+What the recovery cost, and the hub's own state
+.PP
+.I hardreset
+rebooted it \(em ticks 134487 to 695 \(em and it re\-panicked about seven
+seconds in, because the adapter was still plugged in. That boot showed
+a NEW symptom: the hub itself refusing a hub\-class request,
+.CW "ep2.0 STALL ... speed 2 (no split)"
+and
+.CW "port 2: not enabled after reset" .
+After several controller core resets the LAN9514 needed a real power
+cycle; a watchdog restart of the SoC did not clear it.
+.PP
+Unplugged and power\-cycled, the board boots clean: no panic, no stalls,
+ethernet plus a Teensy plus a flash drive all enumerated, and
+.CW drawink ,
+.CW polytest
+13/0,
+.CW bndstest
+11/0 and
+.CW draw3dkerntest
+6/0 all pass.
+.NH 2
+Why this is the thread to pull rather than the mouse
+.PP
+The low\-speed mouse stall is a hub refusing a SETUP start\-split, 30 of
+30, with correct addressing and packet size \(em no cheap hypothesis
+left and no second implementation in this tree to compare against. The
+.CW ctltrans
+panic is on the path EVERY non\-high\-speed device takes, it is
+reproducible on demand, it is in this tree's own code rather than in a
+hub's firmware, and it crashes the machine rather than failing a
+device. It should be fixed first.
