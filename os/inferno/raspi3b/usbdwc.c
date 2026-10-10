@@ -854,17 +854,30 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 				 * other, and hcint says which bits came with
 				 * the Stall.
 				 *
-				 * RATE-LIMITED TO FOUR, because this is an
-				 * error path reached once per retry and the
-				 * log ring is the only post-mortem channel
-				 * this board has; an unbounded print here
-				 * would push out the evidence it is meant to
-				 * add to.  Static, so it bounds the life of
-				 * the kernel rather than one transfer.
+				 * RATE-LIMITED, because this is an error path
+				 * reached once per retry and the log ring is
+				 * the only post-mortem channel this board
+				 * has; an unbounded print here would push out
+				 * the evidence it is meant to add to.  Static,
+				 * so it bounds the life of the kernel rather
+				 * than one transfer.
+				 *
+				 * FOUR WAS TOO FEW AND HID A SECOND DEVICE.
+				 * usbd now retries a failed port six times
+				 * (Attachtries) and each retry is four
+				 * usbin() attempts, so ONE unhappy device can
+				 * emit 24 stalls and spend the whole budget
+				 * during boot -- after which a device plugged
+				 * in later stalls silently and only usbd's
+				 * verdict survives.  That is exactly the case
+				 * being set up for: a test device plugged in
+				 * beside a mouse that already failed.  Forty
+				 * covers both and is still a bounded number
+				 * of lines.
 				 */
 				static int nstall;
 
-				if(nstall++ < 4)
+				if(nstall++ < 40)
 					print("usbdwc: ep%d.%d STALL hcint %8.8ux"
 						" hcchar %8.8ux hcsplt %8.8ux"
 						" hctsiz %8.8ux speed %d%s\n",
