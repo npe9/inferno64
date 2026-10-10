@@ -140,7 +140,7 @@ DECL = re.compile(r'\bextern\s+[a-zA-Z_][a-zA-Z0-9_ *]*?\s*\*?\s*'
 
 
 def scan(paths):
-    """Return (mismatches, compared, inconsistent_defs, files_read)."""
+    """Return (mismatches, compared, inconsistent_defs, files, ndefs)."""
     #
     # A definition is a line at column 0 of the form name(params) whose
     # NEXT line opens a brace -- the Plan 9 style this tree is written
@@ -236,7 +236,7 @@ def scan(paths):
                 for where, dline, got, _ in cand:
                     if got != want:
                         found.append((name, base, i, want, where, dline, got))
-    return found, compared, inconsistent, len(paths)
+    return found, compared, inconsistent, len(paths), len(defs)
 
 
 #
@@ -371,7 +371,8 @@ def selftest():
             f.write('static int\n'
                     'shadowed(int a, int b, int c)\n'
                     '{\n\treturn 0;\n}\n')
-        found, _, _, nread = scan(sorted(glob.glob(os.path.join(d, '*.c'))))
+        found, _, _, nread, ndefs = scan(
+            sorted(glob.glob(os.path.join(d, '*.c'))))
         #
         # LIVENESS FIRST, AND INDEPENDENT OF THE MUTATION UNDER TEST.
         #
@@ -390,12 +391,36 @@ def selftest():
         # mutation DOES and a healthy run reported the harness dead.
         # The liveness signal has to be independent of every mutation it
         # guards -- the same error as a control sharing a code path with
-        # its subject.  Three fixture files is immune to all six here.
+        # its subject.
         #
-        if nread != 3:
+        # AND FILE COUNT ALONE IS NOT ENOUGH, because a fixture can
+        # EXIST AND BE EMPTY: three files read, no content, so every
+        # expectation of the empty set is met by a harness with nothing
+        # in it.  Measured here, not reasoned about -- writing the
+        # fixtures empty gave `SELF-TEST FAILED' and a harness grepping
+        # for that message called it a catch on every row, with file
+        # liveness satisfied.  The peer found this one first, in their
+        # own repair.
+        #
+        # So the count is CONTENT-DEPENDENT as well: 3 files AND 3
+        # definitions.  Definitions found is immune to all six
+        # mutations below -- none of them touches how defs is collected,
+        # only how it is compared -- and it is zero for empty files,
+        # which is exactly the pair of properties a liveness signal
+        # needs.
+        #
+        # THE ASSUMPTION THIS RESTS ON, stated because it is the thing
+        # to check when adding a seventh mutation: no mutation's
+        # expected answer equals the UNMUTATED one.  True for all six --
+        # the healthy answer is exactly {fballoc} and every mutation
+        # moves it to the empty set or to more than that -- so a
+        # mutation that changed nothing would be visible rather than
+        # passing.  A peer's phrasing, and their caveat.
+        #
+        if nread != 3 or ndefs != 3:
             return ('HARNESS DEAD -- the self-test scanned'
-                    f' {nread} file(s), not its 3 fixtures, so nothing'
-                    ' below was exercised')
+                    f' {nread} file(s) and found {ndefs} definition(s), not'
+                    ' its 3 and 3, so nothing below was exercised')
         names = sorted(n for n, *_ in found)
         if names != ['fballoc']:
             return (f'planted a 6-vs-5 mismatch, a matching pair, and a'
@@ -424,7 +449,7 @@ if why is not None:
 print('extern-arity: self-test ok -- 3 fixtures scanned; a 6-vs-5 mismatch'
       ' is caught, a matching pair and a static same-name decoy are not')
 
-bad, checked, inconsistent, _nread = scan(sources)
+bad, checked, inconsistent, _nread, _ndefs = scan(sources)
 
 for name, dfile, dline, want, sfile, sline, got in bad:
     print(f'extern-arity: {name}: {dfile}:{dline} declares {want} argument(s),'
