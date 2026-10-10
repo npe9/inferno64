@@ -15514,3 +15514,85 @@ which is where it came from.
 in this compiler an analysis function cannot be assumed not to transform, so a
 pass that means to measure without changing anything has to be checked by
 comparing emitted output, not by reading the pass.
+.NH 1
+The 1.80x: the instrumentation is exonerated, and 81202 is the unreproduced half
+.PP
+.B "Measured first, on the board as it stands:"
+.CW "wm/gfxstress fill 4"
+gives
+.CW "ops=176800 ms=4000 ops_per_sec=44200" .
+That is within 2 per cent of the 45102 recorded as "now", so the slow
+figure reproduces and is not drift.
+.PP
+.B "THE INSTRUMENTATION CANNOT ACCOUNT FOR IT, and this tree already held"
+.B "the measurement that shows why."
+.CW drawpre()
+returns on its FIRST test when
+.CW screenpartial
+is nil, and
+.CW screenpartial
+together with
+.CW screenpresent
+is assigned
+.I inside
+the
+.CW Dbuf
+block in
+.CW screenbcm.c
+\(em which is not taken, because
+.CW screenbcm.c :157
+reads
+.CW "enum { Dbuf = 0 };" .
+.CW havepresent
+is set only on the present path, which the same switch disables, so
+.CW chargeop()
+reduces to two increments and two tests. On the shipping configuration
+both functions are a function call and a branch.
+.PP
+.B "And the controlled comparison is already in screenbcm.c's own comment:"
+both arms JTAG\-booted so the core count is pinned at
+.CW "nmach 1" ,
+same
+.CW "gfxstress fill 4" :
+.IP
+.EX
+Dbuf=0  build 1791245060   44500 43500             mean 44000
+Dbuf=1  builds 4182, 4716  41800 41900 42000 41800 mean 41875
+Dbuf=0  build 1791285322   42587 42700 42900       mean 42729
+.EE
+.PP
+.B "Dbuf=1 is the arm in which drawpre() does its full work"
+\(em
+.CW screenpartial
+is non\-nil, so every partial operation runs
+.CW toscreen()
+and a
+.CW rectclip
+and may call
+.CW bcmpartial
+\(em and it costs
+.B "2 per cent,"
+not 80. Turning the instrumentation from almost\-free to fully active
+moves the figure by less than the between\-build layout spread the same
+comment measures at 2.9 per cent. So it is not 1.8x and it is not
+within an order of magnitude of 1.8x.
+.PP
+.B "Which leaves 81202 as the half that is unexplained,"
+and that is a different question from the one this item was filed as. It
+was one reading, its conditions are recorded only as "same workload, same
+board, same wall\-clock budget", and three later builds across both boot
+paths agree on 42700\-44500. The candidates worth checking if anyone
+cares enough to spend a boot are whether that run presented to the
+screen at all \(em the interval table beside it shows 459 presents for
+.CW "fill 4" ,
+so a run with none was drawing somewhere else \(em and whether it had a
+framebuffer, which this tree has since booted without and not noticed
+for an hour.
+.PP
+.B "Recorded as closed on the attribution and open on the baseline."
+The sentence it replaces \(em "the per\-operation instrumentation is the
+obvious candidate and IT HAS NOT BEEN MEASURED" \(em was fair when
+written and is now wrong in its first clause: the obvious candidate was
+measurable without a single new build, from a comparison already in the
+tree, and it is not the cause. No A/B kernel pair was needed and none
+was built.
