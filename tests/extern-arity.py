@@ -37,6 +37,22 @@ prints how many declarations it actually compared so that a reader can
 tell a clean run from a run that looked at nothing -- the failure this
 tree keeps finding in its own tools.
 
+ONE LINK AT A TIME, and the default is the kernel's: os/inferno/raspi3b
+plus os/inferno/port.  Do NOT add emu/port to that run.  They are two
+separate links and the same name legitimately differs between them --
+emu/port/chan.c defines addelem(Cname*, char*) where
+os/inferno/port/chan.c defines addelem(Path*, char*, Chan*), and both
+are right.  Comparing across links invents mismatches.  Check emu
+separately:
+
+	python3 tests/extern-arity.py emu/port
+
+A peer widened their equivalent check to both at once and called it
+"the directories of one link", which it was not; that is where this
+note comes from.  Nothing in this tree currently declares a local
+extern for a cross-link ambiguous name, so mixing them reports clean
+today -- which makes it a latent trap rather than a safe shortcut.
+
 WHAT IT WILL AND WILL NOT JUDGE, which bounds what a clean run means:
 
   - Only functions DEFINED in the directories scanned.  An extern for
@@ -58,7 +74,9 @@ WHAT IT WILL AND WILL NOT JUDGE, which bounds what a clean run means:
 EXIT CODES FOLLOW tests/toolchain, WHICH IS NOT THE OBVIOUS ORDER:
 
 	0	clean
-	2	DEFECT -- a declaration disagrees with its definition
+	2	DEFECT -- a declaration disagrees with its definition, OR
+		two non-static definitions of one name disagree with
+		each other (which needs no declaration to be wrong)
 	1	BROKE  -- could not look, so no verdict
 
 The suite maps 2 to DEFECT and every other nonzero to BROKE, so the
@@ -122,7 +140,7 @@ DECL = re.compile(r'\bextern\s+[a-zA-Z_][a-zA-Z0-9_ *]*?\s*\*?\s*'
 
 
 def scan(paths):
-    """Return (mismatches, how_many_compared) over these sources."""
+    """Return (mismatches, how_many_compared, inconsistent_defs)."""
     #
     # A definition is a line at column 0 of the form name(params) whose
     # NEXT line opens a brace -- the Plan 9 style this tree is written
@@ -177,6 +195,30 @@ def scan(paths):
             defs.setdefault(m.group(1), []).append(
                 (base, i + 1, arity(m.group(2)), isstatic))
 
+    #
+    # DEFINITIONS AGAINST EACH OTHER, not only declarations against
+    # definitions.  Two NON-static definitions of one name in one link
+    # disagreeing about arity is an inconsistency on its own, with no
+    # declaration needed to expose it: whichever the loader resolves to,
+    # some caller is wrong.
+    #
+    # This existed as a one-off check I ran by hand to justify the
+    # static rule above, and reporting a property I had verified once
+    # while not enforcing it is the gap this closes.  A peer found a
+    # real instance in the emu link that neither of our checkers was
+    # looking for -- attachscreen, 4 in emu/port/win-x11-old.c against 5
+    # in win-x11a.c.
+    #
+    # Whether BOTH files are built is a config question this tool does
+    # not answer, so the report says so rather than implying a live
+    # fault.  The kernel link has none of these.
+    #
+    inconsistent = []
+    for name, ds in sorted(defs.items()):
+        glob_ds = [d for d in ds if not d[3]]
+        if len({d[2] for d in glob_ds}) > 1:
+            inconsistent.append((name, glob_ds))
+
     found, compared = [], 0
     for path in paths:
         base = os.path.basename(path)
@@ -194,7 +236,7 @@ def scan(paths):
                 for where, dline, got, _ in cand:
                     if got != want:
                         found.append((name, base, i, want, where, dline, got))
-    return found, compared
+    return found, compared, inconsistent
 
 
 #
@@ -221,7 +263,25 @@ def scan(paths):
 #	never report a mismatch             exit 1, CAUGHT
 #	report every pair as a mismatch     exit 1, CAUGHT
 #	judge against static definitions    exit 1, CAUGHT
+#	judge ONLY against static ones      exit 1, CAUGHT
+#	arity() returns a constant          exit 1, CAUGHT
+#	arity() always returns 1            exit 1, CAUGHT
 #	unmutated                           exit 0
+#
+# THE LAST TWO ARE THE ONES THAT NEARLY DO NOT COUNT, and they pass for
+# a reason worth stating rather than by luck.  A constant arity gives
+# the declaration and the definition THE SAME WRONG NUMBER, so they
+# still agree and nothing is reported -- a mutation that leaves the
+# comparison satisfiable tests nothing, and in a checker that only
+# looked for absence of false reports it would sail through.  This one
+# is caught because the assertion is SET EQUALITY against exactly
+# ['fballoc']: it demands a true positive AND no false positives in one
+# statement, so a scanner that has gone blind fails it just as surely as
+# one that has gone loud.  A peer hit exactly this and their
+# report-everything mutation initially missed.
+#
+# So: assert the exact set the scanner should produce.  Not a count --
+# one true positive plus one false positive is also two.
 #
 def selftest():
     d = tempfile.mkdtemp(prefix='extern-arity-self.')
@@ -274,12 +334,27 @@ if why is not None:
 print('extern-arity: self-test ok (a 6-vs-5 mismatch is caught; a matching'
       ' pair and a static same-name decoy are not)')
 
-bad, checked = scan(sources)
+bad, checked, inconsistent = scan(sources)
 
 for name, dfile, dline, want, sfile, sline, got in bad:
     print(f'extern-arity: {name}: {dfile}:{dline} declares {want} argument(s),'
           f' {sfile}:{sline} defines {got}')
 
+for name, ds in inconsistent:
+    print(f'extern-arity: {name}: NON-STATIC definitions disagree -- '
+          + ', '.join(f'{f}:{l} takes {a}' for f, l, a, _ in ds))
+    print('extern-arity:   whichever the loader resolves to, some caller is'
+          ' wrong.  Whether both')
+    print('extern-arity:   files are BUILT is a config question this tool does'
+          ' not answer.')
+
+#
+# THE TWO FINDING CLASSES GET THEIR OWN SUMMARIES, because one block for
+# both printed "0 declaration(s) disagree with their definition" above a
+# nonzero exit and then advised moving a declaration that does not
+# exist.  A verdict that contradicts the finding it is summarising is
+# worse than no summary.
+#
 if bad:
     print(f'extern-arity: {len(bad)} declaration(s) disagree with their'
           f' definition, out of {checked} compared.')
@@ -287,9 +362,28 @@ if bad:
           ' compiles, links and boots.')
     print('extern-arity: move the declaration into fns.h rather than fixing'
           ' the copy.')
+if inconsistent:
+    print(f'extern-arity: {len(inconsistent)} name(s) have non-static'
+          f' definitions that disagree about arity.')
+    print('extern-arity: no declaration is needed to make this wrong -- the'
+          ' loader picks one and')
+    print('extern-arity: a caller of the other is passing the wrong number of'
+          ' arguments.')
+if bad or inconsistent:
     sys.exit(2)
 
-where = ', '.join(os.path.basename(os.path.normpath(r)) for r in roots)
+#
+# THE LAST TWO PATH COMPONENTS, not the basename.  With basenames, a run
+# over the kernel and emu together printed "raspi3b, port, port" -- two
+# different directories under one name, in the line a reader uses to
+# judge what was covered.  os/port and emu/port at least differ.
+#
+def label(r):
+    p = os.path.normpath(r).split(os.sep)
+    return os.sep.join(p[-2:]) if len(p) > 1 else p[-1]
+
+
+where = ', '.join(label(r) for r in roots)
 print(f'extern-arity: ok -- {checked} declaration(s) compared against'
       f' definitions in {where}, {len(sources)} source(s) read')
 sys.exit(0)
