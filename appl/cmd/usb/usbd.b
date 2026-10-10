@@ -82,6 +82,23 @@ Uctries: con 4;
 Enabledelay: con 100;
 Resetdelay: con 50;
 Pollms: con 500;
+#
+# HOW MANY TIMES A PORT MAY FAIL TO ATTACH BEFORE IT IS DISABLED.
+#
+# portfail() used to disable the port on the FIRST failure, which is
+# why a device that loses its one attempt at boot stays dead until
+# somebody unplugs it.  Measured: a mouse on hub port 2 answered
+# `endpoint stalled' to GET_DESCRIPTOR and that message appears ONCE in
+# 320 lines of ring -- no second attempt was ever made, while ports 1
+# and 4 enumerated normally.
+#
+# Six attempts at Pollms apart is three seconds, which is cheap against
+# a device that works on the second go and bounded against one that
+# never will.  Bounded rather than endless on purpose: the log ring is
+# this board's only post-mortem channel, so a port that cannot attach
+# must stop talking about it rather than crowd out everything else.
+#
+Attachtries: con 6;
 
 Dev: adt {
 	name:	string;		# epN.M
@@ -96,6 +113,7 @@ Port: adt {
 	sts:	int;
 	dev:	ref Dev;
 	hub:	ref Hub;	# the hub behind this port, if any
+	nfail:	int;	# consecutive failed attach attempts; see portfail
 };
 
 Hub: adt {
@@ -186,7 +204,26 @@ enumhub(h: ref Hub, p: int): int
 			return -1;
 		}
 	}
+	#
+	# AN EDGE IS NOT ENOUGH, and that was the whole defect.
+	#
+	# The first arm fires on a 0->1 transition of PSpresent, which is
+	# right for a plug but useless after a FAILED attach: portfail()
+	# zeroes pp.sts hoping the next poll re-triggers it, and it does not.
+	# Measured -- leaving the port enabled was not sufficient either: one
+	# `endpoint stalled (retrying)' in the ring and no second attempt and
+	# no `gave up' line, which is one attempt, not six.
+	#
+	# So the retry is stated rather than inferred from a transition: a
+	# port that is PRESENT, has no device, and has budget left is
+	# attached again. That needs no edge and no cooperation from
+	# whatever state the failed device left the hub in.
+	#
 	if((pp.sts & PSpresent) == 0 && (sts & PSpresent) != 0){
+		if(portattach(h, p) != nil)
+			attachdev(pp);
+	} else if((sts & PSpresent) != 0 && pp.dev == nil && pp.hub == nil
+			&& pp.nfail > 0 && pp.nfail < Attachtries){
 		if(portattach(h, p) != nil)
 			attachdev(pp);
 	} else if((pp.sts & PSpresent) != 0 && (sts & PSpresent) == 0)
@@ -259,7 +296,19 @@ portattach(h: ref Hub, p: int): ref Dev
 		step(h, p, "device descriptor");
 		(r, dd) := usbin(nd, Rd2h|Rstd|Rdev, Rgetdesc, Ddev<<8, 0, 8);
 		if(r < 8)
-			return portfail(h, p, nd, "device descriptor");
+			#
+			# THE DETECTED SPEED GOES IN THE MESSAGE, because it
+			# decides ep0's packet size and a failure here could
+			# not previously be told apart from a wrong one.
+			# devusb.c:550 gives low speed maxpkt 8, super 512 and
+			# everything else 64, from the `newdev %s' above -- so
+			# a device misdetected as full when it is low gets a
+			# 64-byte control transfer and stalls, which looks
+			# exactly like this. sp was computed thirty lines up
+			# and printed only on SUCCESS.
+			#
+			return portfail(h, p, nd,
+				sys->sprint("device descriptor (%s speed)", sp));
 		mp = int dd[7];
 	}
 	nd.dfd = nil;
@@ -269,7 +318,8 @@ portattach(h: ref Hub, p: int): ref Dev
 	step(h, p, "full descriptor");
 	(r, dd) := usbin(nd, Rd2h|Rstd|Rdev, Rgetdesc, Ddev<<8, 0, 18);
 	if(r < 18)
-		return portfail(h, p, nd, "full device descriptor");
+		return portfail(h, p, nd,
+			sys->sprint("full device descriptor (%s speed, maxpkt %d)", sp, mp));
 	nd.class = int dd[4];
 	nd.vid = int dd[8] | int dd[9]<<8;
 	nd.did = int dd[10] | int dd[11]<<8;
@@ -279,6 +329,7 @@ portattach(h: ref Hub, p: int): ref Dev
 	sys->print("usbd: %s: port %d: %s %s vid %4.4ux did %4.4ux class %d\n",
 		d.name, p, sp, nd.name, nd.vid, nd.did, nd.class);
 	pp.dev = nd;
+	pp.nfail = 0;		# a success spends the retry budget
 	return nd;
 }
 
@@ -291,10 +342,43 @@ step(h: ref Hub, p: int, what: string)
 
 portfail(h: ref Hub, p: int, nd: ref Dev, why: string): ref Dev
 {
-	sys->fprint(sys->fildes(2), "usbd: %s: port %d: %s: %r\n", h.dev.name, p, why);
-	h.port[p].sts = 0;
-	if(!h.dev.isusb3)
-		portfeature(h, p, Fportenable, 0);
+	pp := h.port[p];
+	pp.nfail++;
+	#
+	# DO NOT DISABLE THE PORT ON THE FIRST FAILURE.
+	#
+	# This disabled it immediately, and that is what made one bad attach
+	# permanent: enumhub() re-attaches on the EDGE
+	#
+	#	(pp.sts & PSpresent) == 0 && (sts & PSpresent) != 0
+	#
+	# and pp.sts is zeroed below, so a still-connected device should
+	# re-trigger on the next poll -- except that a disabled port stops
+	# reporting the device, so the edge never comes.  A mouse that
+	# stalled GET_DESCRIPTOR at boot was therefore dead until somebody
+	# unplugged it, with ONE line in the ring to say so.
+	#
+	# Leaving the port enabled for Attachtries polls lets the loop try
+	# again by itself.  That is not a fix for whatever the device is
+	# unhappy about -- it is the difference between one attempt and
+	# several, and a device that stalls every time will still fail.
+	#
+	pp.sts = 0;
+	if(pp.nfail >= Attachtries){
+		if(!h.dev.isusb3)
+			portfeature(h, p, Fportenable, 0);
+		sys->fprint(sys->fildes(2),
+			"usbd: %s: port %d: %s: %r (gave up after %d attempts)\n",
+			h.dev.name, p, why, pp.nfail);
+	} else if(pp.nfail == 1)
+		#
+		# The first failure is reported and the ones between are not.
+		# Six copies of one line would crowd the ring, which is the
+		# only post-mortem channel here, and the interesting events
+		# are the FIRST failure and the decision to stop.
+		#
+		sys->fprint(sys->fildes(2), "usbd: %s: port %d: %s: %r (retrying)\n",
+			h.dev.name, p, why);
 	if(nd != nil){
 		devctl(nd, "detach");
 		closedev(nd);
@@ -316,6 +400,12 @@ portdetach(h: ref Hub, p: int)
 		pp.dev = nil;
 	}
 	pp.sts = 0;
+	#
+	# A REPLUG CLEARS THE BUDGET, which is what makes the bound safe to
+	# have: a port disabled after Attachtries is revived by the thing a
+	# person would do anyway, rather than needing a reboot.
+	#
+	pp.nfail = 0;
 }
 
 #
@@ -1278,7 +1368,7 @@ newhub(name: string, d: ref Dev): ref Hub
 	}
 	h.port = array[h.nport+1] of ref Port;
 	for(i := 0; i <= h.nport; i++)
-		h.port[i] = ref Port(0, nil, nil);
+		h.port[i] = ref Port(0, nil, nil, 0);
 	if(!h.isroot){
 		for(i = 1; i <= h.nport; i++)
 			if(portfeature(h, i, Fportpower, 1) < 0)
