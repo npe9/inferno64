@@ -288,6 +288,105 @@ reads only after a
 an unclocked block, and that is a driver defect rather than a firmware
 mystery.
 .PP
+.B "H2 was attempted and is VOID, on a seam neither tree could see alone."
+The raspi3b session JTAG-booted this kernel while the board served
+.I its
+.CW /dis
+over styx, so
+.CW qputry
+\(em which the question needed to load code \(em was not there:
+.CW "sh: qputry: file does not exist" ,
+no exec was ever sent, and the unchanged status afterwards read exactly
+like the question being answered rather than never asked. Fixed by not
+needing a userland command at all:
+.CW /dev/v3dcode
+takes raw bytes, so a
+.CW "code W0 [W1 ...]"
+ctl command now takes them as text and the battery depends only on this
+driver.
+.PP
+.B "And the allocation comes back in the WRONG WINDOW, which is a bug in
+.B "this driver."
+Measured on silicon:
+.DS
+.CW
+gpumem firmware handle 0x4 bus 0xbeaccf60 size 4096
+gpualloc tried alloc answered lock answered
+.R
+.DE
+.PP
+.CW 0xbeaccf60
+is in the
+.CW 0x80000000
+window \(em L2-cached, non-allocating \(em and not the uncached
+.CW 0xc0000000
+one.
+.CW Memflags
+is
+.CW 0xc
+with the comment "COHERENT|DIRECT, as a QPU program wants", but
+.CW MEM_FLAG_DIRECT
+is
+.CW 1<<2
+and
+.CW MEM_FLAG_COHERENT
+is
+.CW 2<<2 ,
+so
+.CW 0xc
+is
+.CW MEM_FLAG_L1_NONALLOCATING
+and asks for exactly the cached window it got. The firmware answered
+correctly; the comment is wrong. The allocation is REAL and in the wrong
+place, not failed.
+.PP
+.B "The stop condition given for that run was also wrong,"
+and is recorded because it would have mattered had the run got that far:
+it said to stop if the bus address came back "without the
+.CW 0xc0000000
+bits", while
+.CW v3dgpualloc 's
+actual test is
+.CW "(membus & 0xc0000000) == 0" ,
+which
+.CW 0x80000000
+passes. The driver would have gone on and used that memory.
+.PP
+.B "Two levers, and the battery has only ever pulled one."
+Flags
+.CW 0x4
+instead of
+.CW 0xc
+should give the uncached alias, which is a one-constant change and is
+being measured by two bare
+.CW tag
+commands that touch no GPU. Separately,
+.CW EXECUTE_QPU 's
+third word is
+.CW noflush
+and both
+.CW qputry
+and the battery pass
+.CW 1 ,
+so the firmware is told not to flush the VideoCore L2 while the code
+sits in an L2-cached alias.
+.CW devv3d
+does
+.CW cacheflush()
+its own writes, which settles the ARM side and says nothing about VC L2.
+So h2 with
+.CW noflush=0
+is a different question and will be asked as one rather than by quietly
+editing h2.
+.PP
+.B "A clock rate is not a liveness signal."
+GET_CLOCK_RATE answered 250 MHz on clock 5 with
+.CW "enabled 0"
+and
+.CW "enable untried"
+in the same boot, and IDENT0 proves the block is gated until
+SET_ENABLE_QPU. So the clock answers the same either side of the gate.
+.PP
 .B "What is left is h2."
 If
 .CW EXECUTE_QPU
