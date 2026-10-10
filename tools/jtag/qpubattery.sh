@@ -5,16 +5,19 @@
 #	sh tools/jtag/qpubattery.sh list        # the questions and the order
 #	sh tools/jtag/qpubattery.sh control     # emit one question's commands
 #
-# WRITE THESE TO board.cmd; DO NOT TYPE THEM AT A CONSOLE.  A console
-# can deliver a character twice -- seen under QEMU as `/dev//v3dctl' --
-# and a doubled digit here is silent and wrong: in
+# WRITE THESE TO board.cmd AS A FILE; DO NOT TYPE THEM AT A CONSOLE.
+# Not because console input is known to be lossy -- I claimed that and
+# it was my own broken checker, see qemufeed.sh -- but because nothing
+# retypes a file, and the cost of being wrong here is silent: a doubled
+# or dropped digit in
 #
 #	echo exec 1 1 0 1 1000 2000 >/dev/v3dctl
 #
-# a doubled 0 changes the timeout tenfold, and the answer you get is to
-# a question you did not ask.  Every line below is meant to go into
-# board.cmd as a file, where nothing retypes it.  Under QEMU, drive it
-# with os/inferno/raspi3b/qemufeed.sh, which checks what arrived.
+# changes a timeout by a factor of ten and the answer comes back to a
+# question nobody asked.  The console DOES interleave kernel output into
+# the echo, which is demonstrated, so a log of a typed session cannot be
+# read back character for character to check what was sent.  Under QEMU,
+# drive it with os/inferno/raspi3b/qemufeed.sh.
 #
 # IT USED TO BE ONE RUN AND THAT WAS WRONG.  The questions were ordered
 # so an early failure would make the later ones meaningful, which is the
@@ -274,20 +277,26 @@ h2)
 	echo "echo gpualloc 4096 >/dev/v3dctl"
 	echo "cat /dev/v3dctl"
 	#
-	# qputry, not a bare `exec'.  THE EXEC NEEDS CODE AND NOTHING
-	# HERE LOADED ANY: v3dexecraw() refuses with "no code loaded"
-	# when v3d.ncode is 0, and `reset' above sets it to 0.  Measured
-	# under QEMU -- the h2 command list produced
+	# THE EXEC NEEDS CODE AND A BARE `exec' HAS NONE: v3dexecraw()
+	# refuses with "no code loaded" when v3d.ncode is 0, and `reset'
+	# above sets it to 0.  Measured under QEMU -- this list produced
 	#
 	#	echo: write error: no code loaded
 	#
-	# so this question would have spent a board boot without ever
-	# sending EXECUTE_QPU, and the silence would have been scored as
-	# the hypothesis failing.  qputry writes the four words to
-	# /dev/v3dcode and then issues its own exec (appl/cmd/qputry.b),
-	# which is how `arith' already reaches the mailbox.
+	# so the question would have spent a boot without ever sending
+	# EXECUTE_QPU.
 	#
-	echo "qputry 0x11111111 0x22222222 0x33333333 0x44444444"
+	# Loaded with `code', which takes the words as TEXT, rather than
+	# with qputry.  qputry would do it, but it is a Limbo command and
+	# this battery must not depend on which tree's /dis the board is
+	# serving: a run that JTAG-booted the right kernel while the board
+	# served another tree's userland got `sh: qputry: file does not
+	# exist', sent no exec at all, and the unchanged status afterwards
+	# read exactly like the question being answered.  `code' is in the
+	# kernel, so if the kernel is right the question can be asked.
+	#
+	echo "echo code 0x11111111 0x22222222 0x33333333 0x44444444 >/dev/v3dctl"
+	echo "echo exec 1 1 0 1 1000 2000 >/dev/v3dctl"
 	echo "cat /dev/v3dctl"
 	echo "echo gpufree >/dev/v3dctl"
 	epilogue
@@ -298,20 +307,26 @@ h1)
 	echo "echo reset >/dev/v3dctl"
 	echo "echo enable >/dev/v3dctl"
 	#
-	# qputry, not a bare `exec'.  THE EXEC NEEDS CODE AND NOTHING
-	# HERE LOADED ANY: v3dexecraw() refuses with "no code loaded"
-	# when v3d.ncode is 0, and `reset' above sets it to 0.  Measured
-	# under QEMU -- the h2 command list produced
+	# THE EXEC NEEDS CODE AND A BARE `exec' HAS NONE: v3dexecraw()
+	# refuses with "no code loaded" when v3d.ncode is 0, and `reset'
+	# above sets it to 0.  Measured under QEMU -- this list produced
 	#
 	#	echo: write error: no code loaded
 	#
-	# so this question would have spent a board boot without ever
-	# sending EXECUTE_QPU, and the silence would have been scored as
-	# the hypothesis failing.  qputry writes the four words to
-	# /dev/v3dcode and then issues its own exec (appl/cmd/qputry.b),
-	# which is how `arith' already reaches the mailbox.
+	# so the question would have spent a boot without ever sending
+	# EXECUTE_QPU.
 	#
-	echo "qputry 0x11111111 0x22222222 0x33333333 0x44444444"
+	# Loaded with `code', which takes the words as TEXT, rather than
+	# with qputry.  qputry would do it, but it is a Limbo command and
+	# this battery must not depend on which tree's /dis the board is
+	# serving: a run that JTAG-booted the right kernel while the board
+	# served another tree's userland got `sh: qputry: file does not
+	# exist', sent no exec at all, and the unchanged status afterwards
+	# read exactly like the question being answered.  `code' is in the
+	# kernel, so if the kernel is right the question can be asked.
+	#
+	echo "echo code 0x11111111 0x22222222 0x33333333 0x44444444 >/dev/v3dctl"
+	echo "echo exec 1 1 0 1 1000 2000 >/dev/v3dctl"
 	echo "cat /dev/v3dctl"
 	epilogue
 	;;

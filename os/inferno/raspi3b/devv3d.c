@@ -869,6 +869,7 @@ static int
 v3dwrite(Chan *c, void *a, int n, vlong offset)
 {
 	Cmdbuf *cb;
+	int i;
 
 	USED(offset);
 	switch((ulong)c->qid.path){
@@ -883,6 +884,39 @@ v3dwrite(Chan *c, void *a, int n, vlong offset)
 		if(strcmp(cb->f[0], "reset") == 0){
 			lock(&v3dlk);
 			v3d.ncode = 0;
+			unlock(&v3dlk);
+		}else if(strcmp(cb->f[0], "code") == 0){
+			/*
+			 * code W0 [W1 ...] -- append instruction words
+			 * written as TEXT.
+			 *
+			 * /dev/v3dcode takes raw bytes, so only a program
+			 * can load code there, and that made the hypothesis
+			 * battery depend on a Limbo command being present.
+			 * It was not: a run that JTAG-booted this kernel
+			 * while the board served ANOTHER tree's /dis over
+			 * styx got `sh: qputry: file does not exist', no
+			 * exec was ever sent, and the unchanged status
+			 * afterwards read exactly like the question being
+			 * answered rather than never asked.  With this the
+			 * battery needs nothing but this device.
+			 */
+			if(cb->nf < 2)
+				error("usage: code W0 [W1 ...]");
+			lock(&v3dlk);
+			if(waserror()){
+				unlock(&v3dlk);
+				nexterror();
+			}
+			if(v3d.ncode % 4 != 0)
+				error("code is not a whole number of words; `reset' first");
+			if(v3d.ncode + (cb->nf - 1)*4 > Codemax)
+				error("code too large");
+			for(i = 1; i < cb->nf; i++)
+				((u32*)v3d.code)[v3d.ncode/4 + i - 1] =
+					(u32)strtoul(cb->f[i], nil, 0);
+			v3d.ncode += (cb->nf - 1)*4;
+			poperror();
 			unlock(&v3dlk);
 		}else if(strcmp(cb->f[0], "clock") == 0){
 			if(v3dclock() < 0)

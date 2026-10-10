@@ -7,31 +7,40 @@
 # a character at a time, and then every one of them is checked against
 # the console echo in the log.
 #
-# WHY THIS EXISTS.  The console corrupts input intermittently.  Seen:
-# `cat /dev/v3dctl' arriving as `cat /dev/v3' -- the shell then reported
-# a file nobody asked for -- and `cat /dev//v3dctl', a character
-# delivered twice.  A doubled slash is harmless; a doubled digit is not.
-# In
+# WHY THIS EXISTS, and what it does and does not check.
 #
-#	echo exec 1 1 0 1 1000 2000 >/dev/v3dctl
+# IT CHECKS SEQUENCING.  A step marker is fed after every command and
+# each one must appear in the log; the shell consumes input in order, so
+# the first missing marker is where the run stopped.  That is the failure
+# that matters here: a run that dies early produces a log full of
+# plausible output and answers nothing.  A V3D question was once reported
+# as "timed out on the V3D read" when it had died during attach, before
+# its first control ever printed.
 #
-# a doubled `0' changes a timeout by a factor of ten and NOTHING SAYS
-# SO.  Four QEMU boots went to console corruption before it was
-# recognised as corruption at all.
+# IT DOES NOT CHECK TEXT INTEGRITY, and the history of this file is why
+# that is stated rather than implied.  The first version compared each
+# command against its console echo verbatim and called every run of a
+# 17-line script VOID; on that evidence I wrote "the QEMU console
+# corrupts input" into three files.  It does not: the console
+# INTERLEAVES asynchronous kernel output into the echo, mid-line and
+# without a newline --
 #
-# THE DELAY IS NOT THE FIX, and that was measured rather than assumed.
-# Feeding one character at a time with -d 0.02 was the first theory; a
-# control at -d 0, the rate where corruption had been seen, came back
-# intact as well.  So the fault is INTERMITTENT, not rate-dependent, and
-# a run that happens to be clean says nothing about the next one.  The
-# delay is kept because it costs nothing and may reduce the rate, but no
-# claim is made for it.
+#	; echo enable >/dev/v3USB-KBD-NONE no keystrokes (no keyboard...)
 #
-# What this tool is actually for is the CHECK: every command sent must
-# appear VERBATIM in the log, which the console echo makes checkable.  A
-# run with any mismatch is VOID -- its output is the board's answer to a
-# question nobody asked -- and that is reported rather than left for a
-# reader to notice.
+# -- and that command had arrived, the status afterwards reading
+# `enabled 1'.  Re-judged, those same logs were 0 corrupt.  The second
+# version allowed interleaving by testing for a SUBSEQUENCE, which is
+# satisfied by almost any short string in a 6000-character log, so it
+# could never fail.  Both are the same error in opposite directions: a
+# harness whose verdict is fixed.
+#
+# So input loss is UNDEMONSTRATED.  One reading, a shell error naming
+# /dev/v3cat, is unexplained and is not evidence for it.  When text
+# integrity matters, put the commands in board.cmd as a file, where
+# nothing retypes them.
+#
+# The delay is not a fix for anything; it is kept because it costs
+# nothing and no claim is made for it.
 set -u
 delay=0.02
 wait=70
@@ -59,8 +68,21 @@ esac
 here=`cd \`dirname "$0"\` && pwd`
 cd "$here" || exit 1
 cmds=`mktemp`
-trap 'rm -f "$cmds"' EXIT INT TERM
-cat > "$cmds"
+trap 'rm -f "$cmds" "$cmds.in"' EXIT INT TERM
+cat > "$cmds.in"
+#
+# One step marker after every command.  SPLIT (`QF'-'STEP-n') so the
+# console echo of the command cannot satisfy the search for its own
+# output.
+#
+nsteps=0
+: > "$cmds"
+while IFS= read -r l; do
+	[ -z "$l" ] && continue
+	nsteps=`expr $nsteps + 1`
+	printf '%s\n' "$l" >> "$cmds"
+	echo "echo QF'-'STEP-$nsteps" >> "$cmds"
+done < "$cmds.in"
 #
 # The end marker is appended here, and SPLIT so the echo of the command
 # that prints it cannot satisfy the wait: the console echoes what is
@@ -95,29 +117,51 @@ done
 kill $qpid 2>/dev/null
 pkill -f qemu-system-aarch64 2>/dev/null
 
-# Verify. Every non-empty command must appear verbatim in the log.
+# Verify, in THREE states, because a contiguous match is too strict.
+#
+# The console interleaves asynchronous kernel output into the echo of
+# what is typed, mid-line and without a newline:
+#
+#	; echo enable >/dev/v3USB-KBD-NONE no keystrokes (no keyboard...)
+#
+# That command ARRIVED -- the status afterwards read `enabled 1' -- and a
+# verbatim substring test called it corrupt.  The first version of this
+# tool did exactly that and reported every run of a 17-line script VOID,
+# which is a harness crying wolf and is worse than no check: a tool that
+# always says VOID cannot report the one run that really is.
+#
+# So, per command:
+#
+#	CLEAN        the line appears contiguously
+#	INTERLEAVED  its characters appear IN ORDER but split by other
+#	             output -- consistent with arriving intact, since
+#	             interleaving inserts and never reorders
+#	CORRUPT      not even in order; characters were lost
+#
+# Only CORRUPT voids the run.  A doubled character is still a
+# subsequence, so this bounds LOSS and not duplication -- said here
+# rather than left to be assumed.
 #
 # QEMUFEED_SELFTEST=1 adds an expectation that was never sent, so the
-# check MUST report VOID.  Without it a checker that could never fail
-# would pass every run and be indistinguishable from no checker at all.
+# check MUST report CORRUPT and void the run.  A checker that cannot
+# fail is indistinguishable from no checker -- and this injection was
+# silently DELETED when the check was rewritten from a contiguous test
+# to the three-state one, which the control caught on its next run.
+#
+#
+# QEMUFEED_SELFTEST=1 claims one more step than was ever fed, so the
+# check MUST report it unreached and void the run.  A checker that
+# cannot fail is indistinguishable from no checker -- and this
+# injection was silently dropped once already when the check was
+# rewritten, which the control caught on its next run.
 #
 if [ "${QEMUFEED_SELFTEST:-0}" = 1 ]; then
-	echo "this line was never sent to the board $$" >> "$cmds"
+	nsteps=`expr $nsteps + 1`
 fi
-bad=0
-n=0
-while IFS= read -r line; do
-	[ -z "$line" ] && continue
-	n=`expr $n + 1`
-	if ! /usr/bin/grep -qF -- "$line" "$log"; then
-		echo "qemufeed: CORRUPT: sent but never echoed verbatim:" >&2
-		echo "    $line" >&2
-		bad=`expr $bad + 1`
-	fi
-done < "$cmds"
-if [ $bad -gt 0 ]; then
-	echo "qemufeed: $bad of $n commands did not arrive intact; THIS RUN IS VOID" >&2
+python3 "$here/qemufeedcheck.py" "$cmds" "$log" "$nsteps"
+rc=$?
+if [ $rc -ne 0 ]; then
+	echo "qemufeed: THIS RUN IS VOID -- it did not reach every step, so its output answers less than was asked" >&2
 	exit 1
 fi
-echo "qemufeed: all $n commands arrived intact"
 exit 0

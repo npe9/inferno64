@@ -24589,31 +24589,40 @@ the entry path the card uses;
 .CW os/inferno/raspi3b/qemu.sh
 does it.
 .PP
-.B "Driving that console from a script needs a check, because it corrupts
-.B "input intermittently."
-Observed:
-.CW "cat /dev/v3dctl"
-arriving as
-.CW "cat /dev/v3"
-\(em the shell then reports a file nobody asked for \(em and
-.CW "cat /dev//v3dctl" ,
-a character delivered twice. A doubled slash is harmless; a doubled
-digit in
-.CW "echo exec 1 1 0 1 1000 2000"
-changes a timeout tenfold and says nothing. Four boots went to this
-before it was recognised as corruption rather than as results.
-.CW os/inferno/raspi3b/qemufeed.sh
-feeds commands and then requires every one to appear VERBATIM in the
-log, which the console echo makes checkable, and calls the run VOID
-otherwise.
+.B "Driving that console from a script needs a check, because the console
+.B "interleaves kernel output into the echo of what is typed."
+Mid-line and without a newline:
+.DS
+.CW
+; echo enable >/dev/v3USB-KBD-NONE no keystrokes (no keyboard...)
+.R
+.DE
 .PP
-Feeding slowly is
-.I not
-the fix and the tool says so: one character at a time with a 20 ms
-delay was the first theory, and a control at zero delay \(em the rate
-where corruption had been seen \(em came back intact too. The fault is
-intermittent, so a clean run says nothing about the next one and the
-check is the only thing that does.
+That command arrived \(em the status afterwards read
+.CW "enabled 1" .
+.CW os/inferno/raspi3b/qemufeed.sh
+feeds commands and then judges each one in three states: CLEAN if it
+appears contiguously, INTERLEAVED if its characters appear in order but
+split by other output, and CORRUPT if they are not even in order.
+Only CORRUPT voids the run.
+.PP
+.B "Its first version asserted that the console LOSES input, and that was
+.B "my own instrument."
+It tested for a contiguous match, called every run of a 17-line script
+VOID, and I wrote "the console corrupts input" into three files on that
+basis. Re-judged with the three-state check, the same logs give 13
+clean / 2 interleaved / 0 corrupt, 12/3/0 and 14/1/0. The commands had
+arrived. A tool that always says VOID cannot report the one run that
+really is, which is worse than having no tool.
+.PP
+Input loss remains
+.I undemonstrated .
+One reading, a shell error naming
+.CW /dev/v3cat ,
+is unexplained and is not evidence for it. Duplication is outside what
+the check can see at all, since a doubled character is still a
+subsequence, and that is stated in the tool rather than left to be
+assumed.
 .CW QEMUFEED_SELFTEST=1
 adds an expectation that was never sent and the tool must then report
 VOID, since a checker that cannot fail is indistinguishable from no
