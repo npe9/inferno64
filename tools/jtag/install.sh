@@ -28,11 +28,14 @@
 set -u
 HERE=`dirname "$0"`
 ROOT=`cd "$HERE/../.." && pwd`
-# A neutral default, created rather than assumed: a path inside one
-# Claude session's scratchpad does not exist for any other session, and
-# every grep against a missing file reads empty.
+#
+# Scratch for this run.  This defaulted to a session scratchpad in a
+# DIFFERENT worktree, which exists only while that session does, and
+# nothing here created it: with it absent every write into $S went
+# nowhere and every read of one came back empty.
+#
 S=${S:-${TMPDIR:-/tmp}/inferno-raspi3b}
-mkdir -p "$S" 2>/dev/null
+mkdir -p "$S" || { echo "`basename $0`: cannot create scratch $S" >&2; exit 1; }
 #
 # Which screen session, found rather than remembered.
 #

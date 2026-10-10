@@ -29,6 +29,9 @@ struct Ptrhash
 	ulong	gcinxecseen;	/* times one was, which should be never */
 	int	mflag;
 	int	mutator = 0;
+	uvlong	nbadmark;	/* garbage declared-pointer words contained;
+				 * a VARIABLE so a board can be read over JTAG,
+				 * with the print bounded to one line a boot */
 	int	gccolor = 3;
 
 	ulong	gcnruns;

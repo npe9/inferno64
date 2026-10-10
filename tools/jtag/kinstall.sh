@@ -58,7 +58,13 @@ ROOT=`cd "$HERE/../.." && pwd`
 # So: a neutral default, and mkdir it rather than assuming.
 #
 S=${S:-${TMPDIR:-/tmp}/inferno-raspi3b}
-mkdir -p "$S" 2>/dev/null
+#
+# AND FAIL IF IT CANNOT BE CREATED, rather than hiding the error: the
+# whole reason this default changed is that an absent $S made every grep
+# read an empty file and every verdict a statement about nothing.
+# `2>/dev/null' here would reproduce that silently (rio-pi-tk's point).
+#
+mkdir -p "$S" || { echo "kinstall: cannot create scratch $S" >&2; exit 1; }
 #
 # Overridable so the clash check below can be tested without a board,
 # an adapter, or the real channel.  A test that can only run against the
@@ -103,7 +109,18 @@ idle() {
 	if [ ! -f "$CMD" ]; then
 		return
 	fi
-	if ! grep -q 'KI-' "$CMD" 2>/dev/null; then
+	#
+	# SCOPED TO THIS PROCESS, not just to the KI- prefix.  `KI-' alone
+	# matches a command written by ANOTHER kinstall, so two installs
+	# would each happily reset the other's channel -- the same damage
+	# the guard exists to stop, one step removed.  The tokens carry $$
+	# (see runcmd below), so -DONE-$$- identifies ours and nothing
+	# else.  rio-pi-tk's refinement; their spelling was KI-DONE-$$-,
+	# which cannot be used verbatim here because this tool writes the
+	# marker SPLIT -- the channel holds KI'^'-DONE-$$-N -- so the part
+	# common to both forms is what gets matched.
+	#
+	if ! grep -q -- "-DONE-$$-" "$CMD" 2>/dev/null; then
 		return
 	fi
 	printf 'load std; echo IDLE-%s\n' "`date +%s`" > "$CMD"
@@ -316,6 +333,19 @@ runcmd() {
 			echo "kinstall:   found:  $rcnow" >&2
 			echo "kinstall: so this step never ran, and that is a" >&2
 			echo "kinstall: collision between two runs, NOT a board fault." >&2
+			#
+			# WHAT THE CARD IS, said here rather than left to the
+			# caller.  In the steps after the card is written,
+			# "THE CARD WAS NOT CHANGED" would be a false
+			# statement about a card that just changed, so the
+			# only honest thing is the last COMPLETED step --
+			# rio-pi-tk's wording, and the part of their clash()
+			# worth more than its structure.
+			#
+			echo "kinstall: the card is in whatever state the last COMPLETED" >&2
+			echo "kinstall: step left it -- read the steps that printed a marker." >&2
+			echo "kinstall: board.cmd is LEFT AS THE OTHER WRITER SET IT; do not" >&2
+			echo "kinstall: retry until that run ends." >&2
 			return 3
 		fi
 		[ -f "$OUT" ] || continue
@@ -455,7 +485,7 @@ selftest() {
 		return 0
 		;;
 	*)
-		echo "selftest: KINSTALL_SELFTEST must be 1 or 2" >&2
+		echo "selftest: KINSTALL_SELFTEST must be 1, 2 or 3" >&2
 		return 1
 		;;
 	esac

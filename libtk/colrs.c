@@ -2,7 +2,14 @@
 #include "draw.h"
 #include "tk.h"
 
-#define RGB(R,G,B) ((R<<24)|(G<<16)|(B<<8)|(0xff))
+/*
+ * The casts are load-bearing.  R<<24 as a plain int is negative whenever
+ * R is 0x80 or more, and widening that to a 64-bit ulong sign-extends it
+ * - so the table held 0xfffffffff5f0d8ff where it meant 0xf5f0d8ff.
+ * tkrgbavals() masks the red byte now and would cope either way, but a
+ * colour constant should be the number it looks like.
+ */
+#define RGB(R,G,B) ((((ulong)(R)&0xff)<<24)|(((ulong)(G)&0xff)<<16)|(((ulong)(B)&0xff)<<8)|0xffUL)
 
 enum
 {
@@ -92,15 +99,71 @@ static Coltab coltab[] =
 	TkCtransparent,
 		DTransparent,
 		TkSameshade,
+	TkCfield,
+		RGB(tkBackR, tkBackG, tkBackB),
+		TkSameshade,
+	-1,
+};
+
+/*
+ * The flat style's own palette.  Not a recolouring of the one above: the
+ * point is that a window drawn now has LEVELS - a page, fields sitting
+ * above it, controls filled rather than outlined - and the classic table
+ * cannot express that, because its background serves as page and field
+ * and button all at once.  Everything separated by a hairline on one
+ * colour is what makes the old look read as a wireframe.
+ *
+ * One accent, used for what is chosen and for the focus ring, and
+ * nothing else coloured.
+ */
+enum
+{
+	fBackR = 0xf0, fBackG = 0xf0, fBackB = 0xed,	/* the page */
+	fFieldR = 0xff, fFieldG = 0xff, fFieldB = 0xfd,	/* a level above it */
+	/*
+	 * Hover.  Chosen by measurement, not by eye: the first value here
+	 * was #E2E2DE, which against the #F0F0ED page is 1.14:1 - a tint
+	 * nobody can see, so a widget under the pointer gave no feedback at
+	 * all.  Found when the menu control reported that separation and
+	 * the number turned out to apply to every widget, not just menus.
+	 * #CECEC6 is 1.39:1 against the page, and the ink stays at 9.98:1
+	 * on it.
+	 */
+	fActiveR = 0xce, fActiveG = 0xce, fActiveB = 0xc6,
+	fAccentR = 0x3d, fAccentG = 0x6a, fAccentB = 0x9a,
+	fWashR = 0xd7, fWashG = 0xe3, fWashB = 0xf1,	/* selection */
+	fInkR = 0x1f, fInkG = 0x23, fInkB = 0x28,
+	fMuteR = 0x7a, fMuteG = 0x7f, fMuteB = 0x87
+};
+
+static Coltab flatcoltab[] =
+{
+	TkCbackgnd,	RGB(fBackR, fBackG, fBackB),	TkSameshade,
+	TkCbackgndlght,	RGB(fBackR, fBackG, fBackB),	TkLightshade,
+	TkCbackgnddark,	RGB(fBackR, fBackG, fBackB),	TkDarkshade,
+	TkCactivebgnd,	RGB(fActiveR, fActiveG, fActiveB),	TkSameshade,
+	TkCactivebgndlght, RGB(fActiveR, fActiveG, fActiveB),	TkLightshade,
+	TkCactivebgnddark, RGB(fActiveR, fActiveG, fActiveB),	TkDarkshade,
+	TkCactivefgnd,	RGB(fInkR, fInkG, fInkB),	TkSameshade,
+	TkCforegnd,	RGB(fInkR, fInkG, fInkB),	TkSameshade,
+	TkCselect,	RGB(fAccentR, fAccentG, fAccentB),	TkSameshade,
+	TkCselectbgnd,	RGB(fWashR, fWashG, fWashB),	TkSameshade,
+	TkCselectbgndlght, RGB(fWashR, fWashG, fWashB),	TkLightshade,
+	TkCselectbgnddark, RGB(fWashR, fWashG, fWashB),	TkDarkshade,
+	TkCselectfgnd,	RGB(fInkR, fInkG, fInkB),	TkSameshade,
+	TkCdisablefgnd,	RGB(fMuteR, fMuteG, fMuteB),	TkSameshade,
+	TkChighlightfgnd, RGB(fAccentR, fAccentG, fAccentB),	TkSameshade,
+	TkCtransparent,	DTransparent,			TkSameshade,
+	TkCfield,	RGB(fFieldR, fFieldG, fFieldB),	TkSameshade,
 	-1,
 };
 
 void
-tksetenvcolours(TkEnv *env)
+tksetenvcolours(TkEnv *env, int style)
 {
 	Coltab *c;
 
-	c = &coltab[0];
+	c = style == TkSflat ? &flatcoltab[0] : &coltab[0];
 	while(c->c != -1) {
 		env->colors[c->c] = tkrgbashade(c->rgba, c->shade);
 		env->set |= (1<<c->c);

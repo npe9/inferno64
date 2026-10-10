@@ -314,6 +314,24 @@ OP(lenc)
 	W(d) = l;
 }
 
+/*
+ * strtoll and NOT strtol.  A WORD is `intptr' -- 64 bits on every
+ * target this tree builds -- but a kencc `long' is 32, so libkern's
+ * strtol saturates at its own LONG_MAX (2147483647L, named in
+ * libkern/strtol.c) and `int s' in Limbo could not read a number above
+ * 2^31-1 on any native kernel.  Hosted it worked by accident: clang's
+ * long is 64 bits, so the same line returned the whole value and the
+ * bug existed only where nothing was looking.
+ *
+ * Found by tkscenetest(1) reading an rgba of 2425392895 back out of a
+ * serialised node tree: 2425392895 on the host, exactly 2147483647 on
+ * the Pi 3B kernel.  A saturation, not a wrap, which is what pointed
+ * at strtol rather than at the serialisation.
+ *
+ * ICVTCW is a punt in the arm64 JIT (comp-arm64.c), so this is the one
+ * implementation and both execution paths are fixed by it -- unlike
+ * the zero divide, where each path needed its own check.
+ */
 OP(cvtcw)
 {
 	String *s;
@@ -323,10 +341,10 @@ OP(cvtcw)
 		W(d) = 0;
 	else
 	if(s->len < 0)
-		W(d) = strtol(string2c(s), nil, 10);
+		W(d) = strtoll(string2c(s), nil, 10);
 	else {
 		s->Sascii[s->len] = '\0';
-		W(d) = strtol(s->Sascii, nil, 10);
+		W(d) = strtoll(s->Sascii, nil, 10);
 	}
 }
 

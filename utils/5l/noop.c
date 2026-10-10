@@ -21,7 +21,7 @@ noops(void)
 	 */
 
 	if(debug['v'])
-		Bprint(&bso, "%5.2f noops\n", cputime());
+		Bprint(&bso, "%s noops\n", cputimestr());
 	Bflush(&bso);
 
 	curframe = 0;

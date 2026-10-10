@@ -2513,6 +2513,93 @@ DDBG print("Simplemask|Simplesrc|Replmask|Replsrc");
  * Solid opaque color through a 1-bit greyscale mask.
  */
 #define DDBG if(0)
+/*
+ * Antialiased characters: a solid source colour painted through an 8-bit
+ * coverage mask, which is what a scalable font's glyphs are.  chardraw
+ * below stores the colour wherever a mask *bit* is set; with coverage
+ * there is a blend to do per pixel, but the shape is the same, and doing
+ * it here avoids the general path's per-scanline conversion buffers and
+ * its per-pixel indirect calls.
+ *
+ * The destination's bytes are blended against the same bytes of the
+ * source colour, which memimagedraw has already converted to the
+ * destination's own format, so this needs to know nothing about which
+ * channel is which.  It does need to know which bytes are channels at
+ * all: a byte the format ignores is left exactly as it was, because that
+ * is what the general path does, and a palette index cannot be blended.
+ *
+ * The arithmetic is alphacalcS's, MUL(a, src) + MUL(255-a, dst) with two
+ * scratch variables, so the result is the same to the byte.
+ */
+static int
+chardrawaa(Memdrawparam *par)
+{
+	Memimage *mask, *dst;
+	Rectangle r, mr;
+	uchar *rp, *wp, *mrow, *wrow;
+	uchar sp[4], use[4];
+	u32 maskwid, dstwid, v, s, t;
+	int nb, i, x, y, dx, dy, a, fd, c;
+
+	/* the source's own conditions were checked by chardraw */
+	mask = par->mask;
+	dst = par->dst;
+
+	if(mask->chan != GREY8 || dst->flags&Falpha || dst->depth < 8)
+		return 0;
+
+	/*
+	 * Which bytes of a destination pixel are channels, lowest address
+	 * first.  A pixel is stored little-endian, so the last channel named
+	 * in the descriptor is byte 0.
+	 */
+	nb = 0;
+	for(c = dst->chan; c != 0; c >>= 8){
+		if(nb >= 4 || NBITS(c) != 8 || TYPE(c) == CMap)
+			return 0;
+		use[nb] = TYPE(c) != CIgnore;
+		nb++;
+	}
+	if(nb*8 != dst->depth)
+		return 0;
+
+	r = par->r;
+	mr = par->mr;
+	dx = Dx(r);
+	dy = Dy(r);
+	maskwid = mask->width*sizeof(u32);
+	dstwid = dst->width*sizeof(u32);
+	rp = byteaddr(mask, mr.min);
+	wp = byteaddr(dst, r.min);
+
+	v = par->sdval;
+	sp[0] = v;
+	sp[1] = v>>8;
+	sp[2] = v>>16;
+	sp[3] = v>>24;
+
+	for(y=0; y<dy; y++, rp+=maskwid, wp+=dstwid){
+		mrow = rp;
+		wrow = wp;
+		for(x=0; x<dx; x++, wrow+=nb){
+			a = *mrow++;
+			if(a == 0)		/* clear: most of a glyph's box */
+				continue;
+			if(a == 255){		/* solid: the inside of a stroke */
+				for(i=0; i<nb; i++)
+					if(use[i])
+						wrow[i] = sp[i];
+				continue;
+			}
+			fd = 255-a;
+			for(i=0; i<nb; i++)
+				if(use[i])
+					wrow[i] = MUL(a, sp[i], s)+MUL(fd, wrow[i], t);
+		}
+	}
+	return 1;
+}
+
 static int
 chardraw(Memdrawparam *par)
 {
@@ -2538,9 +2625,13 @@ if(0) if(drawdebug) iprint("chardraw? mf %ux md %d sf %ux dxs %d dys %d dd %d dd
 	op = par->op;
 
 	if((par->state&(Replsrc|Simplesrc|Replmask)) != (Replsrc|Simplesrc)
-	|| mask->depth != 1 || src->flags&Falpha || dst->depth<8 || dst->data==src->data
+	|| src->flags&Falpha || dst->depth<8 || dst->data==src->data
 	|| op != SoverD)
 		return 0;
+
+	/* a coverage mask is a blend rather than a store, but the same case */
+	if(mask->depth != 1)
+		return chardrawaa(par);
 
 //if(drawdebug) iprint("chardraw...");
 

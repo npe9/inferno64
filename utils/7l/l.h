@@ -334,6 +334,7 @@ void	span(void);
 void	wput(long);
 void	wputl(long);
 void	noops(void);
+char*	cputimestr(void);
 Mask*	findmask(uvlong);
 
 #pragma	varargck	type	"R"	int

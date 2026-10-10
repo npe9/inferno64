@@ -1,5 +1,32 @@
 #include "l.h"
 
+/*
+ * cputime() returns a double and this fmt has no 'f' verb -- listinit()
+ * installs A, D, P, S, N and R and nothing else.  So every "%s" here
+ * printed the verb literally as "%f%", and worse, the double was never
+ * CONSUMED from the varargs: the five prints in pobj.c that follow it
+ * with "%s" then read part of a double as a char*, which printed
+ * "<nil>" when the misread word happened to be zero and SEGFAULTED
+ * when it did not.  7l -v died after ~240 lines, reproducibly.
+ *
+ * Formatting it here and passing a string fixes the crash and the
+ * cosmetic "%f%" in one place, without adding a float formatter to a
+ * loader that needs one verb for one purpose.
+ */
+char*
+cputimestr(void)
+{
+	static char buf[32];
+	double t;
+
+	t = cputime();
+	if(t < 0)
+		t = 0;
+	snprint(buf, sizeof buf, "%lud.%.2lud", (ulong)t,
+		(ulong)((t - (double)(ulong)t) * 100.0));
+	return buf;
+}
+
 void
 listinit(void)
 {

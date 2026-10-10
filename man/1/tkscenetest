@@ -1,0 +1,662 @@
+.TH TKSCENETEST 1
+.SH NAME
+tkscenetest \- check that libtk's render-node path draws what the direct path draws
+.SH SYNOPSIS
+.B tkscenetest
+.RB [ -v ]
+.SH DESCRIPTION
+.I Tkscenetest
+renders each of a set of cases twice \(em once through
+.IR libtk 's
+direct path, which paints into the destination image, and once through its
+render-node path, which describes the widget as a tree of nodes and renders
+the tree \(em and checks that the two produce the same pixels, byte for
+byte.
+.PP
+The cases are one of every widget kind with default options, and then the
+widget
+.I states
+that have node kinds of their own: a selected entry, an entry with
+.BR -show ,
+a disabled button, a canvas with a rectangle, a line, an oval, a string and
+a filled polygon in it, a listbox with a selection, a text widget with
+content, a scale away from its minimum, a part-scrolled scrollbar, a
+non-default font, a sunken frame, a focused entry, a label clipped by the
+image it is rendered into, non-default colours by name, a label with a
+.B -bitmap
+and a posted menu holding a separator and a cascade. Default options alone
+would pass while every one of those was broken.
+.PP
+Three of those are there for a node kind nothing else reaches.
+.B TkNpolyfill
+is the cascade arrow's node and is otherwise seen only in a posted menu, so
+the canvas grows a filled polygon as well.
+.B TkNtexture
+names a
+.I file
+rather than carrying pixels \(em which is why an image that arrived as a
+file descriptor is the one thing the vocabulary cannot describe \(em so it
+needs a real path, and a bare
+.B -bitmap
+name resolves to
+.BI /icons/tk/ name
+rather than being taken as absolute. And the posted menu's separator paints
+into the window itself, which makes the walk
+.I flush
+in the middle of the menu: the case that says the menu's drawing code must
+not hold the walk's tree across it, because the flush frees it.
+.PP
+That identity is the whole acceptance condition for the node tree: a
+description that draws something other than what the direct path draws is
+not a description of the drawing.
+.PP
+The path is selected with the
+.B render
+widget command,
+.B direct
+or
+.BR scene .
+.B Direct
+is the default, because
+.B tkviascene
+is zero-initialised, so nothing in a running system takes the node path
+unless it is asked for.
+.PP
+.B "render scaled ?num ?den??"
+sets the scale the walk renders its trees at, and with no argument
+reports it along with what the last scaled renders could not be exact
+for. The scale is a rational because the renderer has no floating point
+\(em it has to work in a kernel \(em and positions scale about the
+target's top left, so that corner stays put and the tree grows into it.
+This is
+.B "resolution independence:"
+the same nodes drawn larger, which is the one thing a description can do
+that a raster cannot.
+.PP
+Geometry scales exactly. Two node kinds cannot and are
+.B counted
+rather than hidden:
+.B TkNglyphs
+names a font
+.I file
+whose size is in its name, so text keeps its natural size until a
+size\-selection step exists, and
+.BR TkNtexture 's
+image is drawn by
+.IR draw (2),
+which clips and replicates but does not resample. What this test checks,
+with the same figures on the host and on the Pi 3B kernel:
+.IP
+.EX
+scale 1:1              1 1 nodes 0 approx 0
+a raised frame at 2:1  2 1 nodes 4 approx 0
+a label at 2:1         2 1 nodes 4 approx 1
+.EE
+.PP
+So
+.B "approx 0"
+means something, because
+.B "approx 1"
+is demonstrated beside it: a frame is pure geometry and enlarges
+exactly, a label carries a glyph run and does not. The 2:1 render is
+checked by difference from the 1:1 one (2040 bytes) rather than by a
+byte comparison, because nothing can produce a 2x render to compare it
+against \(em that is the point of it. Setting the scale back to 1:1 must
+then be byte\-identical, which a scale that leaked state would fail
+after passing everything else.
+.PP
+.B "render xform ?num ?den??"
+wraps each tree in a
+.B TkNtransform
+node instead of scaling at render time. The two do the same arithmetic
+in different places, which is the point: each is the other's control,
+and this compares their
+.B pixels
+rather than assuming they agree. A transform of 2 against a global
+scale of 2 differs by
+.B "0 bytes"
+here, and a transform of 1 is byte\-identical to no transform at all.
+.PP
+They need not have agreed. The transform path rounds twice when a
+global scale is also set \(em the node transform about its own origin,
+then the global scale \(em and the check is written to report a
+difference rather than to require a zero, because a double rounding is
+a real property of the arithmetic and not a defect to be asserted away.
+.PP
+.B "The identity case could not have caught the first bug."
+.B TkNtransform
+opens a span and so must precede it;
+.IR tkscenetransform ()
+first
+.B appended
+the node like every other emitter, so the bracket arrived after the
+nodes it was supposed to wrap and did nothing. A transform of 1 was
+byte\-identical, as it is when the node works \(em and the 2:1
+comparison was 2040 bytes out, which is exactly the 1:1\-versus\-2:1
+figure. An identity check is dangerous wherever absence means
+.BR pass .
+.PP
+.B "render opacity ?alpha??"
+wraps each tree in a
+.B TkNopacity
+span, 0 to 255, and with no argument reports the current value.
+.B 255
+is a running system and emits
+.B no node at all
+\(em an opacity that changes nothing should not cost a surface \(em so
+the identity case here is weaker still than the transform's, and the
+two checks beside it are quantitative instead.
+.PP
+The span renders into a surface that starts as a
+.B copy
+of the destination, and the close composites that whole surface back
+through a constant\-alpha mask, so what lands is the span over what was
+already beneath it. The surface is in window coordinates, which is why
+an opacity span cannot open inside a layer \(em there the target is a
+scratch at the origin \(em and is allocated and freed per span rather
+than cached, because a cache keyed by nothing would hold the largest
+span ever rendered for the life of the context. That allocation is the
+cost of opacity.
+.PP
+What is checked:
+.IP
+.EX
+opacity 255   byte\-identical to no opacity at all
+opacity 0     0 bytes inked
+opacity 128   272256 of 525088, wanted 263573 +\-13178
+.EE
+.PP
+The same three figures on the host and on the Pi 3B kernel, not merely
+both within tolerance: the two share
+.B libtk/scene.c
+and
+.I libmemdraw
+and differ only in the compiler, so anything but equality would have
+been the question.
+.PP
+The last line is the load\-bearing one, and it is
+.B ink
+\(em the summed distance of every channel from white \(em not inked
+.BR pixels ,
+because a half\-transparent picture touches the same pixels. Two
+controls fix what it can see. Forcing the mask's alpha to 192 instead
+of the node's gave
+.BR "394208 of 525088" ,
+which is 0.751, which is 192/255 to three figures: the ink is
+.B linear
+in the alpha, so the figure above is the compositing arithmetic and not
+a coincidence of some other mechanism. Deleting the composite gave 0.
+.PP
+.B "And the alpha-0 check is weaker than it reads."
+With the composite deleted outright it still
+.BR passes ,
+because a span drawn into a surface nobody blits back also leaves a
+blank page. So it is evidence the span was
+.B diverted
+\(em were the node refused, the frame would be drawn straight to the
+window and it would fail \(em and no evidence at all that anything was
+composited. That is written in the test beside the check.
+.PP
+Neither control was reachable by reading the code. The first was
+written expecting a forced alpha of
+.B 255
+to leave the picture whole, and instead it vanished \(em for a reason
+that is documented behaviour twice over.
+.B 0x000000ff
+is
+.BR DBlack ,
+so
+.IR tkcolor ()
+answered it with
+.B "display->black"
+before reaching its allocator at all; and
+.I libmemdraw
+says of a mask with no alpha channel, in a comment above
+.IR greymaskread (),
+"if there is no alpha channel, we'll ask for a grey channel and
+pretend it is the alpha". A black mask is a
+.B grey-0
+mask is a transparent mask. So an alpha of 255 must not be expressed as
+a mask: the emitter refuses it and
+.IR blitopacity ()
+takes a plain maskless
+.IR draw ()
+for it, which is also the faster path.
+.PP
+.B "That was first written up here as a libmemdraw discrepancy, and it"
+.B "was not one."
+.B "sadelta = bsrc.alpha == &ones ? 0 : bsrc.delta"
+does read a maskless alpha as 255, but
+.B bsrc
+is the
+.BR source ;
+the mask is fetched through a different reader chosen a few lines
+earlier, and that one is explicit about substituting grey. Reading the
+right function would have settled it, and reading a function with the
+right name settled nothing.
+.PP
+.B "render record ?0|1??"
+makes the walk serialise each tree it renders, and
+.B "render tree"
+hands back the last one.
+.IR Tknode (2)
+decodes it. This is the API half of item 1 of
+.BR doc/scene-graph-plan.ms :
+a consumer \(em recording, remote rendering, a backend that wants
+geometry rather than a raster \(em can be written outside
+.IR libtk .
+.PP
+The checks here are
+.B positional,
+not a round trip. Decoding a dump and encoding it again would pass for
+a decoder that stored the line verbatim, which is the same shape as the
+identity transform that passed while
+.B TkNtransform
+did nothing. So this asserts field values at known places in a known
+fixture \(em a raised frame, borderwidth 2, packed in a 160x60 image:
+.IP
+.EX
+4 nodes: roundfill colour roundfill border
+the border's box      (58,0)\-(102,24)
+its radius and width  5 and 2
+its number            Tborder, 3
+its rgba              2425392895
+.EE
+.PP
+The rgba matters on its own: it is past 2\u31\d, so a decoder that read
+it into a signed 32\-bit field would answer negative. The check caught
+nothing and the
+.B message
+caught this instead \(em an
+.B int
+is 64 bits at runtime here but
+.B %d
+formats the low 32, so a correct 2425392895 printed as \-1869574401 and
+a passing check read as a failing one.
+.PP
+Three more fixtures, each for one thing the first cannot reach: a label
+for the two quoted strings, with a
+.B space
+in its text that an unquoted rest\-of\-line field would decode as two
+more numbers; a selected checkbutton for the only node in the flat
+style that carries points; and
+.B "render record 0"
+for whether an answer after it is empty rather than stale.
+.PP
+.B "And the name table has its own two guards, both checked."
+The names in
+.B scene.c
+are indexed by type and ordered against the enum by hand, because Plan
+9 C has no designated initialisers, so the table can drift. A type with
+no name dumps as
+.B unknown\-N
+and a table of the wrong length emits one
+.B tablemismatch
+line; this asserts neither appears. Lengthening the table by one entry
+makes the second fire and, because the diagnostic is the dump's first
+line, poisons the whole decode \(em which is the right failure: a
+drifted table should make a dump unusable, not subtly wrong. Dropping
+the
+.B radius
+field makes the decoder answer
+.B "14 fields, want at least 15"
+rather than reading the points out of the width.
+.PP
+With
+.B -v
+each passing check is printed as well as each failing one.
+.PP
+Every comparison is a readback from an image allocated for the purpose,
+never from the screen, for the reason
+.IR tkofftest (1)
+gives: what a widget put on the screen cannot be read back, while an
+allocated image can. That is also what lets this run on a kernel with no
+display attached \(em it takes a
+.B Display
+from its
+.B Context
+when it has one and allocates a bare one when it does not \(em which is the
+case it exists for.
+.SH "THE TWO CONTROLS, AND WHY A PIXEL COMPARISON NEEDS THEM"
+A zero from a predicate is worth nothing until the predicate is shown able
+to fire, and an identity check has two distinct ways of passing while
+testing nothing.
+.TP
+.B "the node path never ran"
+Identity between the two rounds is exactly what you get if
+.B "render scene"
+silently did nothing and both rounds took the direct path. So
+.B "render count"
+is read back and its three figures \(em trees, widgets, nodes \(em must all
+be non-zero. A zero there is a failure even when every image matches.
+.TP
+.B "the comparison cannot see a difference"
+A comparison that always reported equality would make every identity check
+pass. So two
+.I different
+widgets are compared as well, and must differ.
+.PP
+A case may be
+.BR skipped ,
+counted separately from a pass and a failure, when the environment cannot
+distinguish it from the case it is meant to differ from. On the Pi 3B
+kernel there are two: the non-default font, because that root carries
+exactly one font and it is also Tk's default, and
+.BR "label -bitmap" ,
+because it carries no bitmap file either. A case that is dropped is
+reported, because coverage quietly lost is worse than coverage never
+claimed.
+.PP
+.B "Two of the nests are built for their side effect and still have a verdict."
+The nests at depth 2 and at the middle depth are drawn without their
+pictures being kept \(em only the deepest one is compared \(em so there
+is no
+.I report
+on the call. The verdict on them is the tree count: the check that the
+count scales with depth and then caps requires depth 2 to yield 3 trees
+and the middle depth to yield one more than itself, so a nest that fails
+to build scores 0 there and fails that check. Confirmed by making
+.IR paintnest ()
+return nil at each of those two depths in turn, which gives
+.B "depth 2 -> 0 trees"
+and
+.B "depth 5 -> 0"
+respectively, one FAIL and a tally of
+.BR "1 fail" .
+A discarded return in this program is not an unchecked case, but it is
+worth knowing which check is doing the work.
+.PP
+.B "A skipped case prints its reason first and its verdict second."
+The line naming the Tk command that would not run is a
+.I diagnostic
+and begins with
+.BR tkscenetest: ;
+the verdict on the next line begins with
+.B SKIP
+and is what the tally counts. The painting helpers used to print that
+diagnostic as
+.B FAIL
+themselves, so a kernel log showed two
+.B FAIL
+lines above a tally that said
+.BR "0 fail" ,
+and a reader had to know which number to believe. Only
+.I report
+and the tally label anything now.
+.PP
+Two further properties of the description are checked, because a tree that
+draws correctly can still be useless to a backend: every node that marks
+pixels must describe its own box, and the union the trees marked must be a
+non-empty rectangle inside the image.
+.SH "THE WALK'S OVERFLOW FALLBACK"
+.B tkwalkopen()
+pushes one walk level per window drawn, and a canvas window item is a
+window, so a nest of canvases is a nest of walk levels.
+.B Maxwalk
+is 8 \(em commented "a canvas in a text in a canvas ..." \(em and past it
+.B tkwalkopen
+returns without pushing: "deeper than this: no batching, still correct".
+.IR tkofftest (1)
+nests a canvas, a frame and an entry, which is two or three levels, so
+nothing reached that fallback until this program built a nest ten deep to
+force it.
+.PP
+.B "That the count CAPS rather than being a constant needs three depths."
+With only a shallow and a deep measurement, a tree count that happened
+always to be 8 would satisfy "capped at
+.BR Maxwalk ".
+Measured:
+.PP
+.EX
+depth  2 -> 3 trees   (unsaturated 3)
+depth  5 -> 6 trees   (unsaturated 6)
+depth 10 -> 8 trees   (unsaturated 11, Maxwalk 8)
+.EE
+.PP
+so it scales with depth below the cap and stops at it above, and the claim
+under test \(em "still correct" \(em holds: the nest past the cap renders
+identically through both paths.
+.PP
+The first version of this check asked whether
+.I batching
+was lost, on the reasoning that widgets-per-tree would fall. That was wrong
+about the mechanism:
+.B tkwalkopen
+flushes the enclosing walk's pending tree before pushing, so a nested
+window always gets a tree of its own and the ratio is 1.00 at every depth.
+There is no batching here to lose. The tree count saturating is what says
+the fallback fired.
+.SH "ONE READ PER ROUND"
+.BR "render count" ,
+.B "render nodes"
+and
+.B "render bounds"
+share one set of accumulators and
+.I each read clears all of them
+.RI ( tkwalkreset (\^)
+in
+.BR libtk/utils.c ).
+Reading two in a row gives the second one zero. This program therefore
+renders a fresh round before each read, and anything else that asks for
+more than one of those figures must do the same.
+.SH SOURCE
+.B /appl/cmd/tkscenetest.b
+.SH "SEE ALSO"
+.IR tkofftest (1),
+.IR tkcmd (1)
+.SH BUGS
+A
+.B layer
+inside an
+.B opacity
+span is permitted by the renderer and is not exercised here: the
+opacity fixture is a plain frame, which takes no layer. The reverse \(em
+an opacity inside a layer \(em is refused by the renderer, because
+there the target is a scratch at the origin and an opacity surface is
+in window coordinates.
+.PP
+What it does
+.B not
+cover:
+.PP
+The widgets are laid out with
+.B pack
+into a 160\(mu60 image. The four states this once listed as uncovered \(em a
+focused widget, a partially-clipped one, a posted menu with a cascade and a
+non-default colour scheme \(em are now covered. A widget inside a
+.B canvas
+window item is covered too, and that entry was wrong when it was written:
+the
+.B Maxwalk
+nest below is built from
+.B "create window \(em window"
+at every level, so a widget in a canvas window item is exercised at depths
+one through ten rather than not at all.
+.PP
+.B "RESOLVED: the population is now all seventeen widget types,"
+.B "and that claim is checkable from the program's own output."
+This paragraph used to say every widget kind was covered. It was not:
+.B "render types"
+showed
+.B panel
+and
+.B choicebutton
+absent from the population entirely \(em the test had no opinion on
+them \(em and
+.B separator
+present but reading
+.BR "separator 2 0" ,
+two draws and no joins, because the gate in
+.I tkdrawframe
+named
+.B TKframe
+alone. An assertion of coverage that does not state its population is
+not one a reader can check, which is how it stood unexamined.
+.PP
+The line now reads, for all seventeen:
+.IP
+.EX
+frame 38 38 label 12 12 checkbutton 1 1 button 3 3
+menubutton 1 1 menu 2 2 separator 2 2 cascade 2 2
+listbox 4 4 scrollbar 2 2 text 2 2 canvas 4 0
+entry 4 4 radiobutton 1 1 scale 2 2 panel 1 0
+choicebutton 1 1
+.EE
+.PP
+Two join nothing, both deliberately.
+.B Canvas
+builds its own scene per draw and frees it, so its items never enter the
+shared walk.
+.B Panel
+is the one widget whose content is the application's own live image,
+handed in by
+.BR putimage :
+.B TkNtexture
+names a
+.BR file ,
+which is what keeps a tree free of display-side resources so it can
+outlive the repaint that built it, and a panel's image has no path. So
+.I tkdrawpanel
+calls
+.I tkwalkflush
+and paints directly, and a tree cannot describe a panel without giving
+up the property that makes it worth having. A GPU backend would want a
+texture
+.I handle
+here rather than a path, which is the one place that design would need
+extending.
+.PP
+What is left, so far as this program can tell, is the things it says in
+.B "Where it has actually been run"
+rather than a widget kind or a state. If something is missing it is
+something neither this nor
+.IR tkofftest (1)
+thought to name, which is the kind of gap a list cannot close.
+.PP
+.B "RESOLVED: a listbox's -width and -height are PIXELS here, not characters."
+The scrolled case used to skip, and the cause was in this program rather
+than in
+.IR libtk .
+A listbox or text widget given
+.B "-width 12 -height 3"
+comes out
+.B 14\(mu5
+pixels, because those options are a size and not a character count \(em
+.B "-width 120 -height 44"
+gives 122\(mu46. So four cases were drawing a five-pixel sliver, less than
+one line tall, and nothing could scroll because nothing was visible.
+.PP
+The probe that settled it was
+.BR "yview" " with no argument,"
+which answers the view as two fractions: it read
+.B "0.5 0.5"
+after a
+.BR "yview moveto 0.5" ,
+and top equal to bot means the visible-line count is zero \(em
+.B "act.height/lineheight"
+had truncated to nothing. The scroll had been working all along; there was
+no row to put on screen.
+.PP
+.B "And \(lqdrew something\(rq hid it,"
+because it counts bytes differing from white and the toplevel's grey
+background satisfies that whatever the widget does. The four degenerate
+cases reported 28736 of 28800 bytes of ink while rendering no listbox at
+all.
+.PP
+.B "What catches this class is the differ-from-base rule, applied to EVERY"
+variation rather than only to new ones. It had been applied to the cases
+added last and not to the ones written first, which is exactly where the
+degenerate widgets were. All twenty variations are now held to it, and the
+figures moved accordingly:
+.B "listbox with a selection"
+went from covering nothing to differing from a plain listbox by 6888 bytes.
+.PP
+.B "Two toplevels drawing alternately"
+are covered, and were the last mechanism gap.
+.BR scene.c 's
+walk is a single static struct shared by every toplevel, so interleaved
+drawing is where its state could leak \(em a depth that does not return to
+zero, or a scene pointer left at a tree the flush has freed. Each of two
+toplevels is reconfigured and updated in turn, three times, and each image
+must match the same widget rendered alone, through both paths. It does, at
+0 bytes.
+.PP
+Two details make that check mean something. Bare
+.B update
+calls on a toplevel with nothing pending do nothing, so each round
+reconfigures the text first to force a repaint; and the case reads
+.B "render count"
+of its own, because the global one is taken before it runs and the identity
+would otherwise pass if both arms had somehow taken the direct path. It
+builds 2 trees.
+.PP
+.I Multiple
+widgets are not covered here and do not need to be:
+.IR tkofftest (1)
+compares the same two paths over a pane holding one of every widget kind, so
+two trees built before either is flushed \(em the invariant
+.IR libtk 's
+walk exists to maintain \(em is exercised there, along with one comparison
+per focusable widget, since only one widget can hold the keyboard and a
+listbox draws neither its ring nor its active item's box while an entry has
+it.
+.PP
+The division between the two is worth knowing. This program renders ONE
+case into a FRESH image, so when it fails it names the widget and the state;
+.IR tkofftest (1)
+renders everything at once, so it covers interactions this cannot and tells
+you less about which of them broke. A second
+.I toplevel
+is now covered here, and by nothing else.
+.PP
+The "drew something" check counts bytes differing from the white the image
+was filled with, so a widget that painted only its own grey background
+satisfies it \(em a posted menu reported the full 28800 bytes before and
+after it was posted. It is a guard against comparing two blank images, not
+evidence that a case's content was drawn.
+.PP
+Two things guard the content instead. Every setup command's reply is
+checked, so a selection or an item that did not take is reported rather
+than silently leaving a default widget to be compared with itself. And each
+case that is a
+.I variation
+of another must be shown to DIFFER from the case it varies \(em the
+non-default font from a plain label, the focused entry from a plain entry,
+the posted menu from the same menu unposted \(em or it is reported as
+.B skipped
+rather than passed. That rule was added because a font that cannot be
+opened, or a menu with no backing image, produces a case that passes while
+covering nothing.
+.PP
+The two controls above rule out the node path not running and the
+comparison not working. They do not amount to showing that a
+.I deliberate
+defect in a scene conversion would be caught; that needs the defect
+injected, which cannot be done from here.
+.PP
+.B "Where it has actually been run."
+The 22-case version of this program was run on a real Pi 3B and reported 46
+ok, 0 fail, 1 skipped. That is the only
+.I hardware
+figure it has, and it does not generalise forward: the six cases added since
+\(em a focused entry, a clipped label, non-default colours, a canvas fill by
+name, a canvas polygon and a posted menu \(em and the
+.B Maxwalk
+nest case have run under
+.IR qemu (1)
+and on the host only. Quote "46/0/1, 22 cases, silicon" or "66/0/2, 28
+cases, QEMU", never "verified on silicon" unqualified; a stale number with
+correct provenance is still stale.
+.PP
+The nest case in particular does not need hardware and has deliberately not
+had it:
+.B Maxwalk
+is a compile-time constant and TCG executes the same instructions, so a boot
+would buy a figure that distinguishes nothing. What would be worth hardware
+is a case whose behaviour could plausibly differ there \(em a cache-visibility
+question, or anything touching the framebuffer rather than an allocated
+image.
+.PP
+Nothing here looks at the screen, so it says nothing about what the board
+displays \(em only about what the two paths compute. A readback cannot see
+tearing or a stale buffer at all.

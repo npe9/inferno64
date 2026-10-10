@@ -171,13 +171,14 @@ tkcvspolyfree(TkCitem *i)
 
 	p = TKobj(TkCpoly, i);
 	if(p->stipple)
+		tkimgpathdrop(p->stipple);
 		freeimage(p->stipple);
 	if(p->pen)
 		freeimage(p->pen);
 }
 
 void
-tkcvspolydraw(Image *img, TkCitem *i, TkEnv *pe)
+tkcvspolydraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 {
 	int w;
 	TkEnv *e;
@@ -196,20 +197,48 @@ tkcvspolydraw(Image *img, TkCitem *i, TkEnv *pe)
 		pen = tkgc(e, TkCfill);
 
 	pts = i->p.drawpt;
+	/*
+	 * A polygon is only PARTLY expressible, and the parts are named
+	 * here rather than the whole item excluded.  TkNpolyfill fills by
+	 * the nonzero winding rule and by nothing else, so a polygon asked
+	 * for another one draws; there is no node for a filled SPLINE, so
+	 * a smooth one draws; and a stipple draws, as everywhere else.
+	 *
+	 * The order still holds because tkcvsdirect() renders what is
+	 * pending before the drawing happens, which is the whole reason it
+	 * takes that shape rather than being a flag on the item.
+	 */
 	if(i->p.npoint > 0 && pen != nil) {
-		if (p->smooth == BoolT)
-			fillbezspline(img, pts, i->p.npoint+1, p->winding, pen, pts[0]);
+		if(cd->sc != nil && p->pen == nil && p->smooth != BoolT
+		&& p->winding == ~0)
+			tkscenepolyfill(cd->sc, pts, i->p.npoint+1,
+				e->colors[TkCfill]);
+		else if (p->smooth == BoolT)
+			fillbezspline(tkcvsdirect(cd), pts, i->p.npoint+1,
+				p->winding, pen, pts[0]);
 		else
-			fillpoly(img, pts, i->p.npoint+1, p->winding, pen, pts[0]);
+			fillpoly(tkcvsdirect(cd), pts, i->p.npoint+1,
+				p->winding, pen, pts[0]);
 	}
 
 	w = TKF2I(p->width) - 1;
 	if(w >= 0 && (e->set & (1<<TkCforegnd))) {
-		pen = tkgc(i->env, TkCforegnd);
-		if (p->smooth == BoolT)
-			bezspline(img, pts, i->p.npoint+1, Enddisc, Enddisc, w, pen, pts[0]);
-		else
-			poly(img, pts, i->p.npoint+1, Enddisc, Enddisc, w, pen, pts[0]);
+		/*
+		 * A stroked SPLINE has a node; a stroked polyline has not,
+		 * so that one draws.
+		 */
+		if(cd->sc != nil && p->smooth == BoolT)
+			tkscenespline(cd->sc, pts, i->p.npoint+1, Enddisc, Enddisc, w,
+				e->colors[TkCforegnd]);
+		else {
+			pen = tkgc(i->env, TkCforegnd);
+			if (p->smooth == BoolT)
+				bezspline(tkcvsdirect(cd), pts, i->p.npoint+1,
+					Enddisc, Enddisc, w, pen, pts[0]);
+			else
+				poly(tkcvsdirect(cd), pts, i->p.npoint+1,
+					Enddisc, Enddisc, w, pen, pts[0]);
+		}
 	}
 }
 

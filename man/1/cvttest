@@ -1,0 +1,223 @@
+.TH CVTTEST 1
+.SH NAME
+cvttest \- test that converting a string to a number keeps all of it
+.SH SYNOPSIS
+.B cvttest
+.SH DESCRIPTION
+.I Cvttest
+checks that
+.BR "int s" ,
+.B "big s"
+and
+.B "real s"
+in Limbo convert the whole of a string's value, in particular above
+2\u31\d and 2\u32\d and below \-2\u32\d.
+.PP
+Each case prints
+.B ok
+or
+.BR FAIL ,
+and the last line is a count.
+.PP
+.B "Run it on a native kernel."
+Hosted it passes whether or not the defect it was written for is
+present, because the defect is a
+.B kencc
+one:
+.B int s
+is the Dis
+.B cvtcw
+instruction, a
+.B WORD
+is 64 bits on every target this tree builds, and
+.B libinterp/string.c
+reached it through
+.IR strtol ().
+A kencc
+.B long
+is 32 bits \(em
+.B libkern/strtol.c
+names its own ceiling,
+.BR "#define LONG_MAX 2147483647L" ,
+and returns it on overflow \(em so on a native kernel every value above
+2\u31\d\-1 came back as exactly
+.BR 2147483647 .
+Clang's
+.B long
+is 64 bits, so the same line was correct hosted and wrong nowhere
+anybody was looking.
+.PP
+.B "A saturation, not a wrap,"
+which is the tell. A wrap reads as a sign or a width problem in the
+code under suspicion; a value pinned to a round constant points at a
+.B library
+ceiling, and 2147483647 appears in exactly one place in this tree's own
+sources.
+.SH "HOW IT WAS FOUND, WHICH IS WHY THIS EXISTS"
+Not here.
+.IR Tkscenetest (1)
+serialises a render\-node tree and reads an
+.B rgba
+of 2425392895 back out of it.
+.IP
+.EX
+host      rgba survives above 2^31: 2425392895
+Pi 3B     rgba survives above 2^31: 2147483647
+.EE
+.PP
+Nothing in the conversion family had a test, so a defect in the one
+instruction a Limbo program uses to read a number was found by a
+graphics test on a different machine. That is what this file is for.
+.SH "WHY EVERY NUMBER IS BUILT AT RUNTIME"
+.I Limbo
+.B folds
+a conversion of a constant string, and refuses to compile a fold it
+cannot do:
+.B "int (\(dq12\(dq + \(dqx\(dq)"
+is
+.B "digit 'x' not radix 10"
+at compile time, not a 12 at run time. So a case written as
+.B "int \(dq2425392895\(dq"
+tests
+.IR limbo (1),
+which runs on the host either way, and reaches the VM not at all. Every
+number here goes through
+.I digits()
+or
+.IR runtime (),
+neither of which the compiler can see through.
+.SH "THE CONTROLS"
+Three small values first \(em 42, 0 and \-7 \(em because a conversion
+that was simply broken would otherwise pass the interesting cases by
+accident. They earned themselves immediately: the first version built
+its expected digits with
+.BR "string c" ,
+which appends the character's decimal
+.B value
+rather than the character, so
+.B "string '4'"
+is
+.B 52
+and every case failed. The three controls said so on the first three
+lines.
+.SH "WHY BOTH SIDES OF EVERY CASE ARE STRINGS"
+Because the first version's were not, and it cost a clean pass on a
+kernel where three of its numbers were wrong.
+.PP
+It compared
+.I sprint
+of the converted value against the digits of a
+.B big
+.BR literal .
+When the literal was itself wrong, both sides were wrong together:
+.IP
+.EX
+ok   int of an rgba above 2^31: \-1869574401
+ok   int at 2^32\-1: \-1
+ok   int below \-2^32: \-99
+.EE
+.PP
+.B "15 ok, 0 fail,"
+on a kernel where three of the fifteen numbers were not the numbers
+named in the test.
+.B "A symmetric fixture cannot see a fault on the path both of its"
+.B "sides take,"
+and
+.B "big LITERAL"
+is on both \(em this tree already has the finding that a
+.B computed
+all\-ones and a
+.B literal
+all\-ones are different numbers in this Limbo, so a literal is not a
+safe oracle for exactly this question.
+.PP
+Now the input is a string
+.I limbo (1)
+cannot fold and the expectation is the same characters, so the only
+arithmetic between them is the conversion under test. It is printed
+with
+.B %bd
+on a
+.BR big ,
+because
+.B %d
+formats the low 32 bits and would print the right answer and the wrong
+answer alike.
+.PP
+2\u31\d\-1 is checked
+.B as well as
+2\u31\d, because a fix that moved the ceiling rather than removing it
+would pass both the small cases and the large ones but not those two
+together. 2\u32\d\-1 is checked because an unsigned 32\-bit ceiling is
+the other plausible place to stop and is not where libkern's is, and a
+value below \-2\u32\d because
+.B LONG_MIN
+is a different constant from
+.B LONG_MAX
+and testing one direction would have missed it.
+.PP
+.B "big s"
+is a different instruction
+.RB ( cvtcl )
+and already used
+.IR strtoll ,
+so it is the control that says the two conversions
+.B agree
+rather than that both are wrong the same way.
+.SH "WHAT IT READS NOW"
+On the Pi 3B kernel, which is the run that means anything:
+.IP
+.EX
+CVTTEST 17 ok, 0 fail
+int of an rgba above 2^31: 2425392895
+int of 2^32\-1: 4294967295
+int of below \-2^32: \-4294967395
+int of 2^63\-1: 9223372036854775807
+int of \-2^63: \-9223372036854775808
+.EE
+.PP
+The values are printed because the verdict was not enough once
+already: the version before this one answered
+.B "15 ok, 0 fail"
+on the same kernel with three of its fifteen numbers wrong.
+.SH SOURCE
+.B /appl/cmd/cvttest.b
+.SH SEE ALSO
+.IR zdivtest (1),
+.IR bndstest (1),
+.IR tkscenetest (1)
+.SH BUGS
+.B ICVTCW
+is a punt in the arm64 JIT
+.RB ( libinterp/comp-arm64.c ),
+so there is one implementation and both execution paths are covered by
+one fix \(em unlike the zero divide, where the interpreter and the JIT
+each needed their own check and a fix to one was recorded as a fix to
+both. Worth running under
+.B -c0
+and
+.B -c1
+anyway, because that is a property of the current code generator and
+not a guarantee.
+.PP
+It does not cover
+.B hex
+or any base but 10:
+.B int s
+in Limbo is decimal only, and the
+.I base
+argument of the call underneath it is not reachable from Limbo.
+.PP
+It does not cover a string whose value does not fit a 64\-bit
+.BR WORD .
+.I Strtoll
+saturates there and nothing says what Limbo should do, so asserting
+either answer would be inventing a specification.
+.PP
+.B "There is no in-process negative control here."
+The defect cannot be made to appear on the host, so the only evidence
+this test can fail is the measurement that found the bug \(em the same
+rgba reading 2147483647 on an unfixed Pi 3B kernel and 2425392895
+hosted. Running this on a kernel built before
+.B libinterp/string.c
+changed is the control, and it is a kernel build rather than a flag.

@@ -373,3 +373,4 @@ void	zerosig(char*);
 #pragma	varargck	type	"P"	Prog*
 #pragma	varargck	type	"R"	int
 #pragma	varargck	type	"A"	int
+char*	cputimestr(void);

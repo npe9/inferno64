@@ -16,6 +16,8 @@ HFILES=\
 	$ROOT/include/draw.h\
 	$ROOT/include/prefab.h\
 
+CFLAGS=$CFLAGS -I$ROOT/libinterp/w$DISWORD
+
 <$ROOT/mkfiles/mksyslib-$SHELLTYPE
 
 $OFILES:	$ROOT/module/prefab.m

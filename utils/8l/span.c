@@ -38,7 +38,7 @@ span(void)
 
 start:
 	if(debug['v'])
-		Bprint(&bso, "%5.2f span\n", cputime());
+		Bprint(&bso, "%s span\n", cputimestr());
 	Bflush(&bso);
 	c = INITTEXT;
 	for(p = firstp; p != P; p = p->link) {
@@ -57,7 +57,7 @@ start:
 loop:
 	n++;
 	if(debug['v'])
-		Bprint(&bso, "%5.2f span %d\n", cputime(), n);
+		Bprint(&bso, "%s span %d\n", cputimestr(), n);
 	Bflush(&bso);
 	if(n > 50) {
 		print("span must be looping\n");

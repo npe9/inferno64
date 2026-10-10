@@ -1371,6 +1371,194 @@ drawtest()
 	sys->print("DRAW-OK %dx%d\n", r.max.x-r.min.x, r.max.y-r.min.y);
 }
 
+# Is libtk in this kernel, and does it draw?
+#
+# Loading $Tk answers the first half: the module is built in, not a
+# dis file, so a successful load means the config's mod section
+# reached tkmodinit() and libtk linked.  That is worth little on its
+# own - a module can register and still draw nothing - so the second
+# half lays out a real widget and COUNTS THE INK.
+#
+# Into an image of its own rather than onto the framebuffer, for the
+# reason tkofftest(1) gives: what a widget put on the screen cannot be
+# read back, while an allocated image can.  RGB24 so that three bytes
+# is one pixel here whatever the screen's own channel is.
+#
+# The count is against white, which the image was filled with, so any
+# non-white pixel came from Tk.  A label that laid out but drew
+# nothing reports TK-NONE rather than TK-OK, which is the case this
+# would otherwise pass straight through.
+# How long does this board take to paint a screenful?
+#
+# This is the number the GPU question turns on.  doc/ui-next-plan.md on
+# the inferno-rio branch gates a hardware backend on a repaint costing
+# roughly 2ms of DRAWING; on an Apple M-series host a 900x700 fill is
+# about 56us, thirty times under, which is why that work stayed on
+# memdraw.  A Pi 3 shares one LPDDR2 controller between the ARM and the
+# VideoCore, so the same fill is expected to cost far more here - but
+# expected is not measured, and nothing had ever measured it.
+#
+# Two numbers, because the board pays twice for every pixel.  The first
+# is memdraw alone, filling an image of its own.  The second is the
+# same fill into the screen plus flushmemscreen(), which memmoves the
+# dirty rectangle from kernel RAM into the VideoCore's uncached
+# framebuffer and cleans the cache over it (screenbcm.c).  The gap
+# between them IS the soft->fb copy, which is the first thing worth
+# removing if these numbers are large.
+#
+# UNDER QEMU THESE MEAN NOTHING.  QEMU emulates the CPU and runs the
+# memory system at the host's speed, so what this prints there is a
+# property of the desktop it is running on.  Read it on silicon.
+drawrate()
+{
+	disp: ref Display;
+	{ disp = Display.allocate("/dev"); }
+	exception e { "*" => sys->print("DRAWRATE-FAIL Display: %s\n", e); return; }
+	if(disp == nil){
+		sys->print("DRAWRATE-FAIL nil display: %r\n");
+		return;
+	}
+	scr := disp.image;
+	r := scr.r;
+	npix := (r.max.x - r.min.x) * (r.max.y - r.min.y);
+	off := disp.newimage(r, scr.chans, 0, Draw->White);
+	if(off == nil){
+		sys->print("DRAWRATE-FAIL newimage: %r\n");
+		return;
+	}
+	col := disp.rgb(40, 80, 160);
+	if(col == nil){
+		sys->print("DRAWRATE-FAIL rgb: %r\n");
+		return;
+	}
+	# Run until the elapsed time is big enough to divide, rather than a
+	# fixed count.  A fixed fifty came back "0 us a fill" - sys->millisec()
+	# has millisecond resolution and fifty fills fit inside one tick - and
+	# a zero is not a fast number, it is a failed measurement.
+	Minms: con 200;
+
+	# warm once, so a first-call cost is not counted as the steady one
+	off.draw(r, col, nil, (0,0));
+
+	nd := 0;
+	t0 := sys->millisec();
+	for(;;){
+		off.draw(r, col, nil, (0,0));
+		nd++;
+		if(sys->millisec() - t0 >= Minms)
+			break;
+	}
+	t1 := sys->millisec();
+
+	ns := 0;
+	for(;;){
+		scr.draw(r, col, nil, (0,0));
+		scr.flush(Draw->Flushnow);
+		ns++;
+		if(sys->millisec() - t1 >= Minms)
+			break;
+	}
+	t2 := sys->millisec();
+
+	if(nd <= 0 || ns <= 0 || t1 - t0 <= 0 || t2 - t1 <= 0){
+		sys->print("DRAWRATE-FAIL nothing measurable (%d,%d fills)\n", nd, ns);
+		return;
+	}
+	drawus := ((t1 - t0) * 1000) / nd;
+	scrus := ((t2 - t1) * 1000) / ns;
+	sys->print("DRAWRATE-OK %dx%d (%d pixels): memdraw %d us a fill over %d, screen+flush %d us a fill over %d\n",
+		r.max.x - r.min.x, r.max.y - r.min.y, npix, drawus, nd, scrus, ns);
+	sys->print("DRAWRATE-NOTE meaningless under QEMU; read it on the board\n");
+}
+
+# Render a label of the given text into a fresh image and hand back
+# its pixels.  A toplevel of its own each time, because reconfiguring
+# one and reading it again measures whatever the reconfigure happened
+# to repaint, which is not the question.
+tklabel(disp: ref Display, txt: string, w, h: int): array of byte
+{
+	off := disp.newimage(Rect((0,0),(w,h)), draw->RGB24, 0, Draw->White);
+	if(off == nil){
+		sys->print("TK-FAIL newimage: %r\n");
+		return nil;
+	}
+	top := tk->toplevel(disp, "");
+	if(top == nil){
+		sys->print("TK-FAIL toplevel: %r\n");
+		return nil;
+	}
+	c := tk->cmd(top, "label .l -text " + tk->quote(txt));
+	if(c != nil && len c > 0 && c[0] == '!'){
+		sys->print("TK-FAIL label: %s\n", c);
+		return nil;
+	}
+	tk->cmd(top, "pack .l");
+	if((c = tk->putimage(top, ". -1", off, nil)) != nil && len c > 0){
+		sys->print("TK-FAIL putimage: %s\n", c);
+		return nil;
+	}
+	tk->cmd(top, "update");
+	b := array[w*h*3] of byte;
+	if(off.readpixels(off.r, b) != len b){
+		sys->print("TK-FAIL readpixels: %r\n");
+		return nil;
+	}
+	return b;
+}
+
+tktest()
+{
+	tk = load Tk Tk->PATH;
+	if(tk == nil){
+		sys->print("TK-FAIL load $Tk: %r\n");
+		return;
+	}
+	disp: ref Display;
+	{ disp = Display.allocate("/dev"); }
+	exception e { "*" => sys->print("TK-FAIL Display: %s\n", e); return; }
+	if(disp == nil){
+		sys->print("TK-FAIL nil display: %r\n");
+		return;
+	}
+	W := 160;
+	H := 40;
+
+	# Counting pixels that are not the WHITE the image was filled with
+	# says only that SOMETHING painted, and a label paints its whole
+	# rectangle in its own background before it draws a glyph - that
+	# count came back 6400 of 6400 and could not tell a rendered word
+	# from a blank fill.  A saturated instrument reads exactly like a
+	# working one.
+	#
+	# So render the same label twice, once with a word in it and once
+	# empty, and compare.  Whatever differs is the glyphs.
+	a := tklabel(disp, "Inferno", W, H);
+	if(a == nil)
+		return;
+	c := tklabel(disp, "", W, H);
+	if(c == nil)
+		return;
+	fill := 0;
+	for(i := 0; i < len a; i += 3)
+		if(a[i] != byte 255 || a[i+1] != byte 255 || a[i+2] != byte 255)
+			fill++;
+	ink := 0;
+	for(i = 0; i < len a; i++)
+		if(a[i] != c[i])
+			ink++;
+	if(fill == 0){
+		sys->print("TK-NONE $Tk loaded but a label drew nothing at all\n");
+		return;
+	}
+	if(ink == 0){
+		sys->print("TK-NONE $Tk laid out a label (%d of %d pixels filled) but its text drew nothing\n",
+			fill, W*H);
+		return;
+	}
+	sys->print("TK-OK $Tk is built in; a label filled %d of %d pixels and its text inked %d bytes\n",
+		fill, W*H, ink);
+}
+
 # has usbd enumerated anything besides the root hub?  Its ctl file has a
 # line per endpoint, and ep1.0 is the root hub itself.
 usbdevices(): int
@@ -2983,6 +3171,7 @@ init()
 	sdcheck();
 	drawtest();
 	tktest();
+	drawrate();
 	usbcheck();
 	# in its own process: the shell must not wait behind a DHCP lease and
 	# three pings, which take seconds and can be answered by nothing at all

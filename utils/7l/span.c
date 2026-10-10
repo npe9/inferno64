@@ -24,7 +24,7 @@ span(void)
 	long c, otxt, v;
 
 	if(debug['v'])
-		Bprint(&bso, "%5.2f span\n", cputime());
+		Bprint(&bso, "%s span\n", cputimestr());
 	Bflush(&bso);
 
 	bflag = 0;
@@ -100,7 +100,7 @@ span(void)
 	 */
 	while(bflag) {
 		if(debug['v'])
-			Bprint(&bso, "%5.2f span1\n", cputime());
+			Bprint(&bso, "%s span1\n", cputimestr());
 		bflag = 0;
 		c = INITTEXT;
 		for(p = firstp; p != P; p = p->link) {

@@ -30,6 +30,13 @@
 #include "fns.h"
 #include "io.h"
 
+/*
+ * Declared, not left implicit: systmrusec() returns a uvlong and 7c
+ * assumes int for an undeclared function, which would truncate the
+ * timestamps the mailbox wait below is computed from.
+ */
+extern	uvlong	systmrusec(void);
+
 enum {
 	Read	= 0x00/4,		/* MBOX0 read (GPU -> ARM) */
 	Status	= 0x18/4,		/* MBOX0 status */
@@ -42,54 +49,57 @@ enum {
 	Busalias = 0xC0000000,		/* GPU-uncached view of ARM RAM */
 
 	Respok	= 0x80000000,		/* message code: request succeeded */
-	Spins	= 10*1000*1000,	/* bound on a mailbox wait: uncached reads, so about a second */
 	/*
-	 * A TIME bound for the callers that need to tell "did not answer in
-	 * time" from "answered with an error", which a spin count cannot:
-	 * ~1.05s of spinning here was read as a fixed cost in the firmware's
-	 * EXECUTE_QPU path and written into #Q's comment block in capitals,
-	 * when it was only this loop giving up.  A figure immune to a 500x
-	 * change in its own argument is not measuring the argument.
+	 * A SPIN COUNT CANNOT DISTINGUISH "BUSY" FROM "NEVER GOING TO
+	 * REPLY", and that cost a wrong conclusion. This was the only
+	 * bound, ten million uncached reads, and the comment said "about
+	 * a second" -- so a request the GPU never answered took 1.0509s
+	 * to give up, reproducibly to four decimal places, and that
+	 * duration was read as the firmware DOING something for a
+	 * second. It was this loop, measured. Sweeping a request argument
+	 * 500x moved it 43us because nothing about it depends on the
+	 * request at all.
 	 *
-	 * Spins above stays as a BACKSTOP: systmrusec() needs no init and so
-	 * is usable this early, but on a board whose counter is not running a
-	 * purely time-based loop would never exit and would hang the boot.
-	 * Which bound fired is reported, because "the GPU did not answer in
-	 * time" and "this board has no usable clock" are different facts.
-	 *
-	 * Ported from inferno-rio's f8350b014 onto THIS branch's locked
-	 * mailbox: that branch predates 586a77181 ("serialise the mailbox --
-	 * it had no lock at all") and its mboxpropto takes no lock, so the
-	 * two had to be merged rather than copied.
+	 * So the bound is a TIME now, and the spin count stays only as a
+	 * backstop for a dead counter: systmrread() reads the hardware
+	 * counter with no init, but if that counter is not running
+	 * (SYSTMR-NONE) a purely time-based loop would never exit and
+	 * would hang the boot. Which bound fired is reported, because
+	 * "the GPU did not answer in time" and "this board has no usable
+	 * clock" are different facts.
 	 */
 	Waitus	= 1000*1000,	/* default: a second, as the spin count was */
+	Spins	= 200*1000*1000,	/* backstop only: far beyond Waitus */
+
 	/*
-	 * BOTH BOUNDS ARE LOAD-BEARING AND THEY CATCH DIFFERENT FAULTS.
-	 * This is not belt and braces and the "redundant" one must not be
-	 * tidied away (inferno-rio-71's point, and worth more than the fix):
+	 * SPIN THIS LONG, THEN YIELD.  Every tag that answers answers in
+	 * tens of microseconds on silicon -- GET_CLOCK_RATE 25us, an
+	 * absent tag refused in 22us, SET and GET_DOMAIN_STATE 31 and
+	 * 23 -- so 2 ms is about sixty times the observed latency and
+	 * covers the fast path without a sleep in it.
 	 *
-	 *	Waitus  a firmware that will never answer
-	 *	Spins   a DEAD COUNTER
+	 * THE SLEEP WAS UNEXERCISED CODE until it was forced.  Every tag
+	 * that answers does so in tens of microseconds, so el >= Fastus
+	 * had never once been true in any boot -- the yield, the
+	 * up->sleep wakeup and sleeping while holding mboxlock were all
+	 * paths described as safe and never run.  Forced with Fastus = 0,
+	 * so every mailbox wait takes the sleep: boots through the whole
+	 * init sequence to RCMD-OFF, including RCMD's 180-second network
+	 * wait, with THERM-OK and DRAW-OK and TK-OK on the way and no
+	 * panic.  THERM-OK comes from a Dis process, so up was non-nil
+	 * and the sleep really ran.
 	 *
-	 * If systmrusec() ever returns a constant -- SYSTMR-NONE, a board
-	 * whose counter is not running -- then systmrusec() - t0 is always
-	 * zero, the deadline can never expire, and the spin count is the
-	 * only thing that gets you out.  Delete it and that board hangs in
-	 * here before it has printed anything.
-	 *
-	 * Which is why mboxlastwait() distinguishes -1 from -2 rather than
-	 * just failing: "the GPU did not answer in time" and "this board
-	 * has no usable clock" need different responses from the caller,
-	 * and the caller cannot tell them apart any other way.
+	 * Past Fastus the wait sleeps a millisecond a go instead of
+	 * spinning.  A non-yielding spin for the whole bound starves the
+	 * machine, and on a JTAG boot it starves it completely: a JTAG
+	 * boot holds cores 1-3, so the board is single-cpu and a long
+	 * kernel spin takes the network poller with it.  Measured the
+	 * expensive way by the session that owns the board -- a 30-second
+	 * request wedged it, recovered only by hardreset.
 	 */
+	Fastus	= 2000,
+	Maxwaitus = 2*1000*1000,	/* the most any caller may ask for */
 };
-
-/*
- * Serialises every property-channel exchange; see mboxprop below.
- */
-static Lock mboxlock;
-
-extern uvlong systmrusec(void);
 
 static u32*
 mbox(void)
@@ -120,53 +130,74 @@ mboxwrite(int chan, u32 data)
 
 /*
  * Bounded, because every one of these runs during boot and a wait
- * without a bound is a board that says nothing at all.  The firmware
- * answers every message on the property channel, including one whose
- * tag it does not know, so a timeout here is not an unsupported tag:
- * it is a mailbox that is not working, and the caller reporting that
- * is worth more than a kernel stopped in a while loop before it has
- * printed anything.  Returns 0 and the value, or -1.
+ * without a bound is a board that says nothing at all.
+ *
+ * THIS COMMENT USED TO SAY the firmware answers every message on the
+ * property channel, including one whose tag it does not know, so a
+ * timeout here could only mean a mailbox that is not working. That is
+ * FALSE on this board. EXECUTE_QPU (0x00030011) gets no reply at all
+ * -- buf[1] and buf[4] both come back as the driver left them and
+ * buf[5..8] as the request verbatim -- seconds after GET_CLOCK_RATE and
+ * SET_ENABLE_QPU were both answered on the same channel. So a timeout
+ * here means "this tag was not answered", and that is a thing one tag
+ * can do while its neighbours do not.
+ *
+ * Returns 0 and the value, -1 if the time ran out, -2 if the spin
+ * backstop ran out first, which means the counter is not advancing.
  */
-/* 0 answered, -1 out of time, -2 the counter is not advancing */
-static int lastwait;
-
-int
-mboxlastwait(void)
-{
-	return lastwait;
-}
+static int lastwait;	/* 0 ok, -1 out of time, -2 counter not advancing */
 
 static int
 mboxreadto(int chan, u32 *val, uvlong usec)
 {
 	u32 *r = mbox();
 	u32 v;
-	uvlong t0;
-	int i;
+	uvlong t0, el;
+	int i, yield;
 
 	t0 = systmrusec();
+	/*
+	 * Yieldable only in process context with interrupts on.  At boot
+	 * there is no process to sleep and nothing else to run anyway,
+	 * and the fast path never reaches the sleep.
+	 */
+	yield = up != nil && islo();
 	for(i = 0; i < Spins; i++){
 		/*
-		 * THE DEADLINE IS CHECKED EVERY ITERATION, not only when the
-		 * FIFO is empty, and that placement is the whole point.
+		 * THE DEADLINE IS CHECKED EVERY ITERATION, not only when
+		 * the FIFO is empty.  It used to sit inside the Empty
+		 * branch, so a read FIFO holding a word for another channel
+		 * took the r[Read] path below and went round again WITHOUT
+		 * EVER CONSULTING THE CLOCK: the request's own bound was
+		 * ignored and Spins decided.  Measured on silicon by asking
+		 * for 30 s and getting 4.174742 s -- 200e6 iterations at
+		 * about 21 ns -- and then being told COUNTER NOT ADVANCING,
+		 * which is the one fact a caller cannot obtain any other
+		 * way and which was false.  A bound that only applies when
+		 * nothing is happening is not a bound.
 		 *
-		 * With the check inside the Empty branch, a read FIFO holding
-		 * a word for ANOTHER channel takes the r[Read] path and loops
-		 * without ever consulting the clock -- so the request's own
-		 * bound is ignored and the Spins backstop decides.  Measured
-		 * on silicon asking for 30 s: it gave up at 4174742 us, which
-		 * is 200e6 iterations at about 21 ns, and reported
-		 * "COUNTER NOT ADVANCING" when the counter was perfectly fine.
-		 * A bound that cannot be honoured is bad; a bound that then
-		 * misnames which bound fired is worse, because that is the one
-		 * fact the caller cannot get any other way.
+		 * This keeps the reason both bounds exist: if the counter is
+		 * dead, systmrusec() - t0 is always zero, the deadline can
+		 * never expire, and Spins remains the only thing that gets
+		 * you out.  A later tidy that deletes "the redundant one"
+		 * would delete the only bound that survives a stopped clock.
 		 */
-		if(systmrusec() - t0 >= usec){
+		el = systmrusec() - t0;
+		if(el >= usec){
 			lastwait = -1;
 			return -1;
 		}
-		if(r[Status] & Empty)
+		if(r[Status] & Empty){
+			/*
+			 * If the counter is dead el is always zero, so this
+			 * never fires and Spins is still the only way out --
+			 * which is the property that must survive any tidy
+			 * of these two bounds.
+			 */
+			if(yield && el >= Fastus)
+				tsleep(&up->sleep, return0, 0, 1);
 			continue;
+		}
 		v = r[Read];
 		if((int)(v & 0xf) == chan){
 			*val = v & ~0xfU;
@@ -181,20 +212,7 @@ mboxreadto(int chan, u32 *val, uvlong usec)
 static int
 mboxread(int chan, u32 *val)
 {
-	u32 *r = mbox();
-	u32 v;
-	int i;
-
-	for(i = 0; i < Spins; i++){
-		if(r[Status] & Empty)
-			continue;
-		v = r[Read];
-		if((int)(v & 0xf) == chan){
-			*val = v & ~0xfU;
-			return 0;
-		}
-	}
-	return -1;
+	return mboxreadto(chan, val, Waitus);
 }
 
 /*
@@ -203,22 +221,36 @@ mboxread(int chan, u32 *val)
  * above.  Returns 0 on success (message code == Respok), -1 otherwise.
  * The response is written back into buf in place.
  */
-int	mboxpropto(u32*, uvlong);	/* defined below; mboxprop delegates to it */
-
-int
-mboxprop(u32 *buf)
-{
-	return mboxpropto(buf, Waitus);
-}
-
 /*
- * As mboxprop, with an explicit deadline for the reply.  It keeps
- * mboxlock: this branch serialises the property channel (586a77181) and
- * the timeout does not change why -- two callers interleaving can still
- * each take the other's reply, and a GPIO read returning a clock rate is
- * a wrong answer with the success code set rather than a detectable
- * error.  mboxlastwait() says which bound fired.
+ * ONE EXCHANGE AT A TIME.  The property channel is a request and a
+ * reply with nothing tying them together: two callers that interleave
+ * each take the other's answer, and because the reply is written back
+ * INTO THE REQUEST BUFFER the loser gets a well-formed message with the
+ * success code set and somebody else's value in it -- a GPIO read
+ * returning a clock rate, not a detectable error.
+ *
+ * THREE CALLERS IN THIS KERNEL, not one.  I first wrote here that
+ * devv3d.c was the only one, from a grep for mboxprop -- and btbcm.c
+ * and thermbcm.c reach the same channel through mboxtag(), which calls
+ * mboxprop() four lines in.  So a /dev read of the temperature and a
+ * BT_ON cycle and a #Q exec all share this, and the race is reachable
+ * between drivers here exactly as it is on a branch with more of them.
+ * Grep for the function the drivers call, not the one they end up in.
+ *
+ * A QLOCK AND NOT A LOCK, the same choice dmabcm.c made for the same
+ * reason: the wait is long by kernel standards and the caller is always
+ * process context, so other processes must keep running while one of
+ * them is at the mailbox.  A Lock here was worse than no lock -- it
+ * added every other mailbox user to the set of things a long wait
+ * starves -- and a Lock could not be held across the sleep in
+ * mboxreadto() at all.
+ *
+ * A caller from interrupt context would need an ilock and would then be
+ * holding interrupts off for the whole exchange, which is a reason not
+ * to add such a caller rather than a reason to change this.
  */
+static QLock mboxlock;
+
 int
 mboxpropto(u32 *buf, uvlong usec)
 {
@@ -232,45 +264,38 @@ mboxpropto(u32 *buf, uvlong usec)
 	reqlen = buf[0];		/* total length, read before the exchange overwrites it */
 
 	/*
-	 * ONE EXCHANGE AT A TIME, and nothing here used to say so.
-	 *
-	 * An exchange is a write of a buffer address followed by a read of
-	 * the reply, with the reply landing in the caller's own buffer.  Two
-	 * callers interleaving can each take the other's reply: a GPIO read
-	 * returning a clock rate is not a detectable error, it is a wrong
-	 * answer with the success code set.
-	 *
-	 * It is reachable.  Boot-time callers run one at a time, but several
-	 * drivers come back at runtime -- btbcm reads a firmware GPIO to
-	 * power Bluetooth, sdhostbcm and sdhcibcm ask for clock rates on a
-	 * card reset, pwmbcm asks on open, and screenbcm's vsync probe waits
-	 * on the display.  Any two of those can overlap.
-	 *
-	 * A Lock and not a QLock: mboxprop runs during boot, from
-	 * mailboxinit and screeninit, where there is no process to sleep.
-	 * The cost is that a waiter spins -- and a vsync wait holds this for
-	 * a whole frame, up to 16.7ms -- which is why NOTHING may call the
-	 * mailbox from an interrupt handler, and why a periodic vsync kproc
-	 * is not an option: at 60 waits a second it would hold the mailbox
-	 * essentially all the time and starve every other user.
-	 */
-	lock(&mboxlock);
-
-	/*
 	 * Clean the request to the point of coherency so the GPU, which
 	 * reads the buffer uncached through the bus alias, sees the bytes
 	 * we wrote.  cacheflush ends in a DSB, so the write-register poke
 	 * below is ordered after the clean.
 	 */
+	/*
+	 * CAPPED, because the bound comes from a caller and #Q lets a
+	 * user program choose it.  Without this a write of `exec ...
+	 * 30000' asks the kernel to wait thirty seconds holding the
+	 * mailbox, which is how the board was wedged.  2 s is already
+	 * eighty thousand times the latency of every tag that answers,
+	 * so a request that misses it is not being slow.
+	 */
+	if(usec > Maxwaitus)
+		usec = Maxwaitus;
 	cacheflush(buf, reqlen);
+	/*
+	 * At boot there is no process to qlock with, and nothing else is
+	 * running to race against.
+	 */
+	if(up != nil)
+		qlock(&mboxlock);
 	if(mboxwrite(Chanprop, (u32)(pa | Busalias)) < 0){
-		unlock(&mboxlock);
+		if(up != nil)
+			qunlock(&mboxlock);
 		return -1;
 	}
-	if(mboxreadto(Chanprop, &resp, usec) < 0){
-		unlock(&mboxlock);
+	r = mboxreadto(Chanprop, &resp, usec);
+	if(up != nil)
+		qunlock(&mboxlock);
+	if(r < 0)
 		return -1;
-	}
 	USED(resp);
 	/*
 	 * The GPU filled the response in place.  Invalidate our now-stale
@@ -280,9 +305,143 @@ mboxpropto(u32 *buf, uvlong usec)
 	 * in it to lose.
 	 */
 	cacheinval(buf, reqlen);
-	r = buf[1] == Respok ? 0 : -1;
-	unlock(&mboxlock);
-	return r;
+	return buf[1] == Respok ? 0 : -1;
+}
+
+int
+mboxprop(u32 *buf)
+{
+	return mboxpropto(buf, Waitus);
+}
+
+/*
+ * The ceiling mboxpropto() will silently apply, so a caller that took
+ * its bound from somebody else can SAY what it actually got.  #Q lets a
+ * user write `exec ... 30000' and the clamp made that 2 s with nothing
+ * in the status admitting the request had been reduced -- a bound
+ * reported as 30 s and enforced at 2 is the same class of lie as a spin
+ * count reported as a timeout, which is the defect this cap exists
+ * because of.
+ */
+uvlong
+mboxwaitcap(void)
+{
+	return Maxwaitus;
+}
+
+/*
+ * Which bound ended the last wait, for a caller that needs to tell
+ * "the GPU has not answered yet" from "this board's counter is dead".
+ * mboxpropto returns -1 for both because its contract is older than
+ * the distinction.
+ */
+int
+mboxlastwait(void)
+{
+	return lastwait;
+}
+
+/*
+ * Can anything on this board be asked to do 3D?
+ *
+ * devdraw implements the draw3d letters in software and leaves its
+ * gpudraw* hooks nil, so the question a GPU backend has to answer first
+ * is what the VideoCore will accept. Only the firmware knows, so this
+ * asks it, at boot, in the style of every other subsystem here: a
+ * verdict line rather than an assumption.
+ *
+ * Two questions, both cheap and neither of which changes anything:
+ *
+ * V3D CLOCK (GET_CLOCK_RATE, clock id 5). A rate of zero means the
+ * firmware does not have the block running; non-zero means it does and
+ * says how fast, which is also the number any later throughput claim
+ * has to be reconciled against.
+ *
+ * SET_ENABLE_QPU (tag 0x00030012). This is the documented bare-metal
+ * route to the twelve QPUs -- enable them, then hand EXECUTE_QPU
+ * (0x00030011) a block of QPU machine code. There is no GL here and no
+ * V3D register driver, so that interface is the seam, and whether the
+ * firmware answers it at all is the thing worth knowing before anyone
+ * writes QPU code.
+ *
+ * QEMU emulates neither, and worse than not emulating them: it accepts
+ * the tags and makes up the values. Under emulation this prints
+ * V3D-BLIND because of the control below. On silicon (2026-10-08) the
+ * control is refused and the verdict is V3D-OK with the clock at
+ * 250 MHz -- where QEMU claimed 700. The control catches a tag that is
+ * not implemented; nothing catches a VALUE that is invented, which is
+ * why the number is written down here from the board and not from the
+ * emulator.
+ */
+void
+v3dprobe(void)
+{
+	static u32 raw[32+4];
+	u32 *buf;
+	u32 rate;
+	int clockok, qpuok;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+
+	/* GET_CLOCK_RATE, clock id 5 == V3D */
+	buf[0] = 8*4;
+	buf[1] = 0;
+	buf[2] = 0x00030002;
+	buf[3] = 8;
+	buf[4] = 0;
+	buf[5] = 5;			/* clock id: V3D */
+	buf[6] = 0;			/* <- rate in Hz */
+	buf[7] = 0;
+	rate = 0;
+	clockok = mboxprop(buf) >= 0;
+	if(clockok)
+		rate = buf[6];
+
+	/* SET_ENABLE_QPU: 1 to turn the QPUs on */
+	buf[0] = 7*4;
+	buf[1] = 0;
+	buf[2] = 0x00030012;
+	buf[3] = 4;
+	buf[4] = 0;
+	buf[5] = 1;			/* enable */
+	buf[6] = 0;
+	qpuok = mboxprop(buf) >= 0;
+
+	/*
+	 * THE CONTROL, and it is not optional. A property mailbox can
+	 * accept a tag without implementing it -- QEMU's bcm2835 does
+	 * exactly that for much of the interface -- so "SET_ENABLE_QPU
+	 * accepted" on its own does not distinguish real firmware from a
+	 * stub. Ask for a tag that cannot exist and see whether that is
+	 * accepted too. If it is, every answer above is worthless and this
+	 * says so rather than reporting a capability nobody has.
+	 */
+	buf[0] = 7*4;
+	buf[1] = 0;
+	buf[2] = 0x000f0f0f;		/* no such tag, and never will be */
+	buf[3] = 4;
+	buf[4] = 0;
+	buf[5] = 0;
+	buf[6] = 0;
+	if(mboxprop(buf) >= 0){
+		print("V3D-BLIND the firmware `accepted' tag 0x000f0f0f, which does not exist,\n");
+		print("  so SET_ENABLE_QPU accepted (clock %ud Hz) means nothing here\n", rate);
+		return;
+	}
+
+	if(!clockok && !qpuok){
+		print("V3D-NONE the firmware answered neither the V3D clock nor SET_ENABLE_QPU\n");
+		return;
+	}
+	print("v3d: clock %s %ud Hz, SET_ENABLE_QPU %s\n",
+		clockok ? "reported" : "refused", rate,
+		qpuok ? "accepted" : "refused");
+	if(rate != 0 && qpuok)
+		print("V3D-OK the QPUs can be enabled and the block is clocked; EXECUTE_QPU is the seam\n");
+	else if(qpuok)
+		print("V3D-PART SET_ENABLE_QPU accepted but the V3D clock reads 0\n");
+	else
+		print("V3D-PART the clock answers but SET_ENABLE_QPU does not\n");
 }
 
 /*
@@ -611,47 +770,6 @@ mboxsetpower(int devid, int on)
 }
 
 /*
- * Wait for the next vertical sync (tag 0x0004800e, SET_VSYNC).
- *
- * WHY: doc/open-issues-plan.ms item H1a.  Drawing straight into the
- * scanout buffer tears, and the cure is to flip between two buffers --
- * but a flip that does not land in vertical blank MOVES the tear instead
- * of removing it, so double buffering without this is not a fix.  The
- * mailbox already does everything else the flip needs: virtual height is
- * pinned to physical with 0x00048004 and the virtual offset 0x00048009
- * is sent as 0,0, and asking for twice the height returns twice the
- * allocation with y=h moving the scanout.
- *
- * WHETHER THE FIRMWARE IMPLEMENTS IT IS AN OPEN QUESTION, which is why
- * this returns rather than being wired into the flush.  The tag is
- * documented and present in Linux's firmware driver; a Pi 3B's blob may
- * answer it, may return immediately, or may not know it.  Those three
- * are told apart by TIMING, not by the return code: a real vsync gives a
- * stable frame period and an unimplemented one returns at once.
- *
- * IT BLOCKS THE CALLING CORE for up to a frame, so nothing in a draw
- * path may call it until that has been measured.
- */
-int
-mboxvsync(void)
-{
-	static u32 raw[8+4];
-	u32 *buf;
-
-	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
-	buf[0] = 7*4;			/* total bytes */
-	buf[1] = 0;			/* request */
-	buf[2] = 0x0004800e;		/* tag: set vsync */
-	buf[3] = 4;			/* value buffer size */
-	buf[4] = 0;			/* request code */
-	buf[5] = 0;			/* value: in/out */
-	buf[6] = 0;			/* end tag */
-	if(mboxprop(buf) < 0)
-		return -1;
-	return 0;
-}
-
-/*
  * Ask the firmware to allocate a linear framebuffer of w x h at 32bpp.
  * One property message carries the whole setup: physical and virtual
  * size, depth, a zero virtual offset, then ALLOCATE_BUFFER (whose value
@@ -659,19 +777,9 @@ mboxvsync(void)
  * (the scanline stride in bytes).  Returns 0 and fills *fbpa (the ARM
  * physical address, the bus alias stripped), *pitch and *fbsize on
  * success, -1 otherwise.
- *
- * vh is the VIRTUAL height.  Passing h gives the single buffer this has
- * always allocated; passing 2*h allocates two stacked buffers in one
- * allocation, which is what a page flip needs -- the flip is then a virtual
- * offset of 0 or h through mboxvirtoffset() and no copy at all.
- *
- * It is one allocation rather than two because the firmware scans out from a
- * virtual window into a single buffer; two separate ALLOCATE_BUFFER calls
- * would give two framebuffers the GPU cannot switch between.  doc/open-
- * issues-plan.ms H1a.
  */
 int
-mboxfballoc(int w, int h, int vh, uintptr *fbpa, u32 *pitch, u32 *fbsize)
+mboxfballoc(int w, int h, uintptr *fbpa, u32 *pitch, u32 *fbsize)
 {
 	static u32 raw[40+4];
 	u32 *buf, *tag, *pitchslot;
@@ -682,7 +790,7 @@ mboxfballoc(int w, int h, int vh, uintptr *fbpa, u32 *pitch, u32 *fbsize)
 	buf[i++] = 0x00048003; buf[i++] = 8; buf[i++] = 0;	/* set phys w,h */
 		buf[i++] = w; buf[i++] = h;
 	buf[i++] = 0x00048004; buf[i++] = 8; buf[i++] = 0;	/* set virt w,h */
-		buf[i++] = w; buf[i++] = vh;
+		buf[i++] = w; buf[i++] = h;
 	buf[i++] = 0x00048005; buf[i++] = 4; buf[i++] = 0;	/* set depth */
 		buf[i++] = 32;
 	buf[i++] = 0x00048006; buf[i++] = 4; buf[i++] = 0;	/* set pixel order */
@@ -707,45 +815,6 @@ mboxfballoc(int w, int h, int vh, uintptr *fbpa, u32 *pitch, u32 *fbsize)
 	*fbpa = (uintptr)(tag[0] & ~Busalias);	/* bus alias -> ARM physical */
 	*fbsize = tag[1];
 	*pitch = *pitchslot;
-	return 0;
-}
-
-/*
- * Move the scanout window within a framebuffer allocated with a virtual
- * height larger than its physical height.  THIS IS THE PAGE FLIP: with
- * vh == 2*h, an offset of y=0 shows the first buffer and y=h the second,
- * and nothing is copied.
- *
- * Tag 0x00048009 is SET_VIRTUAL_OFFSET, the same tag mboxfballoc sends once
- * with (0,0) during setup, so this is a re-send and not a new capability.
- * The firmware answers with the offset it actually took, which is checked --
- * it clamps rather than failing if the offset would scan past the allocation,
- * and a silently clamped flip would show the WRONG buffer with a success
- * code, which is the shape of bug mboxprop()'s missing lock used to have.
- *
- * Returns 0 on success, -1 if the exchange failed or the firmware took a
- * different offset than asked.  doc/open-issues-plan.ms H1a.
- */
-int
-mboxvirtoffset(int x, int y)
-{
-	static u32 raw[8+4];
-	u32 *buf, *val;
-
-	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
-	buf[2] = 0x00048009;		/* tag: set virtual offset */
-	buf[3] = 8;			/* value buffer bytes */
-	buf[4] = 0;			/* request */
-	val = &buf[5];
-	buf[5] = x;
-	buf[6] = y;
-	buf[7] = 0;			/* end tag */
-	buf[0] = 8 * 4;
-	buf[1] = 0;
-	if(mboxprop(buf) < 0)
-		return -1;
-	if((int)val[0] != x || (int)val[1] != y)
-		return -1;		/* clamped: NOT the buffer we asked for */
 	return 0;
 }
 
@@ -972,6 +1041,7 @@ mboxsetgpioreq(int pin, int on, int reqbytes, u32 *tagresp)
 		return -1;
 	return 0;
 }
+
 
 /*
  * Ask the firmware for an EDID block (tag 0x00030020).

@@ -375,7 +375,9 @@ main(void)
 
 	{	/* VideoCore mailbox probe: verify the property channel */
 		extern void mailboxinit(void);
+		extern void v3dprobe(void);
 		mailboxinit();
+		v3dprobe();
 	}
 
 	{	/*

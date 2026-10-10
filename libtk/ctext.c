@@ -257,6 +257,7 @@ tkcvstextfree(TkCitem *i)
 
 	t = TKobj(TkCtext, i);
 	if(t->stipple != nil)
+		tkimgpathdrop(t->stipple);
 		freeimage(t->stipple);
 	if(t->pen != nil)
 		freeimage(t->pen);
@@ -265,8 +266,9 @@ tkcvstextfree(TkCitem *i)
 }
 
 void
-tkcvstextdraw(Image *img, TkCitem *i, TkEnv *pe)
+tkcvstextdraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 {
+	Image *img;
 	TkEnv *e;
 	TkCtext *t;
 	Point o, dp;
@@ -274,10 +276,31 @@ tkcvstextdraw(Image *img, TkCitem *i, TkEnv *pe)
 	char *p, *next;
 	Image *pen;
 	int len, lw, end, start;
+	ulong rgba;
+	int nodes;
 
 	t = TKobj(TkCtext, i);
 
 	e = i->env;
+
+	/*
+	 * A run of text is a glyph node, which is what this item mostly
+	 * is.  Its SELECTION and its caret are not converted and draw, and
+	 * so does a stippled pen - the ordering holds because tkcvsdirect()
+	 * renders what is pending first.
+	 *
+	 * The colour has three sources here and the node needs the value
+	 * rather than the image, so they are worked out together: a
+	 * stipple rules nodes out entirely; -fill gives the value; and
+	 * with neither the item draws in black, which as a value is
+	 * 0x000000FF.
+	 */
+	nodes = cd->sc != nil && t->pen == nil;
+	rgba = 0x000000FF;
+	if(e->set & (1<<TkCfill))
+		rgba = e->colors[TkCfill];
+
+	img = nodes ? cd->img : tkcvsdirect(cd);
 	pen = t->pen;
 	if(pen == nil) {
 		if (e->set & (1<<TkCfill))
@@ -320,15 +343,17 @@ tkcvstextdraw(Image *img, TkCitem *i, TkEnv *pe)
 			else
 				r.max.x = dp.x + stringnwidth(e->font, p, end);
 			r.max.y = dp.y + e->font->height;
-			tktextsdraw(img, r, pe, t->sbw);
+			tktextsdraw(tkcvsdirect(cd), r, pe, t->sbw);
 			r.max.y = dp.y;
 			if(start > 0)
-				stringn(img, dp, pen, dp, e->font, p, start);
+				stringn(tkcvsdirect(cd), dp, pen, dp, e->font, p, start);
 			if(end > start)
-				stringn(img, r.min, tkgc(pe, TkCselectfgnd), r.min, e->font, p+start, end-start);
+				stringn(tkcvsdirect(cd), r.min, tkgc(pe, TkCselectfgnd), r.min, e->font, p+start, end-start);
 			if(len > end)
-				stringn(img, r.max, pen, r.max, e->font, p+end, len-end);
+				stringn(tkcvsdirect(cd), r.max, pen, r.max, e->font, p+end, len-end);
 		}
+		else if(nodes)
+			tkscenetextn(cd->sc, dp, p, len, e->font, rgba);
 		else
 			stringn(img, dp, pen, dp, e->font, p, len);
 		if(t->focus) {
@@ -341,7 +366,7 @@ tkcvstextdraw(Image *img, TkCitem *i, TkEnv *pe)
 				r.min.y = dp.y - 1;
 				r.max.x = r.min.x + 2;
 				r.max.y = r.min.y + e->font->height + 1;
-				draw(img, r, pen, nil, ZP);
+				draw(tkcvsdirect(cd), r, pen, nil, ZP);
 			}
 		}
 		o.y += e->font->height;

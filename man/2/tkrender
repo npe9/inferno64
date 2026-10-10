@@ -1,0 +1,160 @@
+.TH TKRENDER 2
+.SH NAME
+tkrender \- rasterise a libtk render-node tree with draw(2)
+.SH SYNOPSIS
+.EX
+include "draw.m";
+include "tknode.m";
+include "tkrender.m";
+tkrender := load Tkrender Tkrender->PATH;
+
+init:     fn(d: ref Draw\->Display);
+draw:     fn(dst: ref Draw\->Image,
+              nodes: array of ref Tknode\->Node): (int, int, string);
+inset:    fn(radius, y: int): int;
+clamprad: fn(r: Draw\->Rect, radius: int): int;
+.EE
+.SH DESCRIPTION
+.B Tkrender
+draws a node tree decoded by
+.IR tknode (2),
+using nothing but
+.IR draw (2).
+.PP
+.I Init
+must be called with the display the target image belongs to.
+.I Draw
+returns the number of nodes drawn, the number whose type it does not
+implement, and an error. Both counts matter: a rasteriser that silently
+skipped what it could not draw would compare equal against a tree of
+nothing.
+.SH "WHAT IT IS FOR"
+.IR Tknode (2)
+shows every field of a serialised tree
+.B survives
+the trip. This shows the tree is
+.B sufficient
+\(em that what comes out is enough to reproduce the picture, with no
+access to
+.I libtk
+at all.
+.PP
+.IR Tkscenetest (1)
+renders a widget through
+.IR libtk 's
+node path, reads the tree out, rasterises it again through here, and
+compares the two images byte for byte. Six fixtures match exactly: a
+raised frame, a label, a selected checkbutton, a flat scrollbar, a
+button and an entry \(em between them rectangles, rounded corners,
+borders, layers, glyph runs, a filled polygon and a spline.
+.SH "THE TWO THINGS A NODE DOES NOT CARRY"
+.TP
+.B the corner arithmetic
+How far in from the edge the curve is on a given row is a function of
+the radius, not a field, so a consumer computes it.
+.I Inset
+and
+.I clamprad
+are
+.IR libtk 's
+.I tkinset()
+and
+.I tkclamprad()
+line for line, and they are exported because a caller may want to check
+them independently. That this can be reproduced at all is part of what
+makes the vocabulary sufficient.
+.TP
+.B a layer's fill
+.B Tlayer 's
+.B r.max
+is the surface's extent and its
+.B rgba
+is what the surface
+.B starts as.
+Allocating it unfilled is wrong and was the first bug here: every
+fixture containing a layer differed, the entry by 13332 bytes with no
+glyph in it at all, which is what named the layer rather than the text.
+.PP
+And a layer's composite is
+.B shaped by its radius,
+not a plain blit \(em
+.IR libtk 's
+.I tkshapedblit()
+rounds the corners the same way a
+.B Troundfill
+rounds a fill, so that a layer under a rounded border does not square
+the widget off.
+.SH "CLIPS, LAYERS AND OPACITY"
+.IR Draw (2)
+gives a Limbo program no way to narrow an image's clipping rectangle:
+.B Image.clipr
+is a local copy and there is no
+.IR replclipr .
+So the only exact way to clip is to draw into an image whose
+.B rectangle
+is the clip, where anything outside is dropped by
+.IR draw ()
+itself. All three spans are done that way, and so none of them nest
+\(em exactly as they do not nest in
+.IR libtk ,
+and for a related reason: one surface, one open span.
+.PP
+.B Topacity 's
+alpha is the low byte of its
+.BR rgba ,
+and
+.B 255
+must not go through a mask:
+.I libmemdraw
+substitutes a maskless mask's
+.B grey
+for its alpha, so an opaque black mask is a transparent one.
+.SH SOURCE
+.B /appl/lib/tkrender.b
+.SH SEE ALSO
+.IR tknode (2),
+.IR tkscenetest (1),
+.IR polytest (1),
+.IR draw (2),
+.B doc/scene\-graph\-plan.ms
+.SH BUGS
+.B "Writing this found a defect in draw(2) itself,"
+not in the tree it consumes \(em though not first:
+.B infernode
+had fixed the same four casts a week earlier, independently, with no
+test. What was new was a consumer whose output could be compared
+against something. The scrollbar's arrows and the
+checkbutton's tick were the last two fixtures to disagree, and the
+cause was
+.B libinterp/draw.c
+reinterpreting a Limbo
+.B "array of Point"
+as C
+.BR Point s,
+which are a different size on this build. See
+.IR polytest (1).
+Every Limbo polygon and spline in the tree was drawing the wrong shape,
+and a consumer written against
+.IR draw (2)
+is what exposed it.
+.PP
+.B Tgroup ,
+.B Tlinear
+and
+.B Tshadow
+are not implemented, because nothing emits them; they are counted as
+unsupported rather than ignored.
+.PP
+A
+.B Ttransform
+span is applied by scaling each node, which rounds a second time when
+the caller has also scaled. That matches what
+.I libtk
+does and is why
+.IR tkscenetest (1)
+compares a transform against a global scale rather than assuming they
+agree.
+.PP
+Faces and bitmaps are opened on demand and kept for the life of the
+module, so a tree naming a file that has been replaced draws the old
+one. Nothing invalidates that cache.

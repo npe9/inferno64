@@ -9,7 +9,7 @@ dodata(void)
 	long orig, v;
 
 	if(debug['v'])
-		Bprint(&bso, "%5.2f dodata\n", cputime());
+		Bprint(&bso, "%s dodata\n", cputimestr());
 	Bflush(&bso);
 	for(p = datap; p != P; p = p->link) {
 		s = p->from.sym;
@@ -136,7 +136,7 @@ void
 follow(void)
 {
 	if(debug['v'])
-		Bprint(&bso, "%5.2f follow\n", cputime());
+		Bprint(&bso, "%s follow\n", cputimestr());
 	Bflush(&bso);
 
 	firstp = prg();
@@ -257,7 +257,7 @@ patch(void)
 	int a;
 
 	if(debug['v'])
-		Bprint(&bso, "%5.2f patch\n", cputime());
+		Bprint(&bso, "%s patch\n", cputimestr());
 	Bflush(&bso);
 	mkfwd();
 	s = lookup("exit", 0);

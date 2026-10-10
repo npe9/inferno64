@@ -18,7 +18,7 @@ span(void)
 	long c, otxt, v;
 
 	if(debug['v'])
-		Bprint(&bso, "%5.2f span\n", cputime());
+		Bprint(&bso, "%s span\n", cputimestr());
 	Bflush(&bso);
 
 	bflag = 0;
@@ -58,7 +58,30 @@ span(void)
 		if(p->as==AMOVW && p->to.type==D_REG && p->to.reg==REGPC && (p->scond&C_SCOND) == 14)
 			flushpool(p, 0);
 		c += m;
-		if(blitrl)
+		/*
+		 * A CASE and its BCASE entries are an ARRAY, not a code
+		 * sequence: the dispatch indexes it, so entry i must sit at
+		 * table+4*i.  flushpool() splices a branch and the pool in
+		 * after p, which is right for ordinary code and fatal here --
+		 * the entries past the split keep their correct offsets but
+		 * are no longer at their slots, and the dispatch reads the
+		 * pool's words as offsets instead.
+		 *
+		 * 7l had this verbatim and it panicked a raspi3b kernel:
+		 * conswrite's table of 29 slots had 23 contiguous entries,
+		 * then a loader-inserted B over the pool and five pool
+		 * constants, with the last six entries 0x6e00 further on.
+		 * Writing /dev/time branched through a zero into the table
+		 * itself.  It is layout-dependent, so it is latent here
+		 * rather than absent.  See utils/7l/span.c.
+		 *
+		 * Defer the forced flush to the end of the run.  The
+		 * lookahead still allows a flush after the LAST entry, which
+		 * is harmless, so the pool is delayed by the table's length
+		 * and no further.
+		 */
+		if(blitrl && !(p->as == ACASE ||
+		   (p->as == ABCASE && p->link != P && p->link->as == ABCASE)))
 			checkpool(p);
 	}
 
@@ -70,7 +93,7 @@ span(void)
 	 */
 	while(bflag) {
 		if(debug['v'])
-			Bprint(&bso, "%5.2f span1\n", cputime());
+			Bprint(&bso, "%s span1\n", cputimestr());
 		bflag = 0;
 		c = INITTEXT;
 		for(p = firstp; p != P; p = p->link) {
@@ -165,6 +188,15 @@ void
 flushpool(Prog *p, int skip)
 {
 	Prog *q;
+
+	/*
+	 * Nothing may be spliced into a CASE's BCASE run -- see the note in
+	 * span().  The caller defers past the end of the run, so this is
+	 * unreachable; say so loudly if it ever is not, because the
+	 * alternative is a table that silently dispatches into pool data.
+	 */
+	if(p->as == ACASE || (p->as == ABCASE && p->link != P && p->link->as == ABCASE))
+		diag("literal pool flush inside a CASE table\n%P", p);
 
 	if(blitrl) {
 		if(skip){

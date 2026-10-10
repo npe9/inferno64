@@ -48,12 +48,15 @@ TARG=\
 	chmod.dis\
 	cleanname.dis\
 	cmp.dis\
+	cvttest.dis\
+	polytest.dis\
 	comm.dis\
 	cook.dis\
 	cprof.dis\
 	cp.dis\
 	cpu.dis\
 	crypt.dis\
+	draw3dkerntest.dis\
 	date.dis\
 	dbfs.dis\
 	dd.dis\
@@ -129,6 +132,7 @@ TARG=\
 	prof.dis\
 	ps.dis\
 	puttar.dis\
+	qputry.dis\
 	pwd.dis\
 	ramfile.dis\
 	raisetest.dis\
@@ -167,6 +171,10 @@ TARG=\
 	time.dis\
 	timestamp.dis\
 	tkcmd.dis\
+	ellipsetest.dis\
+	styxdirtest.dis\
+	wstattest.dis\
+	tkscenetest.dis\
 	tl.dis\
 	touch.dis\
 	touchcal.dis\

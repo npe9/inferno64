@@ -24603,6 +24603,45 @@ the entry path the card uses;
 .CW os/inferno/raspi3b/qemu.sh
 does it.
 .PP
+.B "Driving that console from a script needs a check, because the console
+.B "interleaves kernel output into the echo of what is typed."
+Mid-line and without a newline:
+.DS
+.CW
+; echo enable >/dev/v3USB-KBD-NONE no keystrokes (no keyboard...)
+.R
+.DE
+.PP
+That command arrived \(em the status afterwards read
+.CW "enabled 1" .
+.CW os/inferno/raspi3b/qemufeed.sh
+feeds commands and then judges each one in three states: CLEAN if it
+appears contiguously, INTERLEAVED if its characters appear in order but
+split by other output, and CORRUPT if they are not even in order.
+Only CORRUPT voids the run.
+.PP
+.B "Its first version asserted that the console LOSES input, and that was
+.B "my own instrument."
+It tested for a contiguous match, called every run of a 17-line script
+VOID, and I wrote "the console corrupts input" into three files on that
+basis. Re-judged with the three-state check, the same logs give 13
+clean / 2 interleaved / 0 corrupt, 12/3/0 and 14/1/0. The commands had
+arrived. A tool that always says VOID cannot report the one run that
+really is, which is worse than having no tool.
+.PP
+Input loss remains
+.I undemonstrated .
+One reading, a shell error naming
+.CW /dev/v3cat ,
+is unexplained and is not evidence for it. Duplication is outside what
+the check can see at all, since a doubled character is still a
+subsequence, and that is stated in the tool rather than left to be
+assumed.
+.CW QEMUFEED_SELFTEST=1
+adds an expectation that was never sent and the tool must then report
+VOID, since a checker that cannot fail is indistinguishable from no
+checker.
+.PP
 The board also shed the rest of its QEMU virt inheritance, each piece a
 hardware defect QEMU hid.
 .CW archvirtarm64.c ,

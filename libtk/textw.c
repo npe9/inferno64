@@ -4,6 +4,9 @@
 #include "tk.h"
 #include "textw.h"
 
+extern void voiceannounce(char*);   /* voice(3); see man 3 voice */
+extern void voiceannouncetext(char*);   /* voice(3); see man 3 voice */
+
 /*
  * useful text widget info to be found at:
  * :/coordinate.systems		- what coord. systems are in use
@@ -19,11 +22,7 @@
 
 #define	O(t, e)		((long)(&((t*)0)->e))
 
-/* Layout constants */
-enum {
-	Textpadx	= 2,
-	Textpady	= 0,
-};
+/* Layout constants moved into tkspaces[] in tk.h. */
 
 typedef struct Interval {
 	int	lo;
@@ -119,6 +118,7 @@ static TkEbind tktbinds[] = {
 	{TkKey|Pgup,	"%W yview scroll -0.75 page"},
 	{TkButton4P,	"%W yview scroll -0.2 page"},
 	{TkButton5P,	"%W yview scroll 0.2 page"},
+	{TkFocusin,             "%W tkTextCursor insert"},
 	{TkFocusout,            "%W tkTextCursor delete"},
 	{TkKey|APP|'\t',	""},
 	{TkKey|BackTab,		""},
@@ -126,10 +126,21 @@ static TkEbind tktbinds[] = {
 
 static int	tktclickmatch(TkText *, int, int, int, TkTindex *);
 static void	tktdoubleclick(TkText *, TkTindex *, TkTindex *);
-static char* 	tktdrawline(Image*, Tk*, TkTline*, Point);
-static void	tktextcursordraw(Tk *, int);
+static char* 	tktdrawline(Image*, int, Tk*, TkTline*, Point);
+static void	tktextcursordraw(Tk *, int, int);
 static char* 	tktsetscroll(Tk*, int);
 static void	tktsetclip(Tk *);
+static Rectangle	tktcliprect(Tk *);
+
+/*
+ * The walk's tree, asked for afresh every time.
+ *
+ * Never held in a variable across anything that can paint: the walk
+ * frees a tree when it flushes, and a text widget flushes in the middle
+ * of its own line loop whenever a line holds an embedded window.  The
+ * clip survives that because the WALK owns it; a pointer would not.
+ */
+#define SC(tk, dst)	tkwalkscene((tk)->env->top->ctxt, (dst))
 static char* 	tktview(Tk*, char*, char**, int, s32*, int, int);
 static Interval tkttranslate(Tk*, Interval, int);
 static void 	tktfixscroll(Tk*, Point);
@@ -173,10 +184,20 @@ tktext(TkTop *t, char* arg, char **ret)
 	tkt = TKobj(TkText, tk);
 
 	tk->relief = TKsunken;
-	tk->borderwidth = 1;
-	tk->ipad.x = Textpadx * 2;
-	tk->ipad.y = Textpady * 2;
+	tk->borderwidth = tkborderwidth(tk, 1);
+	tk->ipad.x = tkspace(tk)->textpadx * 2;
+	tk->ipad.y = tkspace(tk)->textpady * 2;
 	tk->flag |= Tktakefocus;
+	/*
+	 * A text widget showed the keyboard with its CARET and nothing else
+	 * - eleven pixels' difference, and a caret blinks, so for half of
+	 * every second there was no indication at all that the widget had
+	 * the keyboard.  Under flat it gets a ring like every other
+	 * focusable widget.  Flat only: highlightwidth enters this widget's
+	 * geometry, and classic is kept as it was.
+	 */
+	if(tkstyleflat(tk))
+		tk->highlightwidth = 1;
 	tkt->sborderwidth = 0;
 	tkt->inswidth = 2;
 	tkt->cur_flag = 0;	/* text cursor doesn't show up initially */
@@ -413,6 +434,8 @@ tkdrawtext(Tk *tk, Point orig)
 	Rectangle oclipr;
 	int reldone = 1;
 	char *e;
+	int tsc;
+
 	tkt = TKobj(TkText, tk);
 	dst = tkimageof(tk);
 	if (dst == nil)
@@ -421,6 +444,45 @@ tkdrawtext(Tk *tk, Point orig)
 	tktsetdeltas(tk, orig);
 	tkt->tflag |= TkTdrawn|TkTdlocked;
 	oclipr = dst->clipr;
+
+	/*
+	 * A text widget narrows the window's clip around its own inside and
+	 * draws its lines through it.  Both halves of that are nodes now -
+	 * the clip is a TkNclip and a line is fills, glyph runs and rules -
+	 * so the walk runs through a text widget instead of stopping at it.
+	 *
+	 * The clip is set on the IMAGE as well, and not only emitted: an
+	 * embedded window item descends and draws itself the ordinary way,
+	 * which is direct drawing inside this span and has to be clipped by
+	 * the image as it always was.
+	 *
+	 * Anything that paints into the window itself has to render what
+	 * the walk has pending first, or the tree would land on top of it -
+	 * which is what the other path still does.
+	 */
+	tsc = tkviascene && tkstyleflat(tk)
+		&& tkwalkhas(tk->env->top->ctxt, dst);
+	/*
+	 * FLUSH FIRST, always, and then narrow.  A tree must not span a
+	 * change to the destination's own clip: tktsetclip() narrows the
+	 * window around this widget's inside, and anything already in the
+	 * tree was drawn by EARLIER widgets, which would be cut to this
+	 * widget's rectangle if a later flush rendered them while the
+	 * narrowing held.  An embedded window makes exactly that flush
+	 * happen, and it cost 83898 bytes and an exclusion before the rule
+	 * was understood.
+	 *
+	 * With the tree empty at the narrowing, what such a flush renders
+	 * is this widget's own nodes, which belong inside the clip anyway,
+	 * and the walk hands the clip on to whatever tree comes after it.
+	 * That is the whole reason the clip belongs to the walk rather
+	 * than to a tree.
+	 */
+	tkwalkflush();
+	if(tsc){
+		tkwalkjoin(tk->env->top->ctxt, dst);	/* count it once */
+		tkwalkclip(tktcliprect(tk));
+	}
 	tktsetclip(tk);
 
 	if(tk->flag&Tkrefresh) {
@@ -438,17 +500,49 @@ tkdrawtext(Tk *tk, Point orig)
 		if(l->orig.y > tkt->deltatv.y + vh)
 			break;
 		if(!(l->flags&TkTdrawn)) {
-			e = tktdrawline(dst, tk, l, deltait);
+			e = tktdrawline(dst, tsc, tk, l, deltait);
 			if(e != nil)
 				return e;
 		}
 	}
 
+	if(tsc)
+		tkwalkclipend();
 	tktreplclipr(dst, oclipr);
 	if(!reldone) {
+		Rectangle ring;
+
 		p.x = orig.x + tk->act.x;
 		p.y = orig.y + tk->act.y;
-		tkdrawrelief(dst, tk, p, TkCbackgnd, tk->relief);
+		ring = insetrect(Rect(p.x, p.y,
+			p.x + tk->act.width + 2*tk->borderwidth,
+			p.y + tk->act.height + 2*tk->borderwidth),
+			tk->borderwidth);
+		if(tkhaskeyfocus(tk) && tk->highlightwidth > 0){
+			/*
+			 * A square ring, which is what a border node of
+			 * radius 0 draws: tkbox() and renderborder() name
+			 * different rectangles but cover the same outline.
+			 */
+			if(tsc)
+				tksceneborder(SC(tk, dst), ring, 0,
+					tk->highlightwidth,
+					tk->env->colors[TkChighlightfgnd]);
+			else
+				tkbox(dst, ring, tk->highlightwidth,
+					tkgc(tk->env, TkChighlightfgnd));
+		}
+		/*
+		 * MENDING, because this widget draws in place and is not
+		 * described entirely by nodes: its background is its
+		 * parent's, and a tag that reaches the edge covers the pixel
+		 * the corner curve cuts away.
+		 */
+		if(tsc)
+			tkreliefnodeson(SC(tk, dst), tk, p, TkCbackgnd,
+				tk->relief);
+		else
+			tkdrawrelief(dst, tk, p, TkCbackgnd, tk->relief);
 	}
 	tkt->tflag &= ~TkTdlocked;
 
@@ -461,25 +555,38 @@ tkdrawtext(Tk *tk, Point orig)
  * the text widget that needs to be redrawn.
  * The caller should save the old one and restore it later.
  */
-static void
-tktsetclip(Tk *tk)
+/*
+ * Where the widget may draw, in window coordinates: the inside of the
+ * widget, narrowed to whatever the destination already allowed.  Split
+ * out of tktsetclip() because a clip NODE needs the rectangle and not
+ * the side effect - and needs the same one, which is the point of
+ * there being a single place it is worked out.
+ */
+static Rectangle
+tktcliprect(Tk *tk)
 {
 	Rectangle r;
-	Image *dst;
 	TkText *tkt = TKobj(TkText, tk);
 
-	dst = tkt->image;
 	r.min = tkt->deltaiv;
 	r.max.x = r.min.x + tk->act.width - tk->ipad.x / 2;
 	r.max.y = r.min.y + tk->act.height - tk->ipad.y / 2;
 
-	if(!rectclip(&r, dst->clipr))
+	if(!rectclip(&r, tkt->image->clipr))
 		r.max = r.min;
-	tktreplclipr(dst, r);
+	return r;
+}
+
+static void
+tktsetclip(Tk *tk)
+{
+	TkText *tkt = TKobj(TkText, tk);
+
+	tktreplclipr(tkt->image, tktcliprect(tk));
 }
 
 static char*
-tktdrawline(Image *i, Tk *tk, TkTline *l, Point deltait)
+tktdrawline(Image *i, int usesc, Tk *tk, TkTline *l, Point deltait)
 {
 	Tk *sub;
 	Font *f;
@@ -492,6 +599,7 @@ tktdrawline(Image *i, Tk *tk, TkTline *l, Point deltait)
 	TkEnv *e, *et, *env;
 	int *opts;
 	int o, bd, ul, ov, h, w, la, lh, cursorx, join;
+	ulong bgrgba;
 	char *err;
 
 	env = mallocz(sizeof(TkEnv), 0);
@@ -518,15 +626,20 @@ tktdrawline(Image *i, Tk *tk, TkTline *l, Point deltait)
 	join = 0;
 	for(it = l->items; it != nil; it = it->next) {
 		bg = tkgc(e, TkCbackgnd);
+		bgrgba = e->colors[TkCbackgnd];
 		if(tktanytags(it)) {
 			tkttagopts(tk, it, opts, env, nil, 1);
 			if(e->colors[TkCbackgnd] != et->colors[TkCbackgnd]) {
 				bg = tkgc(et, TkCbackgnd);
+				bgrgba = et->colors[TkCbackgnd];
 				r.min = p;
 				r.min.y -= la;
 				r.max.x = r.min.x + it->width;
 				r.max.y = r.min.y + lh;
-				draw(i, r, bg, nil, ZP);
+				if(usesc)
+					tkscenecolour(SC(tk, i), r, bgrgba);
+				else
+					draw(i, r, bg, nil, ZP);
 			}
 			o = opts[TkTrelief];
 			bd = opts[TkTborderwidth];
@@ -550,8 +663,14 @@ tktdrawline(Image *i, Tk *tk, TkTline *l, Point deltait)
 					bevbot = TkLightshade;
 				}
 
-				tkbevel(i, q, w, h, bd,
-					tkgc(et, TkCbackgnd+bevtop), tkgc(et, TkCbackgnd+bevbot));
+				if(usesc)
+					tkbevelnodes(SC(tk, i), q, w, h, bd,
+						et->colors[TkCbackgnd+bevtop],
+						et->colors[TkCbackgnd+bevbot]);
+				else
+					tkbevel(i, q, w, h, bd,
+						tkgc(et, TkCbackgnd+bevtop),
+						tkgc(et, TkCbackgnd+bevbot));
 
 				/* join relief between adjacent items if tags match */
 				if(join) {
@@ -559,10 +678,17 @@ tktdrawline(Image *i, Tk *tk, TkTline *l, Point deltait)
 					r.max.x = q.x + bd;
 					r.min.y = q.y + bd;
 					r.max.y = r.min.y + h;
-					draw(i, r, bg, nil, ZP);
+					if(usesc)
+						tkscenecolour(SC(tk, i), r, bgrgba);
+					else
+						draw(i, r, bg, nil, ZP);
 					r.min.y = r.max.y;
 					r.max.y = r.min.y + bd;
-					draw(i, r, tkgc(et, TkCbackgnd+bevbot), nil, ZP);
+					if(usesc)
+						tkscenecolour(SC(tk, i), r,
+							et->colors[TkCbackgnd+bevbot]);
+					else
+						draw(i, r, tkgc(et, TkCbackgnd+bevbot), nil, ZP);
 				}
 				for(z = it->next; z != nil && z->kind == TkTmark; )
 					z = z->next;
@@ -571,10 +697,17 @@ tktdrawline(Image *i, Tk *tk, TkTline *l, Point deltait)
 					r.max.x = r.min.x + bd;
 					r.min.y = q.y;
 					r.max.y = q.y + bd;
-					draw(i, r, tkgc(et, TkCbackgnd+bevtop), nil, ZP);
+					if(usesc)
+						tkscenecolour(SC(tk, i), r,
+							et->colors[TkCbackgnd+bevtop]);
+					else
+						draw(i, r, tkgc(et, TkCbackgnd+bevtop), nil, ZP);
 					r.min.y = r.max.y;
 					r.max.y = r.min.y + h;
-					draw(i, r, bg, nil, ZP);
+					if(usesc)
+						tkscenecolour(SC(tk, i), r, bgrgba);
+					else
+						draw(i, r, bg, nil, ZP);
 					join = 1;
 				}
 				else
@@ -598,20 +731,33 @@ tktdrawline(Image *i, Tk *tk, TkTline *l, Point deltait)
 			q.x = p.x;
 			q.y = p.y - env->font->ascent - o;
 /*if(tktdbg)print("q=(%d,%d)\n", q.x, q.y);*/
-			string(i, q, tkgc(et, TkCforegnd), q, env->font, it->istring);
+			if(usesc)
+				tkscenetext(SC(tk, i), q, it->istring, env->font,
+					et->colors[TkCforegnd]);
+			else
+				string(i, q, tkgc(et, TkCforegnd), q, env->font,
+					it->istring);
 			if(ov == BoolT) {
 				r.min.x = q.x;
 				r.max.x = r.min.x + it->width;
 				r.min.y = q.y + 2*env->font->ascent/3;
 				r.max.y = r.min.y + 2;
-				draw(i, r, tkgc(et, TkCforegnd), nil, ZP);
+				if(usesc)
+					tkscenecolour(SC(tk, i), r,
+						et->colors[TkCforegnd]);
+				else
+					draw(i, r, tkgc(et, TkCforegnd), nil, ZP);
 			}
 			if(ul == BoolT) {
 				r.min.x = q.x;
 				r.max.x = r.min.x + it->width;
 				r.max.y = p.y - la + lh;
 				r.min.y = r.max.y - 2;
-				draw(i, r, tkgc(et, TkCforegnd), nil, ZP);
+				if(usesc)
+					tkscenecolour(SC(tk, i), r,
+						et->colors[TkCforegnd]);
+				else
+					draw(i, r, tkgc(et, TkCforegnd), nil, ZP);
 			}
 			break;
 		case TkTmark:
@@ -650,7 +796,7 @@ tktdrawline(Image *i, Tk *tk, TkTline *l, Point deltait)
 			blinkreset(tk);
 		tkt->cur_rec = r;
 		if(tkt->cur_flag)
-			tktextcursordraw(tk, TkCforegnd);
+			tktextcursordraw(tk, usesc, TkCforegnd);
 	}
 
 	free(opts);
@@ -659,7 +805,7 @@ tktdrawline(Image *i, Tk *tk, TkTline *l, Point deltait)
 }
 
 static void
-tktextcursordraw(Tk *tk, int color)
+tktextcursordraw(Tk *tk, int usesc, int color)
 {
 	Rectangle r;
 	TkText *tkt;
@@ -685,7 +831,18 @@ tktextcursordraw(Tk *tk, int color)
 			r.min.y = tkt->deltaiv.y;
 		if (r.max.y > tkt->deltaiv.y + tk->act.height)
 			r.max.y = tkt->deltaiv.y + tk->act.height;
+		/*
+		 * A node when a repaint is building one.  It has to be: the
+		 * caret is drawn last so that no item overwrites it, and a
+		 * caret that went straight to the window while a tree was
+		 * pending would be covered by that tree when it rendered -
+		 * which is the whole reason a direct painter flushes.
+		 */
 		i = tkimageof(tk);
+		if(usesc && i != nil){
+			tkscenecolour(SC(tk, i), r, tk->env->colors[color]);
+			return;
+		}
 		if (i != nil)
 			draw(i, r, tkgc(tk->env, color), nil, ZP);
 	}
@@ -715,7 +872,13 @@ showcaret(Tk *tk, int on)
 			if (it->kind == TkTmark && it->imark != nil &&
 				    strcmp(it->imark->name, "insert") == 0) {
 				if (on) {
-					tktextcursordraw(tk, TkCforegnd);
+					/*
+					 * The BLINKER, which is not inside a
+					 * repaint: there is no tree open and
+					 * the caret goes straight to the
+					 * window, as it always did.
+					 */
+					tktextcursordraw(tk, 0, TkCforegnd);
 					tk->dirty = tkrect(tk, 1);
 				} else
 					tktnotdrawn(tk, l->orig.y, l->orig.y+l->height, 0);
@@ -743,6 +906,18 @@ tktextcursor(Tk *tk, char* arg, char **ret)
 		tkblink(nil, nil);
 
 	showcaret(tk, on);
+
+	/*
+	 * The border is repainted only on a Tkrefresh, and nothing set one
+	 * when the keyboard arrived or left - so a focus ring drawn beside
+	 * the relief would never appear and, worse, never be erased.  Ask
+	 * for the whole widget back.
+	 */
+	if(tk->highlightwidth > 0) {
+		tk->flag |= Tkrefresh;
+		tk->dirty = tkrect(tk, 1);
+		tkdirty(tk);
+	}
 	return nil;
 }
 
@@ -2949,6 +3124,8 @@ tktextinsert(Tk *tk, char *arg, char **val)
 			}
 		}
 		e = tktinsert(tk, &ins, tbuf, tagit);
+		if(e == nil)
+			voiceannouncetext(tbuf);	/* voice(3) */
 		if(tagit != nil) {
 			free(tagit);
 			tagit = nil;
@@ -3476,18 +3653,79 @@ tktprevwrapline(Tk *tk, TkTline *l)
 	return l->prev;
 }
 
+/*
+ * Say where the cursor went, for voice(3).
+ *
+ * Moving about in text is most of what a person does in a shell window
+ * or an editor, and it said nothing at all: the only thing announced
+ * here was text arriving. Someone reading by ear could hear output and
+ * could not read it back.
+ *
+ * A line when the cursor changed line, a character when it did not,
+ * which is the distinction every other screen reader makes and the one
+ * that makes arrow keys usable: up and down to survey, left and right to
+ * spell out.
+ *
+ * Only from tktextsetcursor(), which is what the arrow keys, Home and
+ * End are bound to. Text arriving moves the insert mark by another path
+ * and is announced by its own rule, so this does not double up on it.
+ */
+static void
+announcecursor(Tk *tk, TkTline *was, TkTindex *now)
+{
+	TkText *tkt = TKobj(TkText, tk);
+	TkTindex a, b;
+	char *s;
+
+	s = nil;
+	if(now->line != was) {
+		/*
+		 * The line's own ends, from the index itself.  Parsing
+		 * "insert linestart" as a string would go through the same
+		 * code the get command uses, but it is the command layer that
+		 * strips the braces around such an index, and this is below
+		 * that layer.
+		 */
+		a = *now;
+		b = *now;
+		tktadjustind(tkt, TkTbylinestart, &a);
+		tktadjustind(tkt, TkTbylineend, &b);
+	} else {
+		a = *now;
+		b = a;
+		if(!tktadjustind(tkt, TkTbychar, &b))
+			return;
+	}
+	if(tktget(tkt, &a, &b, 0, &s) != nil) {
+		free(s);
+		return;
+	}
+	if(s != nil && *s != '\0')
+		voiceannounce(s);
+	free(s);
+}
+
 static char*
 tktextsetcursor(Tk *tk, char *arg, char **val)
 {
 	char *e;
-	TkTindex ix;
+	TkTindex ix, before;
 	TkTmarkinfo *mi;
+	TkTline *was;
+	char ibuf[16], *p;
 	TkText *tkt = TKobj(TkText, tk);
 
 	USED(val);
 
 	/* do clearsel here, because it can change indices */
 	tktclearsel(tk);
+
+	/* where the cursor was, so the move can be described */
+	was = nil;
+	strcpy(ibuf, "insert");
+	p = ibuf;
+	if(tktindparse(tk, &p, &before) == nil)
+		was = before.line;
 
 	e = tktindparse(tk, &arg, &ix);
 	if(e != nil)
@@ -3500,6 +3738,8 @@ tktextsetcursor(Tk *tk, char *arg, char **val)
 	}
 	tktmarkmove(tk, mi, &ix);
 	tktsee(tk, &ix, 0);
+	if(was != nil)
+		announcecursor(tk, was, &ix);
 	return nil;
 }
 

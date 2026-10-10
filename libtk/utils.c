@@ -44,15 +44,123 @@ static struct Cmd cmdmain[] =
 	"puts",		tkputs,
 	"radiobutton",	tkradiobutton,
 	"raise",	tkraise,
+	"render",	tkrendercmd,
 	"scale",	tkscale,
 	"scrollbar",	tkscrollbar,
 	"see",	tkseecmd,
 	"send",		tksend,
+	"style",	tkstylecmd,
 	"text",		tktext,
 	"update",	tkupdatecmd,
 	"variable",	tkvariable,
 	"winfo",	tkwinfo,
 };
+
+/*
+ * The two spacing rows.  Classic is what was compiled in before the
+ * register existed - label.h's Textpadx 3 / Textpady 0, Bitpad 0,
+ * entry.c's Entrypad 0, textw.c's own Textpadx 2 / Textpady 0 - so a
+ * classic toplevel measures every widget exactly as it always did, and
+ * that is worth keeping true: these numbers reach every size computation
+ * in the toolkit, and a change of one pixel here moves every layout in
+ * every program.
+ *
+ * The flat row is roomier, and deliberately makes the two that used to
+ * disagree agree.  A label and a text widget packed together now inset
+ * their contents by the same amount, which is the thing the scattered
+ * constants made impossible to arrange.
+ */
+TkSpace	tkspaces[] =
+{
+	/* labelpadx, labelpady, bitpadx, bitpady, entrypadx, entrypady, textpadx, textpady, scaleborder, corner */
+	{ 14, 7, 5, 5, 8, 6, 7, 5, 1, 5 },	/* TkSflat - the default */
+	{ 3, 0, 0, 0, 0, 0, 2, 0, 0, 0 },	/* TkSclassic */
+};
+
+/*
+ * The default border width a widget asks for, given the one it would
+ * have asked for before styles existed.
+ *
+ * The chrome's artwork already scales with the font, but the borders did
+ * not, so a one-pixel line that reads as an edge at the tree's own font
+ * is a hairline beside a 32-pixel one.  The classic style keeps the
+ * literal number - every existing layout depends on it, since a border
+ * is part of what a widget measures - and only a style that has opted
+ * in gets a line that grows.  16 is the height the unscaled numbers were
+ * chosen against, so a font that size still gets exactly them.
+ */
+/*
+ * Is this widget's toplevel in the flat style?  Shared because scale(9)
+ * and scrollbar(9) draw their own chrome instead of going through
+ * tkdrawrelief(), so they each have to ask.
+ */
+/*
+ * Which drawing path a flat border takes: straight to draw() as it has
+ * done, or through a render-node tree.  Both must put down the same
+ * pixels, and a switch is the only way to check that - the same
+ * arrangement draw3d(2) uses, where a software provider and a device
+ * provider are compared against each other rather than each being
+ * trusted on its own.
+ */
+int tkviascene;
+
+/*
+ * The environment of whatever is visually BEHIND this widget, which is
+ * what a rounded corner has to show.
+ *
+ * tk->master, not tk->parent.  `master' is the pack owner; `parent' is
+ * set only for a window inside a canvas or a text widget, so for an
+ * ordinary packed widget it is nil - and reading it gave the widget its
+ * OWN background as the colour behind itself.  Invisible for as long as
+ * every widget was the same colour as its container, which it was until
+ * the flat style gave fields a surface of their own, and then a rounded
+ * corner would have been filled in with the widget's own fill and not
+ * rounded at all.
+ */
+TkEnv*
+tkbehind(Tk *tk)
+{
+	if(tk == nil)
+		return nil;
+	if(tk->master != nil && tk->master->env != nil)
+		return tk->master->env;
+	if(tk->parent != nil && tk->parent->env != nil)
+		return tk->parent->env;
+	return tk->env;
+}
+
+int
+tkstyleflat(Tk *tk)
+{
+	return tk != nil && tk->env != nil && tk->env->top != nil
+		&& tk->env->top->style == TkSflat;
+}
+
+int
+tkborderwidth(Tk *tk, int bd)
+{
+	int h, s;
+
+	if(bd <= 0 || !tkspace(tk)->scaleborder)
+		return bd;
+	if(tk == nil || tk->env == nil || tk->env->font == nil)
+		return bd;
+	h = tk->env->font->height;
+	s = (h + 8) / 16;
+	if(s < 1)
+		s = 1;
+	return bd * s;
+}
+
+TkSpace*
+tkspace(Tk *tk)
+{
+	if(tk == nil || tk->env == nil || tk->env->top == nil)
+		return &tkspaces[TkSflat];
+	if((uint)tk->env->top->style >= nelem(tkspaces))
+		return &tkspaces[TkSflat];
+	return &tkspaces[tk->env->top->style];
+}
 
 char*	tkfont;
 
@@ -95,7 +203,20 @@ tkrgba(int r, int g, int b, int a)
 		b = 0;
 	else if(b > 255)
 		b = 255;
-	p = (r<<24)|(g<<16)|(b<<8)|0xFF;
+	/*
+	 * Cast, for the third time in this library and the one that matters
+	 * most: every COMPUTED shade comes through here, so without it every
+	 * bevel colour in the toolkit is a 64-bit value with its top half set
+	 * - 0xffffffff959283ff for #959283.  colrs.c and xdata.c had the same
+	 * fault in their RGB macros.
+	 *
+	 * It renders correctly anyway, because tkrgbavals() masks the red byte
+	 * on the way back out.  What it breaks is the VALUE: tkcolor() caches
+	 * by it and starts with `if(pix == DWhite) return d->white', a test a
+	 * dirty value cannot satisfy, and the render nodes in scene.c carry
+	 * these as the colour a backend would be handed.
+	 */
+	p = (((ulong)r&0xff)<<24)|(((ulong)g&0xff)<<16)|(((ulong)b&0xff)<<8)|0xffUL;
 	if(a == 255)
 		return p;
 	return setalpha(p, a);
@@ -117,12 +238,27 @@ tkrgbavals(ulong rgba, int *R, int *G, int *B, int *A)
 
 	a = rgba & 0xff;
 	*A = a;
+	/*
+	 * The red byte is masked like the other two.  It was not, and on a
+	 * 32-bit ulong that was harmless - the shift alone left exactly one
+	 * byte.  Here ulong is 64 bits, so anything in the top half of the
+	 * word comes through as well, and the RGB() macro in colrs.c put it
+	 * there: R<<24 is computed as a signed int, so every colour with a
+	 * red byte of 0x80 or more was sign-extended when it was widened.
+	 *
+	 * Red then arrived here as a negative number, rgb2hsv() computed a
+	 * hue from it, and the shade came back out of a completely different
+	 * sector of the colour wheel.  That is why every bevel drawn from a
+	 * light background was TEAL: #F5F0D8 shaded to #00C0AB and #009080.
+	 * Colours whose red byte was under 0x80 were unaffected, which is
+	 * why the text and the selection accent always looked right.
+	 */
 	if (a != 0xff) {
-		*R = revalpha(rgba>>24, a);
+		*R = revalpha((rgba>>24) & 0xFF, a);
 		*G = revalpha((rgba>>16) & 0xFF, a);
 		*B = revalpha((rgba >> 8) & 0xFF, a);
 	} else {
-		*R = (rgba>>24);
+		*R = ((rgba>>24) & 0xFF);
 		*G = ((rgba>>16) & 0xFF);
 		*B = ((rgba >> 8) & 0xFF);
 	}
@@ -511,7 +647,7 @@ tkdefaultenv(TkTop *t)
 	if(locked)
 		unlockdisplay(d);
 
-	tksetenvcolours(env);
+	tksetenvcolours(env, t != nil ? t->style : TkSflat);
 	return env;
 }
 
@@ -755,33 +891,58 @@ tklook(TkTop *t, char *wp, int parent)
 	return f;
 }
 
+/*
+ * A selection band is a fill and four edges - light along the top and the
+ * left, dark along the bottom and the right.  The geometry lives here
+ * once, and both the draw() path and the node path walk what it returns,
+ * so the two cannot come to describe different bands.  It was five
+ * open-coded draw()s accumulating into one rectangle, and the order
+ * below is theirs.  Keeping it costs nothing, and the order turns out
+ * not to matter anyway: all four edges lie OUTSIDE the fill, and where
+ * two of them overlap - the corner squares - they are the same colour,
+ * so nothing here paints over anything of a different shade.
+ */
+int
+tkselrects(Rectangle r, int sbw, Rectangle *rr, int *ci)
+{
+	ci[0] = TkCselectbgnd;
+	rr[0] = r;
+
+	ci[1] = TkCselectbgndlght;			/* top */
+	rr[1] = Rect(r.min.x-sbw, r.min.y-sbw, r.max.x, r.min.y);
+
+	ci[2] = TkCselectbgndlght;			/* left */
+	rr[2] = Rect(r.min.x-sbw, r.min.y-sbw, r.min.x, r.max.y+sbw);
+
+	ci[3] = TkCselectbgnddark;			/* bottom */
+	rr[3] = Rect(r.min.x, r.max.y, r.max.x+sbw, r.max.y+sbw);
+
+	ci[4] = TkCselectbgnddark;			/* right */
+	rr[4] = Rect(r.max.x, r.min.y-sbw, r.max.x+sbw, r.max.y+sbw);
+
+	return 5;
+}
+
 void
 tktextsdraw(Image *img, Rectangle r, TkEnv *e, int sbw)
 {
-	Image *l, *d;
-	Rectangle s;
+	Rectangle rr[5];
+	int ci[5], k, n;
 
-	draw(img, r, tkgc(e, TkCselectbgnd), nil, ZP);
-	s.min = r.min;
-	s.min.x -= sbw;
-	s.min.y -= sbw;
-	s.max.x = r.max.x;
-	s.max.y = r.min.y;
-	l = tkgc(e, TkCselectbgndlght);
-	draw(img, s, l, nil, ZP);
-	s.max.x = s.min.x + sbw;
-	s.max.y = r.max.y + sbw;
-	draw(img, s, l, nil, ZP);
-	s.max = r.max;
-	s.max.x += sbw;
-	s.max.y += sbw;
-	s.min.x = r.min.x;
-	s.min.y = r.max.y;
-	d = tkgc(e, TkCselectbgnddark);
-	draw(img, s, d, nil, ZP);
-	s.min.x = r.max.x;
-	s.min.y = r.min.y - sbw;
-	draw(img, s, d, nil, ZP);
+	n = tkselrects(r, sbw, rr, ci);
+	for(k = 0; k < n; k++)
+		draw(img, rr[k], tkgc(e, ci[k]), nil, ZP);
+}
+
+void
+tkscenetextsel(TkScene *s, Rectangle r, TkEnv *e, int sbw)
+{
+	Rectangle rr[5];
+	int ci[5], k, n;
+
+	n = tkselrects(r, sbw, rr, ci);
+	for(k = 0; k < n; k++)
+		tkscenecolour(s, rr[k], e->colors[ci[k]]);
 }
 
 void
@@ -795,8 +956,16 @@ tkbox(Image *i, Rectangle r, int bd, Image *fill)
 	}
 }
 
-void
-tkbevel(Image *i, Point o, int w, int h, int bw, Image *top, Image *bottom)
+/*
+ * The classic two-tone bevel, into an image or into a scene.  Written
+ * once and branched at the draw, the way drawstring() is: the shape is
+ * a staircase, eight rectangles for a border width of two, and two
+ * copies of that arithmetic would drift apart the first time either
+ * was touched.
+ */
+static void
+bevel(Image *i, TkScene *sc, Point o, int w, int h, int bw, Image *top,
+	Image *bottom, ulong toprgba, ulong botrgba)
 {
 	Rectangle r;
 	int x, border;
@@ -806,28 +975,52 @@ tkbevel(Image *i, Point o, int w, int h, int bw, Image *top, Image *bottom)
 	r.min = o;
 	r.max.x = r.min.x + w + border;
 	r.max.y = r.min.y + bw;
-	draw(i, r, top, nil, ZP);
+	if(sc != nil)
+		tkscenecolour(sc, r, toprgba);
+	else
+		draw(i, r, top, nil, ZP);
 
 	r.max.x = r.min.x + bw;
 	r.max.y = r.min.y + h + border;
-	draw(i, r, top, nil, ZP);
+	if(sc != nil)
+		tkscenecolour(sc, r, toprgba);
+	else
+		draw(i, r, top, nil, ZP);
 
 	r.max.x = o.x + w + border;
 	r.max.y = o.y + h + border;
 	r.min.x = o.x + bw;
 	r.min.y = r.max.y - bw;
 	for(x = 0; x < bw; x++) {
-		draw(i, r, bottom, nil, ZP);
+		if(sc != nil)
+			tkscenecolour(sc, r, botrgba);
+		else
+			draw(i, r, bottom, nil, ZP);
 		r.min.x--;
 		r.min.y++;
 	}
 	r.min.x = o.x + bw + w;
 	r.min.y = o.y + bw;
 	for(x = bw; x >= 0; x--) {
-		draw(i, r, bottom, nil, ZP);
+		if(sc != nil)
+			tkscenecolour(sc, r, botrgba);
+		else
+			draw(i, r, bottom, nil, ZP);
 		r.min.x++;
 		r.min.y--;
 	}
+}
+
+void
+tkbevel(Image *i, Point o, int w, int h, int bw, Image *top, Image *bottom)
+{
+	bevel(i, nil, o, w, h, bw, top, bottom, 0, 0);
+}
+
+void
+tkbevelnodes(TkScene *sc, Point o, int w, int h, int bw, ulong top, ulong bottom)
+{
+	bevel(nil, sc, o, w, h, bw, nil, nil, top, bottom);
 }
 
 /*
@@ -836,6 +1029,219 @@ tkbevel(Image *i, Point o, int w, int h, int bw, Image *top, Image *bottom)
  * light and dark versions following immediately after
  * that index
  */
+/*
+ * A rounded rectangle, stroked.
+ *
+ * The first version of this only ERASED the corners - painted them back
+ * to the parent's background and stopped - which on a one-pixel outline
+ * leaves four disconnected line segments and no curve at all.  A rounded
+ * rectangle needs the border to FOLLOW the arc, so the corner rows both
+ * erase what is outside the curve and draw the border pixel on it.
+ *
+ * The erase uses the PARENT's background, not the widget's own: the
+ * point is to let whatever is behind the widget show through where the
+ * corner has been cut away.
+ *
+ * No sqrt.  The radius is a handful of pixels, so the arc position on
+ * each row is found by walking out from the edge until the pixel falls
+ * inside the circle - exact at these sizes, and it keeps the maths
+ * library out of every kernel that links libtk.
+ */
+static void
+tkroundbox(Image *i, Tk *tk, Point o, int w, int h, int bd, Image *col)
+{
+	TkEnv *pe;
+	Image *bg;
+	int rad, x, y, dx, dy, cut, r2, in0, in1, l0, r0;
+
+	rad = tkspace(tk)->corner;
+	if(rad*2 > w)
+		rad = w/2;
+	if(rad*2 > h)
+		rad = h/2;
+	if(rad < 0)
+		rad = 0;
+
+	/* the straight runs, stopping short of the corners */
+	if(w > 2*rad) {
+		draw(i, Rect(o.x+rad, o.y, o.x+w-rad, o.y+bd), col, nil, ZP);
+		draw(i, Rect(o.x+rad, o.y+h-bd, o.x+w-rad, o.y+h), col, nil, ZP);
+	}
+	if(h > 2*rad) {
+		draw(i, Rect(o.x, o.y+rad, o.x+bd, o.y+h-rad), col, nil, ZP);
+		draw(i, Rect(o.x+w-bd, o.y+rad, o.x+w, o.y+h-rad), col, nil, ZP);
+	}
+	if(rad <= 0)
+		return;
+
+	pe = tkbehind(tk);
+	bg = tkgc(pe, TkCbackgnd);
+
+	r2 = rad*rad;
+	for(y = 0; y < rad; y++){
+		dy = rad - y;
+		cut = 0;
+		for(x = 0; x < rad; x++){
+			dx = rad - x;
+			if(dx*dx + dy*dy <= r2)
+				break;
+			cut++;
+		}
+		/* outside the curve: let the parent through */
+		if(bg != nil && cut > 0){
+			draw(i, Rect(o.x, o.y+y, o.x+cut, o.y+y+1), bg, nil, ZP);
+			draw(i, Rect(o.x+w-cut, o.y+y, o.x+w, o.y+y+1), bg, nil, ZP);
+			draw(i, Rect(o.x, o.y+h-1-y, o.x+cut, o.y+h-y), bg, nil, ZP);
+			draw(i, Rect(o.x+w-cut, o.y+h-1-y, o.x+w, o.y+h-y), bg, nil, ZP);
+		}
+		/*
+		 * On the curve: the border itself, clamped to the span the
+		 * cut above left behind.  Unclamped it draws OUTSIDE the
+		 * outline it has just cut away, which is invisible until a
+		 * widget is narrower than twice its own corner - an 8-pixel
+		 * entry, a thin scrollbar - and then the widget has two
+		 * pixels of border sticking out of a row that is otherwise
+		 * not the widget at all.
+		 */
+		in0 = o.x+cut;
+		in1 = o.x+w-cut;
+		if(in1 < in0)
+			in1 = in0;
+		l0 = in0+bd;
+		if(l0 > in1)
+			l0 = in1;
+		r0 = in1-bd;
+		if(r0 < in0)
+			r0 = in0;
+		draw(i, Rect(in0, o.y+y, l0, o.y+y+1), col, nil, ZP);
+		draw(i, Rect(r0, o.y+y, in1, o.y+y+1), col, nil, ZP);
+		draw(i, Rect(in0, o.y+h-1-y, l0, o.y+h-y), col, nil, ZP);
+		draw(i, Rect(r0, o.y+h-1-y, in1, o.y+h-y), col, nil, ZP);
+	}
+}
+
+/*
+ * The nodes a flat border is made of, appended to a scene the caller
+ * owns.
+ *
+ * Separated from tkdrawrelief() so that a widget building its own scene
+ * can put its border in the same tree as the rest of itself, rather than
+ * having tkdrawrelief() build and render a tree of its own into an image
+ * halfway through - which is right when the border is all there is and
+ * wrong once the widget is a layer.
+ */
+/*
+ * Blit a widget into its own rounded shape: the middle band, then each
+ * corner row span by span.
+ *
+ * Both paths end in this.  A widget draws itself square into a scratch
+ * and the SHAPE is applied when the result is copied out, so the corners
+ * of the destination are left exactly as they were - which is what is
+ * behind the widget, whatever that is.
+ *
+ * The alternative, which is what this tree did until now, is to paint
+ * the corners with the parent's flat background once the widget is
+ * drawn.  That is right only while the thing behind a widget is that
+ * flat colour: a bordered entry over a red canvas item had its corners
+ * painted page-grey over the red, and the byte comparison found it as
+ * soon as the two paths stopped agreeing about which was correct.
+ */
+void
+tkshapedblit(Image *dst, Rectangle d, Image *src, Point sp, int radius)
+{
+	int rad, y, cut, h;
+
+	rad = tkclamprad(d, radius);
+	if(rad <= 0){
+		draw(dst, d, src, nil, sp);
+		return;
+	}
+	h = Dy(d);
+	draw(dst, Rect(d.min.x, d.min.y+rad, d.max.x, d.max.y-rad), src, nil,
+		addpt(sp, Pt(0, rad)));
+	for(y = 0; y < rad; y++){
+		cut = tkinset(rad, y);
+		draw(dst, Rect(d.min.x+cut, d.min.y+y, d.max.x-cut, d.min.y+y+1),
+			src, nil, addpt(sp, Pt(cut, y)));
+		draw(dst, Rect(d.min.x+cut, d.min.y+h-1-y, d.max.x-cut, d.min.y+h-y),
+			src, nil, addpt(sp, Pt(cut, h-1-y)));
+	}
+}
+
+/*
+ * The corner radius a widget's LAYER should take, which is the radius
+ * its border will be drawn with, or none when no border is drawn.
+ *
+ * The two have to agree, because they describe one widget: a border
+ * that is not drawn leaves square corners, and a layer composited round
+ * under it would round a widget the direct path leaves square.  So this
+ * repeats tkreliefnodes' own early return rather than guessing at it.
+ */
+int
+tkscenecorner(Tk *tk, int rlf)
+{
+	if(tk->borderwidth <= 0 || rlf == TKflat)
+		return 0;
+	return tkspace(tk)->corner;
+}
+
+static void
+relief(TkScene *sc, Tk *tk, Point o, int color, int rlf, int mend)
+{
+	TkEnv *e, *pe;
+	ulong brgba;
+	Rectangle r;
+	int w, h, bd;
+
+	if(sc == nil || tk->borderwidth == 0 || rlf == TKflat)
+		return;
+	e = tk->env;
+	w = tk->act.width;
+	h = tk->act.height;
+	bd = tk->borderwidth;
+	/*
+	 * The same two-way choice the direct path makes: only the three
+	 * background colours have a precomputed dark shade in the table
+	 * beside them; anything else has to be computed.
+	 */
+	if(color == TkCbackgnd || color == TkCselectbgnd || color == TkCactivebgnd)
+		brgba = e->colors[color+TkDarkshade];
+	else
+		brgba = tkrgbashade(e->colors[color], TkDarkshade);
+	r = Rect(o.x, o.y, o.x + w + 2*bd, o.y + h + 2*bd);
+	if(mend){
+		pe = tkbehind(tk);
+		tksceneborderon(sc, r, tkspace(tk)->corner, bd, brgba,
+			pe->colors[TkCbackgnd]);
+	}else
+		tksceneborder(sc, r, tkspace(tk)->corner, bd, brgba);
+}
+
+void
+tkreliefnodes(TkScene *sc, Tk *tk, Point o, int color, int rlf)
+{
+	relief(sc, tk, o, color, rlf, 0);
+}
+
+/*
+ * The same border, plus the parent's colour painted back where the
+ * corner is cut away.
+ *
+ * For a widget that draws IN PLACE and is not described entirely by
+ * nodes - a text(9) is the one there is - because such a widget's
+ * background is its parent's and its own content can reach the corner
+ * pixel the curve cuts.  tkroundbox() has always done this in the
+ * drawing path; a plain border node does not, which made `render
+ * scene' change what a border meant for exactly those widgets.  It
+ * showed as ONE pixel, at the top right of a text widget whose tag had
+ * a background reaching the edge.
+ */
+void
+tkreliefnodeson(TkScene *sc, Tk *tk, Point o, int color, int rlf)
+{
+	relief(sc, tk, o, color, rlf, 1);
+}
+
 void
 tkdrawrelief(Image *i, Tk *tk, Point o, int color, int rlf)
 {
@@ -860,8 +1266,43 @@ tkdrawrelief(Image *i, Tk *tk, Point o, int color, int rlf)
 	bd = tk->borderwidth;
 	if(rlf < 0)
 		rlf = TKraised;
-	switch(rlf) {
-	case TKflat:
+
+	/*
+	 * One restrained outline instead of a two-tone chisel.  Every state
+	 * that a relief is asked to show also changes the FILL behind it -
+	 * a pressed button is drawn in activebgnd, an indicator-less
+	 * checkbutton in select - so collapsing raised and sunken here
+	 * loses no information a person could act on, which is why the flat
+	 * style can be one line rather than a second set of shapes.
+	 */
+	if(tk->env->top != nil && tk->env->top->style == TkSflat) {
+		if(rlf == TKflat)
+			return;
+		if(tkviascene){
+			TkScene *sc;
+
+			sc = tkscenenew();
+			if(sc != nil){
+				/*
+				 * MENDING, because the line below it does:
+				 * tkroundbox() lets the parent through where
+				 * the curve cuts, and this is the same call
+				 * with the same job.  Without that, turning
+				 * on `render scene' changed what a border did
+				 * to a widget that draws in place.
+				 */
+				tkreliefnodeson(sc, tk, o, color, rlf);
+				tkscenerender(sc, e->top->ctxt, i);
+				tkscenefree(sc);
+				return;
+			}
+			/* no memory for a tree: draw it directly rather than not */
+		}
+		tkroundbox(i, tk, o, w + 2*bd, h + 2*bd, bd, d);
+		return;
+	}
+
+	switch(rlf) {	case TKflat:
 		break;
 	case TKsunken:
 		tkbevel(i, o, w, h, bd, d, l);
@@ -884,6 +1325,353 @@ tkdrawrelief(Image *i, Tk *tk, Point o, int color, int rlf)
 		tkbevel(i, o, w, h, bd2, d, l);
 		break;
 	}
+}
+
+/*
+ * style ?flat|classic?
+ *
+ * Picks what a relief means for this toplevel, and reports what is in
+ * force when asked with no argument.  It is deliberately a whole-window
+ * setting rather than a per-widget option: the thing that makes a set of
+ * widgets look like one set is that they agree, and an option each
+ * widget could set differently is an option each program would set
+ * differently.
+ *
+ * The old look stays reachable, which is the point of having the switch
+ * at all - the existing chisel is coherent and somebody chose it.
+ */
+/*
+ * render ?direct|scene?
+ *
+ * Reports or sets which path a flat border takes.  It is a whole-process
+ * setting rather than per-toplevel because it exists to be compared
+ * against itself, not to be configured: a program has no reason to want
+ * one or the other, and a test has every reason to want both.
+ */
+char*
+tkrendercmd(TkTop *t, char *arg, char **ret)
+{
+	Tk *tk;
+	char buf[Tkmaxitem];
+
+	tkword(t, arg, buf, buf+sizeof(buf), nil);
+	if(buf[0] == '\0') {
+		if(ret != nil)
+			return tkvalue(ret, "%s", tkviascene ? "scene" : "direct");
+		return nil;
+	}
+	/*
+	 * `render count' answers how many trees the repaints since the last
+	 * `render count' rendered, how many widgets went into them and how
+	 * many nodes those held, and then starts counting again.  The last
+	 * is what sizes a GPU backend: a submission per tree is worth
+	 * having only if a tree carries enough nodes to pay for one.  Two repaints that batch differently
+	 * draw the same pixels, so the identity check cannot see batching
+	 * at all and this is what a test asks instead.
+	 */
+	/*
+	 * `render types' answers, per widget type, how many times its draw
+	 * method ran and how many of those joined a tree -- the table item
+	 * 1.1 of doc/scene-graph-plan.ms needs.  Types printed with a join
+	 * count of zero are the candidates for direct painting; see
+	 * tkwalknote() for the two things this cannot distinguish.
+	 */
+	/*
+	 * `render items' answers how many canvas items have had their draw
+	 * method run since the last reset -- the measurement item 1.2 of
+	 * doc/scene-graph-plan.ms turns on.
+	 */
+	if(strcmp(buf, "items") == 0){
+		int n;
+
+		n = tkwalkitems();
+		tkwalkreset();
+		if(ret != nil)
+			return tkvalue(ret, "%d", n);
+		return nil;
+	}
+	/*
+	 * `render scaled ?NUM ?DEN??' sets the scale the walk renders its
+	 * trees at, as a rational so there is no floating point in a
+	 * renderer that has to work in a kernel; with no argument it
+	 * reports the current scale and what the last scaled renders
+	 * could not be exact for.
+	 *
+	 * This is resolution independence, item 1 of
+	 * doc/scene-graph-plan.ms: the same nodes drawn larger rather
+	 * than pixels resampled, which is the one thing a description can
+	 * do that a raster cannot. Whole-process like `render scene' and
+	 * for the same reason -- it exists to be compared against itself.
+	 *
+	 * The two counts are the honest part. Geometry scales exactly;
+	 * a glyph run cannot, because its face names a size, and a
+	 * texture cannot, because draw() replicates rather than
+	 * resamples. So the report says how many nodes were drawn and how
+	 * many of those were approximated, and a caller can tell an exact
+	 * enlargement from an approximate one.
+	 */
+	/*
+	 * `render xform ?NUM ?DEN??' wraps each tree in a TkNtransform
+	 * instead of scaling at render time. The two do the same
+	 * arithmetic in different places, which is the point: one is the
+	 * control for the other, and tkscenetest(1) compares their
+	 * pixels rather than assuming they agree.
+	 */
+	if(strcmp(buf, "xform") == 0){
+		int num, den;
+
+		arg = tkword(t, arg, buf, buf+sizeof(buf), nil);
+		arg = tkword(t, arg, buf, buf+sizeof(buf), nil);
+		if(buf[0] == '\0'){
+			tkscenegetxform(&num, &den);
+			if(ret != nil)
+				return tkvalue(ret, "%d %d", num, den);
+			return nil;
+		}
+		num = atoi(buf);
+		tkword(t, arg, buf, buf+sizeof(buf), nil);
+		den = buf[0] == '\0' ? 1 : atoi(buf);
+		if(num <= 0 || den <= 0)
+			return TkBadvl;
+		tkscenesetxform(num, den);
+		tkwalkreset();
+		return nil;
+	}
+	/*
+	 * `render opacity ?ALPHA?' wraps each tree in a TkNopacity span,
+	 * 0 to 255. 255 is the running system and emits no node at all,
+	 * which is why identity costs nothing and why the test below
+	 * compares 255 against unchanged rather than trusting it.
+	 */
+	if(strcmp(buf, "opacity") == 0){
+		int alpha;
+
+		/*
+		 * `opacity' itself first: the dispatcher read the
+		 * subcommand WITHOUT advancing arg.  Unlike `scaled' and
+		 * `xform' there is no second number, so the word after the
+		 * alpha is never read and arg is not advanced again --
+		 * which 7c says and clang does not.
+		 */
+		arg = tkword(t, arg, buf, buf+sizeof(buf), nil);
+		tkword(t, arg, buf, buf+sizeof(buf), nil);
+		if(buf[0] == '\0'){
+			if(ret != nil)
+				return tkvalue(ret, "%d", tkscenegetopacity());
+			return nil;
+		}
+		alpha = atoi(buf);
+		if(alpha < 0 || alpha > 255)
+			return TkBadvl;
+		tkscenesetopacity(alpha);
+		tkwalkreset();
+		return nil;
+	}
+	/*
+	 * `render record ?0|1?' turns on serialising each tree the walk
+	 * renders, and `render tree' hands back the last one.  This is
+	 * item 1's API half: a Limbo program can obtain a widget's node
+	 * tree and a consumer -- recording, remote rendering, a backend
+	 * that wants geometry -- can be written outside libtk.
+	 *
+	 * Off by default, because it costs a serialisation on the path
+	 * every repaint takes.
+	 */
+	if(strcmp(buf, "record") == 0){
+		arg = tkword(t, arg, buf, buf+sizeof(buf), nil);
+		tkword(t, arg, buf, buf+sizeof(buf), nil);
+		if(buf[0] == '\0'){
+			if(ret != nil)
+				return tkvalue(ret, "%d", tkscenegetrecord());
+			return nil;
+		}
+		tkscenesetrecord(atoi(buf));
+		tkwalkreset();
+		return nil;
+	}
+	if(strcmp(buf, "tree") == 0){
+		char *d;
+
+		d = tkscenegetdump();
+		if(ret != nil)
+			return tkvalue(ret, "%s", d == nil ? "" : d);
+		return nil;
+	}
+	if(strcmp(buf, "scaled") == 0){
+		int num, den, nodes, approx;
+
+		/*
+		 * The dispatcher above read the subcommand WITHOUT advancing
+		 * arg, so this has to consume `scaled' itself before the
+		 * numerator. Reading one word got "scaled", atoi gave 0 and
+		 * every call answered !bad value.
+		 */
+		arg = tkword(t, arg, buf, buf+sizeof(buf), nil);
+		arg = tkword(t, arg, buf, buf+sizeof(buf), nil);
+		if(buf[0] == '\0'){
+			tkscenegetscale(&num, &den);
+			tkwalkscaled(&nodes, &approx);
+			if(ret != nil)
+				return tkvalue(ret, "%d %d nodes %d approx %d",
+					num, den, nodes, approx);
+			return nil;
+		}
+		num = atoi(buf);
+		tkword(t, arg, buf, buf+sizeof(buf), nil);
+		den = buf[0] == '\0' ? 1 : atoi(buf);
+		if(num <= 0 || den <= 0)
+			return TkBadvl;
+		tkscenesetscale(num, den);
+		tkwalkreset();
+		return nil;
+	}
+	if(strcmp(buf, "types") == 0){
+		/*
+		 * NOT buf: it is Tkmaxitem, 128 bytes, and seventeen types
+		 * need about 340.  Writing the table into it stopped after
+		 * exactly eight entries -- the first eight in enum order --
+		 * which read as "only eight types ever draw" and is instead
+		 * the instrument running out of room.  And it broke out of
+		 * the loop SILENTLY, so nothing in the output said so.
+		 */
+		char tbuf[32*TKwidgets], *q, *e;
+		int i, drew, joined, cut;
+
+		if(ret == nil)
+			return nil;
+		q = tbuf;
+		e = tbuf + sizeof(tbuf);
+		cut = 0;
+		for(i = 0; i < TKwidgets; i++){
+			tkwalktypes(i, &drew, &joined);
+			if(drew == 0)
+				continue;
+			if(q + 32 >= e){
+				cut = 1;	/* say so rather than stop quietly */
+				break;
+			}
+			q += snprint(q, e - q, "%s %d %d ",
+				tkmethod[i]->name, drew, joined);
+		}
+		if(cut)
+			snprint(q, e - q, "TRUNCATED");
+		tkwalkreset();
+		return tkvalue(ret, "%s", tbuf);
+	}
+	if(strcmp(buf, "count") == 0){
+		int runs, widgets, nodes;
+
+		tkwalkcount(&runs, &widgets, &nodes);
+		tkwalkreset();
+		if(ret != nil)
+			return tkvalue(ret, "%d %d %d", runs, widgets, nodes);
+		return nil;
+	}
+	/*
+	 * `render bounds' answers the union of what those same trees
+	 * marked, as `minx miny maxx maxy', and resets with the counts.
+	 * It exists because a described frame can say where it drew
+	 * BEFORE anything looks at pixels, which is what lets a backend
+	 * push only the part that changed.  An empty rectangle means the
+	 * trees marked nothing.
+	 */
+	/*
+	 * `render nodes' answers how many nodes that mark pixels went by
+	 * and how many of those described no box, then resets with the
+	 * counts.  The second number is the one that matters and it should
+	 * be zero: a node whose extent is unknown is one a backend can
+	 * neither place nor cull, and that is what the tree is FOR.  The
+	 * scene-level union cannot see this - a detail node always sits
+	 * inside its widget's background - so it is asked directly.
+	 */
+	if(strcmp(buf, "nodes") == 0){
+		int drawn, undesc;
+
+		tkwalknodebox(&drawn, &undesc);
+		tkwalkreset();
+		if(ret != nil)
+			return tkvalue(ret, "%d %d", drawn, undesc);
+		return nil;
+	}
+	if(strcmp(buf, "bounds") == 0){
+		Rectangle b;
+
+		tkwalkbounds(&b);
+		tkwalkreset();
+		if(ret != nil)
+			return tkvalue(ret, "%d %d %d %d",
+				b.min.x, b.min.y, b.max.x, b.max.y);
+		return nil;
+	}
+	if(strcmp(buf, "scene") == 0)
+		tkviascene = 1;
+	else if(strcmp(buf, "direct") == 0)
+		tkviascene = 0;
+	else
+		return TkBadvl;
+	for(tk = t->root; tk != nil; tk = tk->siblings) {
+		tk->dirty = tkrect(tk, 1);
+		tkdirty(tk);
+	}
+	return tkupdate(t);
+}
+
+char*
+tkstylecmd(TkTop *t, char *arg, char **ret)
+{
+	Tk *tk;
+	char buf[Tkmaxitem];
+
+	tkword(t, arg, buf, buf+sizeof(buf), nil);
+	if(buf[0] == '\0') {
+		if(ret != nil)
+			return tkvalue(ret, "%s",
+				t->style == TkSflat ? "flat" : "classic");
+		return nil;
+	}
+	if(strcmp(buf, "flat") == 0)
+		t->style = TkSflat;
+	else if(strcmp(buf, "classic") == 0)
+		t->style = TkSclassic;
+	else
+		return TkBadvl;
+
+	/*
+	 * Only the BORDER of an existing widget changes here.  The spacings
+	 * in tkspaces[] are read when a widget is configured, and a widget
+	 * that changed size would push a new size request up to its master
+	 * and on to the toplevel, which re-fits itself to its contents: one
+	 * `style' command resized the whole window and moved every widget
+	 * in it.  A window that jumps size because its borders were restyled
+	 * is worse than one whose spacings only apply to what it builds
+	 * afterwards, so a program sets the style before it builds its
+	 * widgets - which is what the man page says and what style(9)'s
+	 * BUGS records.
+	 *
+	 * Every widget's border is drawn from this, so every widget has to
+	 * be told, not just the one the command was aimed at.  tkdirty()
+	 * only PROPAGATES dirtiness to masters and to views under a
+	 * transparent widget - it returns at once unless the widget's own
+	 * dirty rectangle is already set - so the rectangle has to be set
+	 * here first, exactly as tkbuttonselect() does.  Without that the
+	 * style changed and almost nothing repainted.
+	 */
+	/*
+	 * Colours CAN be re-applied to a window that already exists, unlike
+	 * the spacings above: a colour does not feed back into layout, so
+	 * nothing re-requests a size and the toplevel does not re-fit
+	 * itself.  Widgets that have been given a colour of their own hold
+	 * a cloned env and keep it, which is right - an explicit
+	 * -background is not the style's to overrule.
+	 */
+	if(t->env != nil)
+		tksetenvcolours(t->env, t->style);
+
+	for(tk = t->root; tk != nil; tk = tk->siblings) {
+		tk->dirty = tkrect(tk, 1);
+		tkdirty(tk);
+	}
+	return tkupdate(t);
 }
 
 Point
@@ -923,8 +1711,8 @@ tkstringsize(Tk *tk, char *text)
 	return p;	
 }
 
-static void
-tkulall(Image *i, Point o, Image *col, Font *f, char *text)
+static Rectangle
+tkulallrect(Point o, Font *f, char *text)
 {
 	Rectangle r;
 
@@ -932,11 +1720,11 @@ tkulall(Image *i, Point o, Image *col, Font *f, char *text)
 	r.max = addpt(r.max, o);
 	r.min.x = o.x;
 	r.min.y = r.max.y - 1;
-	draw(i, r, col, nil, ZP);	
+	return r;
 }
 
-static void
-tkul(Image *i, Point o, Image *col, int ul, Font *f, char *text)
+static Rectangle
+tkulrect(Point o, int ul, Font *f, char *text)
 {
 	char c, *v;
 	Rectangle r;
@@ -951,15 +1739,29 @@ tkul(Image *i, Point o, Image *col, int ul, Font *f, char *text)
 	r.min.x = r.max.x - r.min.x;
 	r.min.y = r.max.y - 1;
 	r.max.y++;
-	draw(i, r, col, nil, ZP);	
+	return r;
 }
 
-void
-tkdrawstring(Tk *tk, Image *i, Point o, char *text, int ul, Image *col, int j)
+/*
+ * A label's text, line by line, into an image or into a scene.
+ *
+ * One function for both because every number in it - where a line
+ * starts once the justification has shifted it, where the underline
+ * rule goes, how far down the next line is - is a number the two paths
+ * have to agree about exactly.  Written twice they would agree until
+ * somebody changed one, and the identity check would then report a
+ * transcription slip as a renderer fault.  The same argument as
+ * tkselrects() in the entry.
+ *
+ * Nothing here is new to the node vocabulary: a line is a TkNglyphs and
+ * the underline is a filled rectangle, which is a TkNcolour.
+ */
+static void
+drawstring(Tk *tk, Image *i, TkScene *sc, Point o, char *text, int ul, Image *col, ulong rgba, int j)
 {
 	int n, l, maxl, sox;
 	char *q, *txt;
-	Point p;
+	Rectangle r;
 	TkEnv *e;
 
 	e = tk->env;
@@ -993,17 +1795,27 @@ tkdrawstring(Tk *tk, Image *i, Point o, char *text, int ul, Image *col, int j)
 			else
 				o.x += maxl-l;
 		}
-		p = string(i, o, col, o, e->font, text);
+		if(sc != nil)
+			tkscenetext(sc, o, text, e->font, rgba);
+		else
+			string(i, o, col, o, e->font, text);
 		if(ul >= 0) {
 			n = strlen(text);
+			r = Rect(0, 0, 0, 0);
 			if(ul < n) {
-				tkul(i, o, col, ul, e->font, text);
+				r = tkulrect(o, ul, e->font, text);
 				ul = -1;
 			} else if(ul == n) {
-				tkulall(i, o, col, e->font, text);
+				r = tkulallrect(o, e->font, text);
 				ul = -1;
 			} else
 				ul -= n;
+			if(Dx(r) > 0 && Dy(r) > 0){
+				if(sc != nil)
+					tkscenecolour(sc, r, rgba);
+				else
+					draw(i, r, col, nil, ZP);
+			}
 		}
 		o.y += e->font->height;
 		if(q == nil)
@@ -1011,6 +1823,18 @@ tkdrawstring(Tk *tk, Image *i, Point o, char *text, int ul, Image *col, int j)
 		text = q+1;
 		*q = '\n';
 	}
+}
+
+void
+tkdrawstring(Tk *tk, Image *i, Point o, char *text, int ul, Image *col, int j)
+{
+	drawstring(tk, i, nil, o, text, ul, col, 0, j);
+}
+
+void
+tkscenestring(TkScene *sc, Tk *tk, Point o, char *text, int ul, ulong rgba, int j)
+{
+	drawstring(tk, nil, sc, o, text, ul, nil, rgba, j);
 }
 
 /* for debugging */

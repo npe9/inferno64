@@ -4,6 +4,35 @@
 #include "tk.h"
 #include "keyboard.h"
 
+extern void tkannouncechange(Tk*);	/* ebind.c, for voice(3) */
+
+/* declared here because the drawing code above its definition uses it */
+static void tkflatslider(Image*, TkScene*, TkEnv*, Point, Rectangle, int, int);
+
+/*
+ * A scale draws a handful of shapes over and over in two orientations,
+ * so rather than branch at each of them the two primitives it uses get a
+ * scene-or-image pair.  Everything else a flat scale draws is one of
+ * these two or an ellipse.
+ */
+static void
+sdraw(Image *i, TkScene *sc, TkEnv *e, Rectangle r, int col)
+{
+	if(sc != nil)
+		tkscenecolour(sc, r, e->colors[col]);
+	else
+		draw(i, r, tkgc(e, col), nil, ZP);
+}
+
+static void
+sstring(Image *i, TkScene *sc, TkEnv *e, Point p, int col, char *str)
+{
+	if(sc != nil)
+		tkscenetext(sc, p, str, e->font, e->colors[col]);
+	else
+		string(i, p, tkgc(e, col), ZP, e->font, str);
+}
+
 #define	O(t, e)		((long)(&((t*)0)->e))
 
 typedef struct TkScale TkScale;
@@ -199,6 +228,18 @@ tkscale(TkTop *t, char *arg, char **ret)
 		return TkNomem;
 
 	tk->flag |= Tktakefocus;
+	/*
+	 * A scale HAS the code to draw a focus ring and has never drawn one,
+	 * because highlightwidth was left at zero and tkbox() of width zero
+	 * draws nothing.  Every other focusable widget sets it to 1.
+	 *
+	 * Under flat only: unlike the listbox, a scale's geometry adds
+	 * 2*highlightwidth to its requested size, so setting it changes the
+	 * widget's dimensions - and classic is kept as the look this
+	 * toolkit has always had, asserted unchanged elsewhere.
+	 */
+	if(tkstyleflat(tk))
+		tk->highlightwidth = 1;
 	tks = TKobj(TkScale, tk);
 	tks->res = TKI2F(1);
 	tks->to = TKI2F(100);
@@ -271,7 +312,7 @@ tkfreescale(Tk *tk)
 }
 
 static void
-tkscalehoriz(Tk *tk, Image *i)
+tkscalehoriz(Tk *tk, Image *i, TkScene *sc)
 {
 	TkEnv *e;
 	char sv[32];
@@ -297,7 +338,7 @@ tkscalehoriz(Tk *tk, Image *i)
 	r = insetrect(r, ScalePad);
 
 	if(tks->label != nil) {
-		string(i, r.min, tkgc(e, fgnd), ZP, e->font, tks->label);
+		sstring(i, sc, e, r.min, fgnd, tks->label);
 		r.min.y += fh + ScalePad;
 	}
 	if(tks->sv == BoolT)
@@ -310,7 +351,8 @@ tkscalehoriz(Tk *tk, Image *i)
 
 	l = tkgc(e, TkCbackgndlght);
 	d = tkgc(e, TkCbackgnddark);
-	tkbevel(i, r.min, w, h, ScaleBW, d, l);
+	if(!tkstyleflat(tk))
+		tkbevel(i, r.min, w, h, ScaleBW, d, l);
 
 	tks->pixmin = sr.min.x;
 	tks->pixmax = sr.max.x;
@@ -336,7 +378,7 @@ tkscalehoriz(Tk *tk, Image *i)
 		for(j = 0; j <= l; j += t){
 			r2.min.x = p.x+((vlong)j*w)/l+sl/2;
 			r2.max.x = r2.min.x+1;
-			draw(i, r2, tkgc(e, fgnd), nil, ZP);
+			sdraw(i, sc, e, r2, fgnd);
 		}
 	}
 	v = tks->value-tks->from;
@@ -355,8 +397,23 @@ tkscalehoriz(Tk *tk, Image *i)
 		r2.min = p;
 		r2.max.x = p.x+sl;
 		r2.max.y = sr.max.y;
-		draw(i, r2, tkgc(e, TkCactivebgnd), nil, ZP);
+		sdraw(i, sc, e, r2, TkCactivebgnd);
 	}
+	if(tkstyleflat(tk)){
+		int th, cy, rad;
+
+		th = sh/4;
+		if(th < 4)
+			th = 4;
+		cy = sr.min.y + sh/2;
+		rad = sh/2;
+		if(rad > 9)
+			rad = 9;
+		if(rad < 4)
+			rad = 4;
+		tkflatslider(i, sc, e, Pt(p.x + tks->sl/2, cy),
+			Rect(sr.min.x, cy - th/2, sr.max.x, cy - th/2 + th), 1, rad);
+	}else
 	switch(tks->relief) {
 	case TKsunken:
 		tkbevel(i, p, tks->sl, sh, ScaleBW, d, l);
@@ -386,11 +443,11 @@ tkscalehoriz(Tk *tk, Image *i)
 	if(p.x+w > tks->pixmax)
 		p.x = tks->pixmax - w;
 	
-	string(i, p, tkgc(e, fgnd), ZP, e->font, sv);
+	sstring(i, sc, e, p, fgnd, sv);
 }
 
 static void
-tkscalevert(Tk *tk, Image *i)
+tkscalevert(Tk *tk, Image *i, TkScene *sc)
 {
 	TkEnv *e;
 	TkScale *tks;
@@ -420,7 +477,7 @@ tkscalevert(Tk *tk, Image *i)
 	if(tks->label != nil) {
 		p =  stringsize(e->font, tks->label);
 		r.max.x -= p.x;
-		string(i, Pt(r.max.x, r.min.y), tkgc(e, fgnd), ZP, e->font, tks->label);
+		sstring(i, sc, e, Pt(r.max.x, r.min.y), fgnd, tks->label);
 		r.max.x -= ScalePad;
 	}
 
@@ -431,7 +488,8 @@ tkscalevert(Tk *tk, Image *i)
 
 	l = tkgc(e, TkCbackgndlght);
 	d = tkgc(e, TkCbackgnddark);
-	tkbevel(i, r.min, w, h, ScaleBW, d, l);
+	if(!tkstyleflat(tk))
+		tkbevel(i, r.min, w, h, ScaleBW, d, l);
 
 	tks->pixmin = sr.min.y;
 	tks->pixmax = sr.max.y;
@@ -457,7 +515,7 @@ tkscalevert(Tk *tk, Image *i)
 		for(j = 0; j <= l; j += t){
 			r2.min.y = p.y+((vlong)j*h)/l+sl/2;
 			r2.max.y = r2.min.y+1;
-			draw(i, r2, tkgc(e, fgnd), nil, ZP);
+			sdraw(i, sc, e, r2, fgnd);
 		}
 	}
 
@@ -477,8 +535,23 @@ tkscalevert(Tk *tk, Image *i)
 		r2.min = p;
 		r2.max.x = sr.max.x;
 		r2.max.y = p.y+sl;
-		draw(i, r2, tkgc(e, TkCactivebgnd), nil, ZP);
+		sdraw(i, sc, e, r2, TkCactivebgnd);
 	}
+	if(tkstyleflat(tk)){
+		int tw, cx, rad;
+
+		tw = sw/4;
+		if(tw < 4)
+			tw = 4;
+		cx = sr.min.x + sw/2;
+		rad = sw/2;
+		if(rad > 9)
+			rad = 9;
+		if(rad < 4)
+			rad = 4;
+		tkflatslider(i, sc, e, Pt(cx, p.y + tks->sl/2),
+			Rect(cx - tw/2, sr.min.y, cx - tw/2 + tw, sr.max.y), 1, rad);
+	}else
 	switch(tks->relief) {
 	case TKsunken:
 		tkbevel(i, p, sw, tks->sl, ScaleBW, d, l);
@@ -506,8 +579,54 @@ tkscalevert(Tk *tk, Image *i)
 		p.y = tks->pixmin;
 	if (p.y + fh > tks->pixmax)
 		p.y = tks->pixmax - fh;
-	string(i, p, tkgc(e, fgnd), ZP, e->font, sv);
+	sstring(i, sc, e, p, fgnd, sv);
 }
+
+/*
+ * A slider drawn the way one is drawn now: a thin track, the part
+ * BEHIND the knob filled in the accent so the value is readable at a
+ * glance without finding the knob, and a round knob sitting above it.
+ *
+ * The old drawing is a sunken bevel the full height of the control with
+ * a raised rectangle sliding in it - which is a picture of a physical
+ * fader from 1995, and is why this widget still looked old after the
+ * borders elsewhere had stopped being chisels.  The scale never went
+ * through tkdrawrelief(), so nothing the style did could reach it.
+ *
+ * The knob is drawn twice: a disc of the page colour, then a smaller
+ * disc of the accent inside it.  That halo is what makes it read as
+ * sitting ON the track rather than being a bulge in it, and it costs one
+ * more fillellipse.
+ */
+static void
+tkflatslider(Image *i, TkScene *sc, TkEnv *e, Point c, Rectangle track, int filled, int rad)
+{
+	Rectangle t;
+
+	sdraw(i, sc, e, track, TkCbackgnddark);
+	t = track;
+	if(filled){
+		/* horizontal: fill to the knob; vertical: fill from the knob down */
+		if(Dx(track) > Dy(track)){
+			t.max.x = c.x;
+			if(t.max.x > t.min.x)
+				sdraw(i, sc, e, t, TkChighlightfgnd);
+		}else{
+			t.min.y = c.y;
+			if(t.max.y > t.min.y)
+				sdraw(i, sc, e, t, TkChighlightfgnd);
+		}
+	}
+	if(sc != nil){
+		tksceneellipsefill(sc, c, Pt(rad, rad), e->colors[TkCbackgnd]);
+		tksceneellipsefill(sc, c, Pt(rad-2, rad-2),
+			e->colors[TkChighlightfgnd]);
+		return;
+	}
+	fillellipse(i, c, rad, rad, tkgc(e, TkCbackgnd), ZP);
+	fillellipse(i, c, rad-2, rad-2, tkgc(e, TkChighlightfgnd), ZP);
+}
+
 
 char*
 tkdrawscale(Tk *tk, Point orig)
@@ -517,6 +636,7 @@ tkdrawscale(Tk *tk, Point orig)
 	TkScale *tks;
 	Rectangle r, fr;
 	Image *i;
+	TkScene *sc;
 
 	tks = TKobj(TkScale, tk);
 	env = tk->env;
@@ -524,25 +644,63 @@ tkdrawscale(Tk *tk, Point orig)
 	r.min = ZP;
 	r.max.x = tk->act.width + 2*tk->borderwidth;
 	r.max.y = tk->act.height + 2*tk->borderwidth;
-	i = tkitmp(env, r.max, TkCbackgnd);
-	if(i == nil)
-		return nil;
+
+	/*
+	 * The whole widget as one layer of nodes.  A flat scale draws only
+	 * filled rectangles, two runs of text, two circles and a stroked
+	 * box; the two-tone bevels below belong to the classic look, which
+	 * this never takes.
+	 */
+	sc = nil;
+	if(tkviascene && tkstyleflat(tk))
+		sc = tkwalkjoin(env->top->ctxt, tkimageof(tk));
+	if(sc != nil){
+		Rectangle dr;
+
+		dr = rectaddpt(r, Pt(tk->act.x + orig.x, tk->act.y + orig.y));
+		tkscenelayerround(sc, r.max, env->colors[TkCbackgnd], dr, ZP,
+			tkscenecorner(tk, tk->relief));
+		i = nil;
+	}else{
+		i = tkitmp(env, r.max, TkCbackgnd);
+		if(i == nil)
+			return nil;
+	}
 
 	if(tks->orient == Tkvertical)
-		tkscalevert(tk, i);
+		tkscalevert(tk, i, sc);
 	else
-		tkscalehoriz(tk, i);
+		tkscalehoriz(tk, i, sc);
 
-	tkdrawrelief(i, tk, ZP, TkCbackgnd, tk->relief);
+	if(sc != nil){
+		if(tkhaskeyfocus(tk))
+			tksceneborder(sc, insetrect(r, tk->borderwidth), 0,
+				tk->highlightwidth,
+				env->colors[TkChighlightfgnd]);
+		tkreliefnodes(sc, tk, ZP, TkCbackgnd, tk->relief);
+		tkscenelayerend(sc);
+		tkscenefinish(sc, env->top->ctxt, tkimageof(tk));
+		return nil;
+	}
+
+	/*
+	 * The ring before the border, which is the order every other widget
+	 * here already used.  It matters once a widget is composited in its
+	 * own rounded shape: a ring drawn AFTER the border puts its square
+	 * corner where the border has just cut the widget away, so a
+	 * focused entry showed a blue notch outside its own rounded corner.
+	 * The border is the last word on the shape of a widget.
+	 */
 	if (tkhaskeyfocus(tk)) {
 		fr = insetrect(r, tk->borderwidth);
 		tkbox(i, fr, tk->highlightwidth, tkgc(env, TkChighlightfgnd));
 	}
+	tkdrawrelief(i, tk, ZP, TkCbackgnd, tk->relief);
 
 	p.x = tk->act.x + orig.x;
 	p.y = tk->act.y + orig.y;
 	r = rectaddpt(r, p);
-	draw(tkimageof(tk), r, i, nil, ZP);
+	tkshapedblit(tkimageof(tk), r, i, ZP, tkscenecorner(tk, tk->relief));
 
 	return nil;
 }
@@ -936,9 +1094,29 @@ tkscalekey(Tk *tk, char *arg, char **val)
 	if (pos != nil) {
 		e = stepscale(tk, pos, nil);
 		tk->dirty = tkrect(tk, 1);
+		tkannouncechange(tk);	/* voice(3); see man 3 voice */
 		return e;
 	}
 	return nil;
+}
+
+/*
+ * The value, for voice(3).  A slider that says only "scale" when you
+ * arrive at it, and nothing at all while the arrow keys move it, tells a
+ * person using their ears that a control is there and never what it is
+ * set to or whether they changed it.
+ *
+ * Here rather than in ebind.c because TkScale is private to this file.
+ */
+char*
+tkscalestate(Tk *tk, char *buf, int nbuf)
+{
+	TkScale *tks = TKobj(TkScale, tk);
+	char f[32];
+
+	tkfprint(f, tks->value);
+	snprint(buf, nbuf, "%s", f);
+	return buf;
 }
 
 TkCmdtab tkscalecmd[] =

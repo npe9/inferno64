@@ -21,6 +21,20 @@ memimagemove(void *from, void *to)
 	md->bdata = (uchar*)&md->base[2];
 }
 
+/*
+ * An image's rectangle has to be well formed before anything is sized from
+ * it: Dx and Dy are max-min all through libmemdraw, so an inverted rectangle
+ * gives a negative extent and a rectangle spanning more than 2^31 overflows
+ * the subtraction itself.  Neither was checked here.
+ */
+static int
+badrect(Rectangle r)
+{
+	return r.max.x < r.min.x || r.max.y < r.min.y ||
+		(vlong)r.max.x - (vlong)r.min.x > 0x7fffffffLL ||
+		(vlong)r.max.y - (vlong)r.min.y > 0x7fffffffLL;
+}
+
 Memimage*
 allocmemimaged(Rectangle r, u32 chan, Memdata *md)
 {
@@ -30,6 +44,11 @@ allocmemimaged(Rectangle r, u32 chan, Memdata *md)
 
 	if((d = chantodepth(chan)) == 0) {
 		werrstr("bad channel descriptor %.8ux", chan);
+		return nil;
+	}
+
+	if(badrect(r)) {
+		werrstr("inverted rectangle %d,%d %d,%d", r.min.x, r.min.y, r.max.x, r.max.y);
 		return nil;
 	}
 
@@ -65,6 +84,7 @@ allocmemimage(Rectangle r, u32 chan)
 {
 	s32 d;
 	u32 l, nw;
+	uvlong nwide;
 	Memdata *md;
 	Memimage *i;
 
@@ -73,8 +93,36 @@ allocmemimage(Rectangle r, u32 chan)
 		return nil;
 	}
 
+	if(badrect(r)) {
+		werrstr("inverted rectangle %d,%d %d,%d", r.min.x, r.min.y, r.max.x, r.max.y);
+		return nil;
+	}
+
 	l = wordsperline(r, d);
-	nw = l*Dy(r);
+
+	/*
+	 * nw = l*Dy(r) was computed in u32, so a rectangle whose true word
+	 * count passes 2^32 wrapped to a small one and the pool handed back
+	 * an allocation far smaller than the image's own r goes on to claim.
+	 * memellipse's "very thick" criterion (2t(a-b) > b^2 for b<a) sends
+	 * any large thickness into bellipse, which allocates the brush disc
+	 * as GREY1 Rect(-t,-t,t+1,t+1); at t=185352 that wrapped to 83352
+	 * bytes for a rect holding 17.2 GB of pixels, and the memfillcolor
+	 * and memellipse bellipse does next walked straight off the end.
+	 * devdraw rejects a negative ellipse thickness but bounds nothing
+	 * above, so the value arrives from the wire unchallenged.
+	 *
+	 * Doing it in uvlong and refusing anything past 2^31 bytes keeps the
+	 * cap far above any real image -- the image pool itself is 64 MB --
+	 * while leaving no value of l and Dy that can wrap.
+	 */
+	nwide = (uvlong)l * (u32)Dy(r);
+	if(nwide > ((uvlong)1<<31)/sizeof(u32)) {
+		werrstr("image too large: %llud words", nwide);
+		return nil;
+	}
+	nw = nwide;
+
 	md = malloc(sizeof(Memdata));
 	if(md == nil)
 		return nil;
@@ -216,6 +264,30 @@ byteaddr(Memimage *i, Point p)
 	uchar *a;
 	s32 off;
 
+	/*
+	 * The row offset is deliberately computed in 32 bits and allowed to go
+	 * negative: an image whose r.min.y is below zero sits above its own
+	 * bdata.  It used to be written
+	 *
+	 *	(s32)(sizeof(u32)*p.y*i->width)
+	 *
+	 * relying on the cast to narrow the product, and 7c DROPS a narrowing
+	 * cast of a 64-bit value -- the same class as the (u32) and (ulong)
+	 * cases already known here.  sizeof is 64-bit, so p.y*i->width became
+	 * UMULL, a 32x32->64 UNSIGNED multiply, and for a negative p.y the low
+	 * word 0xFFFFFFF8 times the width left a nonzero HIGH word that was
+	 * then added to the pointer at full width.  byteaddr returned an
+	 * address gigabytes away and memfillcolor wrote to it.
+	 *
+	 * Keeping every operand 32 bits gives the truncation as the arithmetic
+	 * rather than as a cast, so there is nothing for a compiler to drop:
+	 * 7c emits MULW and a sign-extending MOVW instead of UMULL.
+	 *
+	 * Only an image with a negative r.min.y can reach it, and bellipse's
+	 * brush disc, Rect(-t,-t,t+1,t+1), is the one in this tree that has
+	 * one -- which is why the ellipse path alone faulted, and why a host
+	 * build never showed it: clang honours the cast.
+	 */
 	off = 4 * p.y * (s32)i->width;
 	a = i->data->bdata + i->zero + off;
 

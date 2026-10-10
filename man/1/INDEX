@@ -54,6 +54,8 @@ circletrace circletrace
 cleanname cleanname
 clock wm-misc
 cmp cmp
+cvttest cvttest
+polytest polytest
 coffee wm-misc
 collab collab-clients
 collab-clients collab-clients
@@ -273,6 +275,7 @@ dmwm dmview
 doodle doodle
 draw3ddemo draw3ddemo
 drawink drawink
+draw3dkerntest draw3dkerntest
 drop sh-string
 du du
 dungen dungen
@@ -424,6 +427,7 @@ psalmody psalmody
 puttar gettar
 putzip getzip
 pwd pwd
+qputry qputry
 query grid-query
 quote sh
 raindrops raindrops
@@ -517,6 +521,7 @@ tiny tiny
 titanium titanium
 tk sh-tk
 tkcmd tkcmd
+tkscenetest tkscenetest
 tktester tktester
 tl sh-std
 tolower sh-string

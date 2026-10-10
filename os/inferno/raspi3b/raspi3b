@@ -34,6 +34,14 @@ dev
 	pointer
 	usb
 	wifi
+#
+# #Q: the VideoCore QPUs, as far as the firmware exposes them. An
+# instrument rather than a driver -- there is no VideoCore
+# documentation on hand, so the QPU encoding has to be established from
+# the hardware, and this makes each attempt a write from Limbo instead
+# of a kernel rebuild and a card swap. See devv3d.c's own comment.
+#
+	v3d
 	ether		netif
 	ip	ip ipv6 ipaux ptclbsum parseip eipfmt classmask equivip parseether iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
 
@@ -217,6 +225,12 @@ root
 	/dis/cmp.dis
 	/dis/dd.dis
 	/dis/fatstress.dis
+	/dis/ellipsetest.dis
+	/dis/tkscenetest.dis
+	/dis/cvttest.dis
+	/dis/polytest.dis
+	/dis/lib/tknode.dis
+	/dis/lib/tkrender.dis
 	/dis/sh.dis
 	/dis/prof.dis
 	/dis/lib/profile.dis
@@ -306,5 +320,18 @@ root
 	/dis/lib/styxconv/ostyx.dis
 	/dis/lib/styxservers.dis
 	/dis/lib/workdir.dis
+#
+# draw3dkerntest(1) and the two draw3d(2) providers. This board's
+# devdraw now implements the draw3d protocol letters, which until now
+# existed only in emu, so "does the kernel rasterise them, and the same
+# way" is a question only the board can answer. The test needs no window
+# and no GPU: it draws into an ordinary image and reads the pixels back,
+# which is what makes it runnable over a serial console.
+#
+	/dis/draw3dkerntest.dis
+	/dis/math/draw3d.dis
+	/dis/math/draw3ddev.dis
+	/dis/math/polyfill.dis
+	/dis/qputry.dis
 	/fonts/pelm/unicode.8.font
 	/fonts/pelm/latin1.8

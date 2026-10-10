@@ -1,0 +1,105 @@
+.TH QPUTRY 1
+.SH NAME
+qputry \- run a candidate QPU program and report what the firmware did
+.SH SYNOPSIS
+.B qputry
+[
+.B -c
+.I ctlidx
+] [
+.B -n
+.I w0
+] [
+.B -t
+.I w2
+] [
+.B -x
+.I w3
+] [
+.B -f
+]
+.I word ...
+.SH DESCRIPTION
+.I Qputry
+writes
+.I word
+\&... into
+.BR /dev/v3dcode ,
+enables the QPUs, asks
+.B /dev/v3dctl
+to run them and prints the device's status. See
+.IR v3d (3);
+.B "bind -a '#Q' /dev"
+first.
+.PP
+Words are 32-bit, written little-endian in the order given. Nothing
+here knows what a QPU instruction looks like \- that is what is being
+found out.
+.PP
+The options set the four words of the
+.B EXECUTE_QPU
+request and
+.B -c
+says which of them carries the control list's address. They are
+.B not
+named after what they do, because what they do is unknown: the layout
+.RB ( num_qpus ,
+.IR control ,
+.IR noflush ,
+.IR timeout_ms )
+was a guess and the timeout half of it was falsified by a sweep that
+moved nothing.
+.SH EXAMPLE
+Four runs that between them say which word matters:
+.IP
+.EX
+qputry 0xdeadbeef 0xcafebabe        # the believed layout
+qputry \-c 0 0xdeadbeef 0xcafebabe   # control address in word 0
+qputry \-n 4 0xdeadbeef 0xcafebabe   # vary word 0
+qputry \-x 1 0xdeadbeef 0xcafebabe   # vary word 3
+.EE
+.SH SOURCE
+.B /appl/cmd/qputry.b
+.SH SEE ALSO
+.IR v3d (3),
+.IR draw3dkerntest (1)
+.SH BUGS
+.B "Read the tag word before anything else."
+.IR V3d (3)'s
+status prints
+.B "tag ... wrote N bytes" ;
+if that is
+.B UNTOUCHED
+or
+.BR "wrote 0 bytes" ,
+.B EXECUTE_QPU
+did nothing and the elapsed time is the cost of a rejected request
+rather than of a program running. An earlier version of the device
+reported a
+.B resp
+word that was this program's own
+.I w0
+coming back, and every figure published through it had to be withdrawn.
+.PP
+.B "Elapsed time is the signal, not the response code."
+A mailbox that accepts the tag and does nothing and a firmware that
+runs a program both report success.
+.PP
+It cannot assemble anything and there is no QPU assembler here: the
+instruction encoding is not documented on this machine, so a program
+has to be given as words and the encoding established from the
+hardware's behaviour.
+.PP
+.B /dev/v3dcode
+appends, so two runs without a
+.B reset
+concatenate.
+.I Qputry
+resets first; writing the file by hand does not.
+.PP
+The word parser rejects anything that is not hex or decimal, which is
+load-bearing on a serial console: a dropped character turned
+.B 0xcafebabe
+into
+.B 0xcafexbabe
+and the parser refused it rather than running a corrupted program.

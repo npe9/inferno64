@@ -354,7 +354,7 @@ main(int argc, char *argv[])
 	asmb();
 	undef();
 	if(debug['v']) {
-		Bprint(&bso, "%5.2f cpu time\n", cputime());
+		Bprint(&bso, "%s cpu time\n", cputimestr());
 		Bprint(&bso, "%ld symbols\n", nsymbol);
 		Bprint(&bso, "%ld memory used\n", thunk);
 		Bprint(&bso, "%d sizeof adr\n", sizeof(Adr));
@@ -412,7 +412,7 @@ loop:
 	xrefresolv = 0;
 	for(i=0; i<libraryp; i++) {
 		if(debug['v'])
-			Bprint(&bso, "%5.2f autolib: %s (from %s)\n", cputime(), library[i], libraryobj[i]);
+			Bprint(&bso, "%s autolib: %s (from %s)\n", cputimestr(), library[i], libraryobj[i]);
 		objfile(library[i]);
 	}
 	if(xrefresolv)
@@ -446,7 +446,7 @@ objfile(char *file)
 	char *e, *start, *stop;
 
 	if(debug['v'])
-		Bprint(&bso, "%5.2f ldobj: %s\n", cputime(), file);
+		Bprint(&bso, "%s ldobj: %s\n", cputimestr(), file);
 	Bflush(&bso);
 	if(file[0] == '-' && file[1] == 'l') {
 		snprint(pname, sizeof(pname), "lib%s.a", file+2);
@@ -503,7 +503,7 @@ objfile(char *file)
 	work = 1;
 	while(work) {
 		if(debug['v'])
-			Bprint(&bso, "%5.2f library pass: %s\n", cputime(), file);
+			Bprint(&bso, "%s library pass: %s\n", cputimestr(), file);
 		Bflush(&bso);
 		work = 0;
 		for(e = start; e < stop; e = strchr(e+5, 0) + 1) {
@@ -512,7 +512,7 @@ objfile(char *file)
 				continue;
 			sprint(pname, "%s(%s)", file, s->name);
 			if(debug['v'])
-				Bprint(&bso, "%5.2f library: %s\n", cputime(), pname);
+				Bprint(&bso, "%s library: %s\n", cputimestr(), pname);
 			Bflush(&bso);
 			l = e[1] & 0xff;
 			l |= (e[2] & 0xff) << 8;
@@ -1280,7 +1280,7 @@ doprof1(void)
 	Prog *p, *q;
 
 	if(debug['v'])
-		Bprint(&bso, "%5.2f profile 1\n", cputime());
+		Bprint(&bso, "%s profile 1\n", cputimestr());
 	Bflush(&bso);
 	s = lookup("__mcount", 0);
 	n = 1;
@@ -1338,7 +1338,7 @@ doprof2(void)
 	Prog *p, *q, *q2, *ps2, *ps4;
 
 	if(debug['v'])
-		Bprint(&bso, "%5.2f profile 2\n", cputime());
+		Bprint(&bso, "%s profile 2\n", cputimestr());
 	Bflush(&bso);
 
 	if(debug['e']){

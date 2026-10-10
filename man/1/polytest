@@ -1,0 +1,241 @@
+.TH POLYTEST 1
+.SH NAME
+polytest \- test that a Limbo point array reaches the polygon primitives intact
+.SH SYNOPSIS
+.B polytest
+.SH DESCRIPTION
+.I Polytest
+checks the four
+.IR draw (2)
+calls that take an
+.B array
+of points \(em
+.BR Image.poly ,
+.BR Image.bezspline ,
+.B Image.fillpoly
+and
+.B Image.fillbezspline
+\(em and nothing else does.
+.PP
+Each case prints
+.B ok
+or
+.BR FAIL ,
+and the last line is a count.
+.SH "THE DEFECT IT WAS WRITTEN FOR"
+.B libinterp/draw.c
+handed the array to C by reinterpreting it:
+.IP
+.EX
+/\(** sleazy: we know that Draw_Points have same shape as Points \(**/
+fillpolyop(d, (Point\(**)f->p->data, f->p->len, ...)
+.EE
+.PP
+.B "They do not have the same shape on this build."
+A Limbo
+.B int
+is a
+.BR WORD ,
+which is
+.B intptr
+here, so
+.B "Draw_Point_size"
+is
+.B 16
+\(em two 64\-bit fields \(em against a C
+.B Point
+of two
+.BR s32 ,
+eight bytes. Three points stored as the words
+.B "2 7 13 3 13 10"
+arrive as
+.BR "(2,0) (7,0) (13,0)" :
+a triangle flattened onto one row.
+.PP
+.B "The same tree already knew."
+The reinterpreting macros in
+.B include/draw.h
+are
+.B commented out
+and replaced by field\-by\-field conversions \(em
+.B IPOINT
+is
+.B "((Point){(s32)((p).x),(s32)((p).y)})"
+\(em so the scalar path was fixed and the four
+.B array
+casts were left behind with the comment that justified them still
+attached. Every Limbo polygon and spline in the tree drew the wrong
+shape.
+.SH "NOT FOUND HERE FIRST"
+.B infernode
+fixed the same four casts on 3 October, independently and in the same
+shape \(em a
+.I cvtpoints()
+that mallocs, converts and frees \(em so this is a rediscovery, and the
+record should say so. 36 of the 38 worktrees on this machine still
+carry the reinterpreting cast.
+.PP
+What is new here is the
+.BR test .
+.B infernode
+has none, and neither did anything else: the defect reached every Limbo
+polygon and spline in the tree and survived because nothing compared a
+drawn shape against anything.
+.SH "HOW IT WAS FOUND HERE, WHICH IS WHY THIS EXISTS"
+Not here, and not by anything looking at polygons.
+.IR Tkscenetest (1)
+rasterises a serialised
+.I libtk
+render\-node tree from Limbo with
+.IR tkrender (2)
+and compares it against
+.IR libtk 's
+own C render of the same tree. Rectangles, rounded corners, borders,
+layers and text matched to the byte; the scrollbar's two arrows and the
+checkbutton's tick did not. Those are the only two fixtures with a
+.B polygon
+and a
+.B spline
+in them.
+.SH "EVERY CASE HAS AN ORACLE FROM A DIFFERENT PRIMITIVE"
+Because
+.B "did it draw something"
+cannot tell a correct polygon from a wrong one: the broken version drew
+plenty.
+.TP
+.B "fillpoly of a rect == draw() of it"
+A rectangle given as four corners must be the same pixels as the same
+rectangle drawn by
+.IR draw (2).
+Exact, and decisive.
+.TP
+.B "poly of one segment == line() of it"
+.I Line
+takes its points as
+.B scalars,
+through
+.BR IPOINT ,
+which is the path that was already correct. So the oracle does not
+share the defect under test.
+.TP
+.B "translation invariance"
+For the shapes with no second primitive to check them against: the same
+points moved by
+.RB ( dx , dy )
+must draw the same picture moved by
+.RB ( dx , dy ).
+Reinterpreting the array mixes one point's
+.B y
+into the next point's
+.BR x ,
+so moving every point moves some of the shape and not the rest.
+.TP
+.B "about half its box"
+150 to 250 pixels for a triangle in a 20x20 box, because translation
+invariance is also satisfied by a shape that is wrong in a
+position\-independent way. Loose enough to survive the edge rule, tight
+enough that a one\-row collapse and a filled bounding box both fail.
+.TP
+.B "nil and empty point arrays"
+Nothing drawn, and the program still running afterwards. Limbo passes a
+nil array as
+.BR H ,
+which is
+.B ((void*)(\-1)),
+so the conversion has to test the array before it reads
+.BR a->data .
+This is the one case whose failure is not a
+.B FAIL
+line: unguarded, the run dies with
+.B "dereference of nil"
+and prints no tally at all, which is how it was seen to fail.
+.PP
+.B "And SYMMETRY was the wrong property, tried first."
+Points mirrored about a vertical axis do
+.B not
+have to produce a mirrored picture: a scanline fill includes one edge
+and excludes the other, so it is asymmetric by about a pixel a row
+.B by design.
+Three such checks failed against a
+.B correct
+implementation, and the two exact oracles above are what said the
+implementation was fine and the expectation was not.
+.SH "THE CONTROL"
+Restoring the old cast and rebuilding gives
+.BR "2 ok, 7 fail" ,
+with the triangle covering
+.B "0 pixels"
+\(em it vanishes. The two that still pass are the ones that should:
+.IR draw ()
+does not use the array path, and
+.B "the same point array draws the same twice"
+is satisfied by being deterministically wrong. A control that makes
+every case fail has not shown which cases are sensitive.
+.SH SOURCE
+.B /appl/cmd/polytest.b
+.SH SEE ALSO
+.IR tkscenetest (1),
+.IR tkrender (2),
+.IR tknode (2),
+.IR draw (2)
+.SH BUGS
+It does not cover
+.B Image.fillpoly 's
+winding argument with anything but
+.BR ~0 ,
+which is what every caller in this tree uses.
+.PP
+It does not cover a point array long enough to exercise the allocation
+in
+.IR ipoints (),
+nor the failure of that allocation. The fix allocates and converts
+rather than reinterpreting, so a polygon now draws nothing at all if
+.I malloc
+fails, where before it drew garbage; which of those is better is not
+in question, but neither is tested.
+.PP
+.B "The guards in"
+.IR ipoints ()
+.B "are deliberate, not incidental."
+It tests
+.B "a == H"
+and
+.B "a->len <= 0"
+and returns nil for both, and the callers then draw nothing. The
+equivalent function in the trees this fix did not come from \(em
+.IR cvtpoints (),
+in
+.B infernode
+and
+.B raspi3b\-port
+\(em has neither test, and is reached as
+.B "cvtpoints((Draw_Point*)f->p->data, f->p->len)"
+with the dereference at the
+.I call site,
+so a nil array there reads address \-1 before the function is entered.
+Hosted that surfaces as a Dis exception that kills the program; on a
+native kernel, which has no such handler, it is a fault. Whoever merges
+this should keep both tests rather than read them as an accident of
+whichever version arrived second.
+.PP
+.B "The control for that case covers one of the two guards, not both."
+Deleting
+.B "a == H"
+and relinking makes the case fail, so it is sensitive to that guard. The
+length guard is
+.I not
+shown to be necessary by anything here: with it removed,
+.B malloc(0)
+either returns nil, which the existing
+.B "p == nil"
+test catches, or a pointer the caller uses with a count of zero and
+draws nothing. So the length test is defensive rather than demonstrated,
+and the control should not be read as covering it.
+.PP
+It does not cover
+.B Image.line
+beyond using it as an oracle, and it does not cover
+.B Image.arc
+or
+.BR Image.fillarc ,
+which take scalars and are unaffected.

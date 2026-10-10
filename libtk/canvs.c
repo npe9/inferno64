@@ -390,7 +390,25 @@ tkdrawcanv(Tk *tk, Point orig)
 	int vis, alpha, buffer;
 	Point rel, p;
 	TkCimeth *imeth;
+	TkCdraw cd;
 
+	/*
+	 * Anything that paints into the window itself has to render what
+	 * the walk has pending first, or the tree would land on top of it.
+	 *
+	 * A canvas does not JOIN the walk even when its items are nodes.
+	 * Its items are usually drawn into a buffer of its own rather than
+	 * into the window, and a tree belongs to one target - so a canvas
+	 * builds its own and renders it where the items would have drawn,
+	 * which is what tkdrawrelief() does with a one-off tree.  The
+	 * batching is unchanged; what changes is that the drawing is
+	 * described before it happens.
+	 */
+	tkwalkflush();
+	cd.sc = nil;
+	cd.ctxt = tk->env->top->ctxt;
+	if(tkviascene && tkstyleflat(tk))
+		cd.sc = tkscenenew();
 	c = TKobj(TkCanvas, tk);
 	d = tk->env->top->display;
 	dst = tkimageof(tk);
@@ -427,10 +445,15 @@ tkdrawcanv(Tk *tk, Point orig)
 			if(rectXrect(i->p.bb, bufr)) {
 				imeth = &tkcimethod[i->type];
 				imeth->coord(i, nil, p.x, p.y);
-				imeth->draw(dst, i, tk->env);
+				cd.img = dst;
+				tkwalkitem();
+				imeth->draw(&cd, i, tk->env);
 				imeth->coord(i, nil, -p.x, -p.y);
 			}
 		}
+		/* while the clip still says what the items were drawn under */
+		cd.img = dst;
+		tkcvsdirect(&cd);
 		replclipr(dst, 0, oclipr);
 	} else {
 		if (c->buffer == TkCbufall)
@@ -460,9 +483,14 @@ tkdrawcanv(Tk *tk, Point orig)
 			draw(c->image, c->update, tkgc(tk->env, TkCbackgnd), nil, c->view);
 			replclipr(c->image, 0, r);
 			for(i = c->head; i; i = i->next) {
-				if(rectXrect(i->p.bb, r))
-					tkcimethod[i->type].draw(c->image, i, tk->env);
+				if(rectXrect(i->p.bb, r)){
+					cd.img = c->image;
+					tkwalkitem();
+					tkcimethod[i->type].draw(&cd, i, tk->env);
+				}
 			}
+			cd.img = c->image;
+			tkcvsdirect(&cd);
 			replclipr(c->image, 0, c->image->r);
 		}
 		/*
@@ -491,6 +519,8 @@ tkdrawcanv(Tk *tk, Point orig)
 		r.min.y -= tk->borderwidth;
 		tkdrawrelief(dst, tk, r.min, TkCbackgnd, tk->relief);
 	}
+	if(cd.sc != nil)
+		tkscenefree(cd.sc);
 	c->update = bbnil;
 	return nil;
 }
@@ -1217,7 +1247,7 @@ tkcvsdtag(Tk *tk, char *arg, char **val)
 {
 	TkName *f, *dt;
 	char buf[Tkmaxitem];
-	TkCtag **l, *t, *it, *tf;
+	TkCtag **l, *t, *tnext, *it, *tf;
 
 	USED(val);
 
@@ -1259,7 +1289,28 @@ tkcvsdtag(Tk *tk, char *arg, char **val)
 			return TkBadtg;
 	}
 
-	for(t = f->obj; t; t = t->taglist) {
+	/*
+	 * Step to the next tag before the body runs, because the body can
+	 * free the one we are standing on.
+	 *
+	 * "dtag X Y" deletes tag Y from the items tagged X, and nothing
+	 * stops X and Y being the same tag - appl/wm/ftree/items.b writes
+	 * ".c dtag " + name + " " + name, which is the natural way to take a
+	 * tag off everything that has it. Then dt is f, the inner loop walks
+	 * the very list the outer one is iterating, and the free() below
+	 * releases the node t points at. Reading t->taglist afterwards read
+	 * a block that had already been handed out again, so wm/ftree died
+	 * on startup with a faulting address that was plainly text -
+	 * 0x3c636972656e6557 - which is what a freed list node reused for a
+	 * string looks like when it is followed as a pointer.
+	 *
+	 * The inner loop breaks at the FIRST item with a matching item, and
+	 * t is in that same list when dt is f, so it can never free a node
+	 * the outer loop has yet to reach beyond this one. Saving the single
+	 * successor is enough.
+	 */
+	for(t = f->obj; t; t = tnext) {
+		tnext = t->taglist;
 		l = (TkCtag **)&dt->obj;
 		for(it = dt->obj; it; it = it->taglist) {
 			if(t->item == it->item) {
@@ -2087,6 +2138,27 @@ tkcvsgetimgs(Tk* tk, Image **image, Image **mask)
 
 	*image = c->image;
 	*mask = c->mask;		/* XXX this is wrong - the mask image has nothing to do with the main image */
+}
+
+/*
+ * An item is about to draw DIRECTLY: render what is pending first, so
+ * that what it draws is not painted over when the tree renders, and
+ * start a fresh tree for whatever comes after it.  Returns the image
+ * to draw into, so an item's first line can be
+ *
+ *	Image *img = tkcvsdirect(cd);
+ *
+ * and an item that is entirely nodes simply never uses the result.
+ */
+Image*
+tkcvsdirect(TkCdraw *cd)
+{
+	if(cd->sc != nil && tkscenecount(cd->sc) > 0){
+		tkscenerender(cd->sc, cd->ctxt, cd->img);
+		tkscenefree(cd->sc);
+		cd->sc = tkscenenew();
+	}
+	return cd->img;
 }
 
 TkCimeth tkcimethod[] =

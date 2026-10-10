@@ -1,0 +1,428 @@
+.TH V3D 3
+.SH NAME
+v3d \- VideoCore IV QPUs, as far as the firmware exposes them
+.SH SYNOPSIS
+.B bind -a #Q /dev
+.PP
+.B /dev/v3dctl
+.br
+.B /dev/v3dcode
+.SH DESCRIPTION
+The
+.B v3d
+device gives Limbo the Raspberry Pi firmware's two QPU property tags,
+.B SET_ENABLE_QPU
+and
+.BR EXECUTE_QPU ,
+and reports what the firmware answered.
+.PP
+.B "It is an instrument, not a driver."
+A driver needs the QPU instruction encoding, and that encoding is not
+documented on this machine. It has to be established from the
+hardware, and this exists to make each attempt a write from Limbo
+rather than a kernel rebuild and a card swap.
+.PP
+.B /dev/v3dcode
+takes raw bytes, appended at a running offset so a program can be
+copied in pieces.
+.B /dev/v3dctl
+takes:
+.TP
+.B reset
+Discard the loaded code.
+.TP
+.B clock
+Read the V3D clock
+.RB ( GET_CLOCK_RATE ,
+clock id 5).
+.TP
+.BR enable ", " disable
+.B SET_ENABLE_QPU
+with 1 or 0.
+.TP
+.BI exec " ctlidx w0 w1 w2 w3" " [" waitms ]
+.B EXECUTE_QPU
+with those four words as the request's value buffer, and the control
+list's bus address substituted into word
+.IR ctlidx .
+.I Waitms
+bounds the wait for a reply; the default is a second, which is what an
+older spin count happened to cost.
+.TP
+.BI tag " TAG valbytes" " [" w0 ... ]
+Any property tag, with that value-buffer size and up to four words.
+Nothing is interpreted \- what a given tag expects is what is not
+known.
+.TP
+.BI gpualloc " [" size ]
+.B ALLOCATE_MEMORY
+then
+.BR LOCK_MEMORY ,
+and
+.B exec
+then places the control list, uniforms and code inside the locked block
+and sends the firmware's own bus address. A second
+.B gpualloc
+releases the first.
+.TP
+.B gpufree
+Unlock and release it.
+.TP
+.B gpufake
+Point the block at a static buffer of the driver's own instead of a
+firmware allocation, so the GPU path's arithmetic runs with a
+known-good address. It tests this driver's offsets, not whether a QPU
+can fetch from firmware memory \- and it is what found the ARM pointer
+being derived by setting the bus alias bits rather than clearing them,
+which would have faulted the board the first time a real allocation
+succeeded.
+.TP
+.BI "ident force " [ nwords ]
+Read
+.B V3D_IDENT0
+from the register block directly \(em and
+.BI IDENT1 , IDENT2
+too if
+.I nwords
+says so, one at a time, default one. This answers a question the
+mailbox cannot: whether the hardware is there at all.
+.B 0x02443356
+is
+.RB ` V3D '.
+.PP
+.B "The force is prudence, not a measurement, and this page said"
+.B "otherwise for one commit."
+Without it the command refuses and says so.
+.PP
+What silicon actually shows, from the one reading that reached V3D
+(JTAG,
+.IR "rasberry pi inferno" ):
+.IP
+.EX
+0x3f10001c   00000102   PM_RSTC, so the read path works
+0x3f100020   00000000   PM_RSTS
+0x3fc00000   deadbeef deadbeef deadbeef
+.EE
+.PP
+openocd exited 0, there was no abort and no timeout, and
+.I alive
+answered immediately afterwards with a counter that had advanced. So
+.B "that access did not stall the bus."
+.PP
+.B "An earlier report that it did was RETRACTED, and the retraction is"
+.B "the more useful result."
+The wedge in that run came from a different line of the same script: a
+read of a genuine peripheral hole at
+.BR 0x3f900000 ,
+which aborted, ended the script
+.I before
+its
+.B resume
+\(em and left
+.B cpu0
+unable to execute debug opcodes at all, while
+.B cpu1-3
+stayed merely halted and answered fine. An explicit
+.B resume
+did not bring it back. A later run reproduced the wedge
+.I without
+touching V3D, and never printed even its first control, which is what
+exposed the misattribution.
+.PP
+So the hole is disqualified as a control: it does not fail the way a
+failed read fails, it damages a core. That matters because it was the
+only discriminator for whether the
+.B 0xdeadbeef
+above is three real reads of an undriven block or the debugger's filler
+for an access that silently did nothing.
+.B "That question is open and this page will not dress it up."
+.PP
+What the force rests on instead is the asymmetry: a wedge costs a power
+cycle and a success buys one register. One success does not make an
+access safe \(em and by now there are four silicon reads of this
+address, two gated and two not, none of which stalled anything, so this
+page will not call the read dangerous either. It is undemonstrated in
+both directions.
+.PP
+.B "SET_ENABLE_QPU ungates the block, which changes what this command"
+.B "means."
+Measured on silicon in one firmware session, with
+.B 0x3f10001c
+reading
+.B 00000102
+throughout as a control:
+.IP
+.EX
+before enable   0x3fc00000: deadbeef
+echo qpuenable  answered, reply 0x0 (accepted)
+after enable    0x3fc00000: 02443356
+.EE
+.PP
+and the kernel's own read \(em the second of two independent readers
+\(em gave
+.B 0x02443356
+in the same session. So the
+.B 0xdeadbeef
+above is the debugger's filler for a GATED block, not a bus value, and
+that question is closed. Reading the block without
+.B enable
+answers
+.RB ` absent '
+about hardware that is there, so
+.B enable
+comes first.
+.PP
+The ungated state survives a JTAG boot and does
+.I not
+survive
+.IR hardreset ,
+so a JTAG boot is not a clean slate for this question and a
+.I hardreset
+is.
+.PP
+It is a separate command for
+that reason, never part of a status read.
+.PP
+Reading
+.B /dev/v3dctl
+reports the clock, whether an enable was tried and succeeded, how much
+code is loaded, the four words actually sent, and then what the
+firmware answered.
+.SH "WHAT THE STATUS MEANS"
+.TP
+.B code
+The mailbox response:
+.B 0x80000000
+ok,
+.B 0x80000001
+error parsing the request.
+.TP
+.B tag
+.B "The word that matters."
+Bit 31 set means the tag was processed; the low bits are how many bytes
+it wrote.
+.B "A tag of 0 means EXECUTE_QPU was never touched,"
+and
+.B "wrote 0 bytes"
+means it was processed and answered nothing.
+.TP
+.B gpumem
+Where the block the GPU is pointed at came from, and the fields naming
+it. The
+.B source
+is the load\-bearing word:
+.B firmware
+means
+.B gpualloc
+got memory from the firmware and locked it,
+.B FAKE
+means
+.B gpufake
+pointed the driver at a static block of its own and
+.B no firmware was asked anything,
+and
+.B none
+means neither.
+.B "The two used to print identically,"
+so a run that meant to execute from firmware memory and a run that
+meant to execute from the driver's own block could not be told apart in
+the output.
+.TP
+.B gpualloc
+How far the last
+.B gpualloc
+got, kept even when it failed:
+.B tried
+or
+.BR "never tried" ,
+then whether
+.B ALLOCATE_MEMORY
+and
+.B LOCK_MEMORY
+were
+.B answered
+or got
+.BR "no reply" .
+.PP
+.B "Answered is not the same as useful,"
+and both are reported because they decide different things. A tag that
+answered says the firmware was listening; the address it returned is a
+separate fact, in
+.B gpumem
+above, and this driver refuses one with no bus\-alias bits in it
+because deriving an ARM pointer from such an address would fault the
+board rather than merely mislead it.
+.PP
+.B "And kept across the failure on purpose."
+Every failure path in
+.B gpualloc
+releases what it got, which used to reset the source to
+.B none
+\(em so a firmware refusal read exactly like a driver that had never
+tried. Those are different answers to the question of whether
+.B EXECUTE_QPU
+will run from firmware memory, and a silence is only attributable to
+the execute if the allocation demonstrably happened.
+.TP
+.B block
+The first six words of the block the GPU is pointed at:
+.BR ubus ,
+.BR kbus ,
+then four uniforms.
+.PP
+.B "It is read BEFORE the mailbox exchange,"
+so it reports what this driver wrote and
+.B not
+what the GPU produced. It cannot show that a program ran, and a
+question built on comparing it before and after would be comparing one
+snapshot with itself. Making it answer that would mean seeding the
+words a program is meant to write, re\-reading them after the exchange
+with an invalidate, and reporting the two side by side; none of that
+exists yet, and
+.B tools/jtag/qpubattery.sh
+says so where it would otherwise be assumed.
+.TP
+.B ident
+.B V3D_IDENT0
+read from the register block directly, with
+.B V3D
+for
+.BR 0x02443356 ,
+.B "ZERO (block off?)"
+for zero,
+.B untried
+before any
+.B ident
+command, and
+.B STALLED
+when a read was begun and did not finish \(em which has never been
+seen, and is there because if it happens nothing in the kernel runs
+again to report it.
+.PP
+.B tried
+and
+.B read
+are how far the command got: the marker is set BEFORE each read and the
+value stored after it, so
+.B "tried 1 read 0"
+is a read that stalled on
+.BR IDENT0 .
+.B "Neither this line nor the STALLED word can ever be seen on the board"
+.B "that stalled,"
+because nothing in the kernel runs again to print them \(em they are
+there to be read out of a halted target over JTAG, which is why
+.B tried
+is a plain
+.B int
+in
+.B v3d
+and not a local.
+.PP
+This is the only reading here that does not go through the firmware, so
+it answers a question the mailbox cannot: whether the hardware is
+there, whatever the firmware will say about it. It can also stall the
+bus on this chip if the block's power domain is off, which is why it is
+a separate command rather than part of every status read.
+.TP
+.B value
+.BR buf[5..8] " after the call,"
+so an echo of the request can never be mistaken for an answer again.
+.TP
+.I us
+Elapsed microseconds, from the board's own 1MHz counter.
+.TP
+.B wait
+.BR answered ,
+.B "OUT OF TIME (no reply)"
+or
+.BR "COUNTER NOT ADVANCING" .
+Three different facts that a single \-1 used to flatten into one: a
+mailbox bounded by a spin
+.I count
+cannot tell "has not answered yet" from "will never answer", and
+reading one as the other is how a 1.05 second give-up was published as
+the firmware working for a second.
+.TP
+.B "wrote N bytes"
+.B "The discriminator."
+An answered tag writes bytes and sets a length;
+.B GET_CLOCK_RATE
+writes 8. A processed bit with zero bytes is what both an absent tag
+and
+.B EXECUTE_QPU
+produce under
+.IR qemu (1),
+so the bit alone separates nothing.
+.SH EXAMPLE
+.EX
+bind -a '#Q' /dev
+echo enable >/dev/v3dctl
+cp prog.qpu /dev/v3dcode
+echo exec 1 1 0 1 1000 >/dev/v3dctl
+cat /dev/v3dctl
+.EE
+.SH SOURCE
+.B /os/inferno/raspi3b/devv3d.c
+.SH SEE ALSO
+.IR qputry (1),
+.IR draw3dkerntest (1),
+.IR cons (3)
+.SH BUGS
+.B "Nothing here drives the GPU."
+.IR Devdraw 's
+.B gpudraw*
+hooks are nil on this board, so the draw3d letters rasterise in
+software. This device is how the question of whether they could do
+otherwise is being investigated.
+.PP
+.B "An earlier version reported a"
+.B resp
+.B "word that was the caller's own input."
+It read
+.B buf[5]
+unconditionally while writing the control address to
+.BR buf[5+ctlidx] ,
+so every figure published through it \- on silicon and under emulation
+alike \- had to be withdrawn, along with a documented reading rule that
+could never fire. The
+.B value
+line exists so that cannot recur.
+.PP
+.B "Under QEMU every answer here is fiction."
+The emulator accepts tags it does not implement \- including
+.BR 0x000f0f0f ,
+which does not exist \- and fabricates values for ones it does: it
+reports the V3D clock as 700MHz where silicon says 250. See
+.I v3dprobe
+in
+.BR mailbox.c ,
+which carries the nonsense-tag control.
+.PP
+.B SET_ENABLE_QPU
+enables a power domain and nothing here disables it on close, so a
+.B bind
+and one
+.B enable
+leaves the block powered until reboot.
+.PP
+The
+.B EXECUTE_QPU
+argument layout is unknown. A believed
+.RB ( num_qpus ,
+.IR control ,
+.IR noflush ,
+.IR timeout_ms )
+had its timeout falsified by a 500\(mu sweep that moved the elapsed
+time by 0.004%, and
+.I ctlidx
+does not move it either. That is why
+.B exec
+takes all four words rather than named arguments.
+.PP
+One job only: the control list is built as a single
+.RI ( uniforms ,
+.IR code )
+pair whatever
+.I w0
+says, so asking for several QPUs does not give each a different
+program.

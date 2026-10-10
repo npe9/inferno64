@@ -708,13 +708,102 @@ pimag(TkTop *t, TkOption *o, void *place, char **str, char *buf, char *ebuf)
 	return nil;
 }
 
+/*
+ * Where an image came from.
+ *
+ * pbmap() opens a file and hands the widget a bare Image*, and nothing
+ * anywhere remembers which file it was.  A render node names its
+ * resources rather than holding them - a glyph node names its face -
+ * and a texture node has to name a file, so the path has to be kept
+ * somewhere.  Here, beside the images themselves, rather than in the
+ * widget: the option parser writes an Image* into a struct field by
+ * offset and has no idea what widget it is filling in.
+ *
+ * Small and linear on purpose.  A toolkit has a handful of bitmaps -
+ * the chrome's artwork is sixteen - and a list that is walked when a
+ * node is built costs nothing against a repaint.
+ *
+ * The entry is keyed on the address, and freeimage() hands that address
+ * straight back to the pool - an Image is a fixed-size struct, so the
+ * very next allocimage() is likely to be given it.  An entry that
+ * outlives its image is therefore worse than a leak: tkimgpath() would
+ * answer for an image that merely inherited the address, and a texture
+ * node would name a file the widget is not drawing.  The narrow case
+ * where the new image is itself opened by pbmap() is harmless, because
+ * tkimgpathset() drops first; the dangerous one is an image that never
+ * goes through here at all, which is exactly what tkimgbmcreate() makes
+ * when it composites a file and a mask into a fresh image and frees
+ * both of the originals.
+ *
+ * So every free of an image pbmap() opened must call tkimgpathdrop()
+ * first.  The list is whatever `grep OPTbmap libtk/*.c` says, which is
+ * nine structures, not the three a grep for "bitmap" suggests: the
+ * widget side is TkLabel.bitmap (freed by tkfreelabel), TkCursor.bit
+ * (ebind.c) and image.c's Imgargs, whose file and mask are freed on
+ * four paths there; the canvas side is a stipple on each of arc, line,
+ * oval, polygon, rectangle and text, and cbits' own bitmap, each freed
+ * where that item is.  A canvas's own back buffer is NOT in the list -
+ * it is an allocimage and was never named.
+ */
+static struct Imgpath {
+	Image*	img;
+	char*	path;
+	struct Imgpath*	next;
+} *imgpaths;
+
+char*
+tkimgpath(Image *i)
+{
+	struct Imgpath *p;
+
+	for(p = imgpaths; p != nil; p = p->next)
+		if(p->img == i)
+			return p->path;
+	return nil;
+}
+
+void
+tkimgpathset(Image *i, char *path)
+{
+	struct Imgpath *p;
+
+	if(i == nil || path == nil)
+		return;
+	tkimgpathdrop(i);
+	p = malloc(sizeof(*p));
+	if(p == nil)
+		return;
+	p->path = strdup(path);
+	if(p->path == nil){
+		free(p);
+		return;
+	}
+	p->img = i;
+	p->next = imgpaths;
+	imgpaths = p;
+}
+
+void
+tkimgpathdrop(Image *i)
+{
+	struct Imgpath **pp, *p;
+
+	for(pp = &imgpaths; (p = *pp) != nil; pp = &p->next)
+		if(p->img == i){
+			*pp = p->next;
+			free(p->path);
+			free(p);
+			return;
+		}
+}
+
 static char*
 pbmap(TkTop *t, TkOption *o, void *place, char **str, char *buf, char *ebuf)
 {
 	Display *d;
 	Image *i, **p;
 	int locked, fd;
-	char *c;
+	char *c, *path;
 
 	p = &OPTION(place, Image*, o->offset);
 
@@ -723,6 +812,7 @@ pbmap(TkTop *t, TkOption *o, void *place, char **str, char *buf, char *ebuf)
 	if(*buf == '\0' || *buf == '-') {
 		if(*p != nil) {
 			locked = lockdisplay(d);
+			tkimgpathdrop(*p);
 			freeimage(*p);
 			if(locked)
 				unlockdisplay(d);
@@ -731,8 +821,11 @@ pbmap(TkTop *t, TkOption *o, void *place, char **str, char *buf, char *ebuf)
 		return nil;
 	}
 
-	if(buf[0] == '@')
+	path = nil;
+	if(buf[0] == '@'){
 		i = display_open(d, buf+1);
+		path = buf+1;
+	}
  else if(buf[0] == '<') {
 		buf++;
 		fd = strtoul(buf, &c, 0);
@@ -740,6 +833,7 @@ pbmap(TkTop *t, TkOption *o, void *place, char **str, char *buf, char *ebuf)
 			return TkBadvl;
 		}
 		i = readimage(d, fd, 1);
+		/* a descriptor is not a name: this one cannot be a node */
 	}
 	else {
 		char *file;
@@ -750,13 +844,18 @@ pbmap(TkTop *t, TkOption *o, void *place, char **str, char *buf, char *ebuf)
 
 		snprint(file, Tkmaxitem, "/icons/tk/%s", buf);
 		i = display_open(d, file);
+		if(i != nil)
+			tkimgpathset(i, file);
 		free(file);
 	}
 	if(i == nil)
 		return TkBadbm;
+	if(path != nil)
+		tkimgpathset(i, path);
 
 	if(*p != nil) {
 		locked = lockdisplay(d);
+		tkimgpathdrop(*p);
 		freeimage(*p);
 		if(locked)
 			unlockdisplay(d);
@@ -886,7 +985,31 @@ tkparsecolor(char *buf, ulong *rgba)
 				break;
 		if (tkcolortab[i].val == nil)
 			return TkBadvl;
-		*rgba = tkcolortab[i].con;
+		/*
+		 * Masked on the way out, because TkStab.con is an `int' and a
+		 * colour does not fit in one: RGB(255,255,255) is 0xFFFFFFFF,
+		 * which is -1 as an int, and assigning that to a ulong on a
+		 * 64-bit host sign-extends it back to 0xFFFFFFFFFFFFFFFF.
+		 * Casting inside the RGB macro in xdata.c cannot help - the
+		 * narrowing happens when the table is built, not when it is
+		 * read - and widening TkStab is not an option, since the same
+		 * struct carries every other string-to-constant table in the
+		 * toolkit.
+		 *
+		 * Through `uint' rather than `& 0xffffffffUL', and that is not
+		 * a style choice.  ulong is 32 bits under kencc, so the mask
+		 * was the IDENTITY, and 7c encoded it as an all-ones 32-bit
+		 * logical immediate -- AND w5, w5, #0xFFFFFFFF, 0x12007ca5 --
+		 * which the architecture declares UNDEFINED (DecodeBitMasks:
+		 * imms AND levels == levels).  The raspi3b kernel trapped on
+		 * it with ESR EC=0 the first time a colour was named rather
+		 * than given in hex, which is why every default-coloured
+		 * widget worked and `-fill red' panicked.  int -> uint is a
+		 * reinterpretation with no sign extension and uint -> ulong
+		 * zero-extends, so this says the same thing with nothing to
+		 * mis-encode, on a 32- or a 64-bit ulong alike.
+		 */
+		*rgba = (ulong)(uint)tkcolortab[i].con;
 	}
 	if (alpha != 0xff) {
 		tkrgbavals(*rgba, &R, &G, &B, &A);

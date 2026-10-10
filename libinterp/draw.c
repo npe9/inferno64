@@ -718,6 +718,17 @@ Image_lineop(void *fp)
  * harmless, which is why it survived the port rather than the port
  * introducing it.
  *
+ * FOUND TWICE, INDEPENDENTLY, BY DIFFERENT ORACLES, which is why the
+ * numbers above can be trusted as the bug and not as one harness's
+ * quirk.  Here it was tests/polytest comparing fillpoly against draw()
+ * of the same rectangle.  The rio-pi-tk branch found the same four
+ * casts by rasterising a libtk render-node tree from Limbo and
+ * comparing it against libtk's own C render of that tree: the
+ * rectangles and the text matched to the byte and the two polygon
+ * shapes did not.  Neither oracle shares code with the other, and a
+ * shared oracle is exactly how a symmetric fixture passes while
+ * printing wrong numbers.
+ *
  * The conversion allocates, because the two layouts are different sizes
  * and there is nowhere in the Limbo array to put the narrower form.
  * free() is called immediately after the drawing op and before
@@ -774,6 +785,7 @@ drawsplinepoly(void *fp, int smooth, int op)
 	checkflush(f->dst);
 	if(locked)
 		unlockdisplay(d->display);
+	free(pts);
 }
 
 void
@@ -903,6 +915,7 @@ drawfillsplinepoly(void *fp, int smooth, int op)
 	checkflush(f->dst);
 	if(locked)
 		unlockdisplay(d->display);
+	free(pts);
 }
 
 void

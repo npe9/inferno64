@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+#
+# kread iraspi3b ADDR [nwords]
+#
+# Print the words an ELF kernel image holds at a VIRTUAL address, so a
+# value read off the board can be compared against the value the image
+# was built with.
+#
+#	kread iraspi3b 0x1eead8		-> 0x6ac84eef
+#
+# WHY THIS EXISTS, and it is the same reason ksyms does.  Every tool
+# here resolves a symbol from the image IN THE TREE and then reads that
+# address on whatever kernel is actually RUNNING.  kerndate moved
+# 16 bytes between two adjacent builds this afternoon and 0x5000
+# between the extremes:
+#
+#	1791512303   0x001e7318
+#	1791506170   0x001e7308
+#	1791496543   0x001ec308
+#
+# so a tree one build ahead of the card makes every such read land on
+# an unrelated variable, which is then printed as a fact about the
+# board.  Two unexplained "board stamps" -- 2738592 and 4099408436 --
+# were exactly that, and the smaller one looked convincingly like a
+# boot-time microsecond counter because it very likely WAS one, read at
+# a shifted address.
+#
+# The guard needs one symbol whose VALUE the image also knows, and
+# kerndate is it: the image's copy is the build date compiled into it.
+# Reading it here and over JTAG and comparing is what samekernel(1)
+# does.
+#
+# Addresses are virtual; PT_LOAD segments map them to file offsets, the
+# same mapping mkrawimg.py uses to flatten the image.  An address in no
+# segment is an error rather than a zero, because a zero would read as
+# a legitimate value.
+#
+import struct, sys
+
+def segments(b):
+    if b[:4] != b'\x7fELF':
+        raise SystemExit('kread: not an ELF file')
+    e_phoff = struct.unpack('<Q', b[0x20:0x28])[0]
+    e_phnum = struct.unpack('<H', b[0x38:0x3a])[0]
+    segs = []
+    for i in range(e_phnum):
+        o = e_phoff + i*56
+        p_type, = struct.unpack('<I', b[o:o+4])
+        p_off, p_vaddr, p_paddr, p_filesz, p_memsz = \
+            struct.unpack('<5Q', b[o+8:o+8+40])
+        if p_type == 1 and p_filesz:            # PT_LOAD with file data
+            segs.append((p_vaddr, p_off, p_filesz))
+    return segs
+
+def read(b, segs, addr, n):
+    for vaddr, off, filesz in segs:
+        if vaddr <= addr and addr + 4*n <= vaddr + filesz:
+            o = off + (addr - vaddr)
+            return [struct.unpack('<I', b[o+4*i:o+4*i+4])[0] for i in range(n)]
+    raise SystemExit('kread: %#x is not in any PT_LOAD segment with file data'
+                     % addr)
+
+def main(argv):
+    if len(argv) < 3:
+        raise SystemExit('usage: kread image ADDR [nwords]')
+    b = open(argv[1], 'rb').read()
+    addr = int(argv[2], 0)
+    n = int(argv[3], 0) if len(argv) > 3 else 1
+    for v in read(b, segments(b), addr, n):
+        print('%#010x' % v)
+
+if __name__ == '__main__':
+    main(sys.argv)
