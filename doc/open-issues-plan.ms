@@ -15844,3 +15844,57 @@ panic is on the path EVERY non\-high\-speed device takes, it is
 reproducible on demand, it is in this tree's own code rather than in a
 hub's firmware, and it crashes the machine rather than failing a
 device. It should be fixed first.
+.NH 2
+The ctltrans panic: five hypotheses eliminated, and the one test left
+.PP
+.B "Every cheap cause was checked against the source and none holds."
+Written down so the next reader does not spend the afternoon I did:
+.IP
+.EX
+a negative transfer length    chanio returns len - nleft, and nleft is
+                              CLAMPED (`if(n > nleft) n = nleft'), so
+                              the result is 0..len
+an overrun past the buffer    buf is ROUND(len, maxpkt) >= len, and the
+                              same clamp bounds what is written
+cacheflushinv is the caller   it walks dccivac, not dcivac; the stack
+                              named dcivac, so it is cacheinval
+dlinesz() returning 0         would make a = va & ~(ls-1) become 0 and
+                              walk dcivac from address 0 -- but it is
+                              4UL << ((getctr()>>16) & 0xf), minimum 4
+the non-split path            multitrans is line 1128 and is reached
+                              only when tthub == nil; a full-speed
+                              device behind the LAN9514 has tthub set
+                              (devusb.c:519, speed < Highspeed), so the
+                              split path at 1130 is what ran
+.EE
+.PP
+.B "What is in place instead of a fix:"
+.CW ctltrans
+now remembers the allocation size and checks the returned length
+against it before
+.CW cacheinval ,
+printing the length, the buffer, its size and what was asked for, and
+clamping rather than trapping. That is correct on its own terms \(em
+walking an unvalidated range through
+.CW dcivac
+is wrong whatever supplies the length \(em and it turns the next
+occurrence into three numbers instead of a dead board.
+.PP
+.B "The one test left, and its recovery path, which is cheaper than last time."
+Plug the full\-speed device in while the board is RUNNING, read the
+ring, and
+.B "unplug it before any reboot."
+Last time it stayed plugged in through a
+.IR hardreset ,
+so the kernel re\-panicked seven seconds into the next boot and the
+LAN9514 needed a mains power cycle to clear. Device out first, then
+.I hardreset
+recovers over JTAG with no hands.
+.PP
+Three outcomes and all of them are information: no print and no panic
+means the length was never the cause and these five eliminations stand;
+a print means it was, and says which number; a panic anyway means the
+trap is somewhere else in
+.CW cacheinval 's
+arguments than the length, which is the only remaining place for it to
+be.
