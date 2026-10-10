@@ -188,7 +188,26 @@ enum {
 	Taglock	= 0x0003000d,	/* LOCK_MEMORY: handle -> bus address */
 	Tagunlock = 0x0003000e,	/* UNLOCK_MEMORY: handle */
 	Tagfree	= 0x0003000f,	/* RELEASE_MEMORY: handle */
-	Memflags = 0xc,		/* COHERENT|DIRECT, as a QPU program wants */
+	/*
+	 * MEM_FLAG_DIRECT is 1<<2 and MEM_FLAG_COHERENT is 2<<2, so 0xc
+	 * is MEM_FLAG_L1_NONALLOCATING and asks for the L2-CACHED,
+	 * non-allocating window -- not an uncached one.  Measured on
+	 * silicon, both arms in one boot:
+	 *
+	 *	flags 0x4   bus 0xfeaccf60   top 0xc..., uncached
+	 *	flags 0xc   bus 0xbeacbf20   top 0x8..., L2-cached
+	 *
+	 * This said "COHERENT|DIRECT, as a QPU program wants", which
+	 * asserted a property of the window that had never been measured
+	 * and was wrong about which window it names.
+	 *
+	 * 0xc is KEPT deliberately: v3dexecraw() cacheflush()es the code,
+	 * uniform and control buffers before the exchange, which is the
+	 * compensation this window requires.  Switching to 0x4 would make
+	 * those flushes unnecessary rather than make anything correct, and
+	 * is not a change to make on the strength of a comment.
+	 */
+	Memflags = 0xc,
 
 	Tagclock = 0x00030002,	/* GET_CLOCK_RATE */
 	Tagqpuen = 0x00030012,	/* SET_ENABLE_QPU */
