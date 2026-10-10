@@ -16,12 +16,22 @@ and refuses a nonsense tag, so the property channel works and the
 answers mean something.
 .CW EXECUTE_QPU
 is
-.I "never answered:"
-.CW buf[1]
-and
+.B ANSWERED
+and then does not complete: in a virgin firmware session
 .CW buf[4]
-come back as the driver left them and the value buffer holds the
-request verbatim.
+comes back
+.CW 0x80000004
+\(em PROCESSED, a 4-byte reply header \(em and the job never finishes,
+timing out at the full bound after about 1.0 s.
+.PP
+.B "That sentence used to say EXECUTE_QPU is never answered, with buf[1]
+.B "and buf[4] coming back as the driver left them."
+It was read off POISONED runs: one exec kills the property channel for
+the rest of the firmware session, and
+.CW UNTOUCHED
+is that channel's signature rather than the firmware ignoring the
+message. It was the first thing a reader saw and it was wrong about the
+central fact \(em the firmware does accept the message.
 .PP
 .B "What is NOT the question."
 The argument layout. Fitting parameters to a request nobody replies to
@@ -429,22 +439,85 @@ and
 in the same boot, and IDENT0 proves the block is gated until
 SET_ENABLE_QPU. So the clock answers the same either side of the gate.
 .PP
-.B "What is left is h2."
-If
-.CW EXECUTE_QPU
-answers from a firmware allocation when it never answers from the
-kernel's own alias, the alias was the whole fault.
+.B "H2 IS ANSWERED AND THE ANSWER IS NO."
+With the reachability bound corrected the exec goes out against the
+firmware's own allocation and still does not complete. Two virgin
+firmware sessions, one exec each, card boots:
+.DS
+.CW
+clock hz 250000000              channel alive before the question
+enable accepted                 ungated
+code 24 bytes                   thrend + two nops
+gpumem firmware handle 0x4 bus 0xbeaccf60 size 4096
+args 0x1 0xbeaccf60 0x3e8 0x0   ctlidx 1 -- FIRMWARE memory
+exec refused code 0x0 tag 0x80000004 PROCESSED wrote 4 bytes
+wait OUT OF TIME (no reply) after 1000000 us
+.R
+.DE
+.PP
+1004140 us and 1007087 us. The control address is
+.CW 0xbeaccf60
+where every earlier attempt passed
+.CW 0xc0361430 ,
+so the exec really did go out against the firmware allocation and not
+the kernel buffer.
+.B "So the memory arrangement is eliminated:"
+not the window, not the placement, not the alias.
+.PP
+.B "Three hypotheses are out, each by a measurement."
+The firmware never sees it \(em out, it writes a reply header. The code
+is somewhere the QPU cannot fetch \(em out, h2. The program never ends
+\(em out, a canonical
+.CW thrend
+plus two nops behaves identically to
+.CW "0xdeadbeef 0xcafebabe" ,
+4 ms apart on a one-second bound.
+.PP
+.B "And the block pair is not evidence, which I asked for and should not
+.B "have."
+.CW v3dexecraw
+populates
+.CW block
+on the way IN and the status reads the driver's own record, so a change
+either side of the exec says the DRIVER wrote a control list into
+firmware memory and nothing about whether the GPU read it. This plan
+already carried that caveat for
+.CW arith
+and I asked for the measurement anyway.
+.PP
+.B "What is left is not in the property channel, and that is where this
+.B "line of work stops."
+Every question the mailbox can put has been put. The firmware accepts
+.CW EXECUTE_QPU ,
+writes a reply header, and the job does not complete; it behaves the
+same from the kernel's alias and from the firmware's own allocation,
+with code that terminates and code that is nonsense, on a gated block
+and an ungated one. More mailbox variants are not worth board boots.
+.PP
 .CW devv3d 's
 .CW gpumem
 provenance line and its separate
 .CW alloc
 and
 .CW lock
-fields exist so that a second silence is attributable to the exec
-rather than to an allocation that quietly did not happen \(em the
-allocating path has never succeeded anywhere, since QEMU refuses it for
-want of alias bits, which is the shape of code that is wrong in a way
-no run has shown.
+fields did their job: they are what made the second silence
+attributable to the exec rather than to an allocation that quietly did
+not happen, which is exactly the doubt they were added for.
+.PP
+.B "What a register backend would start from, if this is picked up."
+The block is a full VideoCore IV \(em
+.CW IDENT1
+.CW 0xc1102431 ,
+.CW IDENT2
+.CW 0x121 ,
+NSLC 3 and QUPS 4, so twelve QPUs \(em so whatever refuses the exec is
+not a cut-down part.
+.CW SET_ENABLE_QPU
+ungates the register block and the kernel can read it.
+And the draw3d letters already rasterise in software
+.I byte-identically
+to the hosted path on real silicon, so a register backend has a working
+oracle from its first pixel rather than needing one built.
 
 .NH 1
 The hypotheses, each with the test that kills it
