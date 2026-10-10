@@ -828,8 +828,55 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 
 	Result:
 		if((i & Xfercomp) == 0 && i != (Chhltd|Ack) && i != Chhltd){
-			if(i & Stall)
+			if(i & Stall){
+				/*
+				 * SAY WHAT THE HARDWARE ACTUALLY REPORTED, the
+				 * first few times only.
+				 *
+				 * error(Estalled) alone gives "endpoint
+				 * stalled" and nothing else, and that single
+				 * phrase cannot distinguish a device genuinely
+				 * refusing a request from this driver
+				 * misreading a split-transaction error as a
+				 * stall -- which matters because a low-speed
+				 * device behind the Pi's high-speed hub
+				 * reaches us only through the hub's
+				 * transaction translator, and for a split the
+				 * error bits do not mean what they mean for a
+				 * direct transfer.
+				 *
+				 * The case in hand: an IBM three-button mouse
+				 * on hub port 2 completes SET_ADDRESS -- a
+				 * control transfer with NO data stage --
+				 * through the split path, then stalls
+				 * GET_DESCRIPTOR, which has an IN data stage.
+				 * So the split path works for one and not the
+				 * other, and hcint says which bits came with
+				 * the Stall.
+				 *
+				 * RATE-LIMITED TO FOUR, because this is an
+				 * error path reached once per retry and the
+				 * log ring is the only post-mortem channel
+				 * this board has; an unbounded print here
+				 * would push out the evidence it is meant to
+				 * add to.  Static, so it bounds the life of
+				 * the kernel rather than one transfer.
+				 */
+				static int nstall;
+
+				if(nstall++ < 4)
+					print("usbdwc: ep%d.%d STALL hcint %8.8ux"
+						" hcchar %8.8ux hcsplt %8.8ux"
+						" hctsiz %8.8ux speed %d%s\n",
+						ep->dev->nb, ep->nb, i,
+						hc->hcchar, hc->hcsplt,
+						hc->hctsiz, ep->dev->speed,
+						(hc->hcsplt & Spltena) == 0? " (no split)":
+						(hc->hcsplt & Compsplt)?
+						  " COMPLETE-split (the DEVICE answered)":
+						  " START-split (the HUB answered)");
 				error(Estalled);
+			}
 			if(i & (Nyet|Frmovrun)){
 				nyets++;
 				continue;
