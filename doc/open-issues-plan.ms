@@ -15596,3 +15596,128 @@ written and is now wrong in its first clause: the obvious candidate was
 measurable without a single new build, from a comparison already in the
 tree, and it is not the cause. No A/B kernel pair was needed and none
 was built.
+.NH 1
+copyu: the prescribed removal CHANGES CODE GENERATION, and the audit missed it
+.PP
+This file carried
+.CW copyu()
+mutating the program on a query as a trap for the next analysis pass,
+with the next step written as: audit the five callers for silent
+dependence on
+.CW p->reg
+being set after a query, then remove the normalisation. The audit was
+done, it came back clean, and the removal is
+.B wrong.
+.PP
+.B "The site, corrected."
+It is
+.CW utils/7c/peep.c :1363
+and not 1168, in the ADD/SUB/logical/multiply arm, on the
+.CW "s == A"
+path \(em the substitution branch has already returned above it:
+.IP
+.EX
+if(copyas(&p->to, v)) {
+        if(p->reg == NREG)
+                p->reg = p->to.reg;
+.EE
+.PP
+Twelve of
+.CW copyu 's
+thirteen call sites pass
+.CW A ,
+so it fires on nearly every call.
+.PP
+.B "THE AUDIT SAID IT WAS DEAD AND THE AUDIT WAS NOT ENOUGH."
+Of the twelve query callers none reads the QUERIED instruction's
+.CW reg
+afterwards: the only nearby
+.CW ->reg
+read is
+.CW peep.c :993,
+and that call is
+.CW "copyu(p1, &p->to, A)"
+while the read is
+.CW p->reg
+\(em a different
+.CW Prog .
+Better, that caller does the same normalisation itself, locally
+.RB ( "o = p->reg; if(o == NREG) o = p->to.reg;" ),
+which reads as positive evidence that callers needing it do it for
+themselves.
+.PP
+.B "Then the object comparison refuted all of that."
+Removing the two lines, rebuilding
+.CW 7c
+and compiling one file both ways:
+.IP
+.EX
+7c.old  mailbox.7   40134 bytes
+7c.new  mailbox.7   40134 bytes
+cmp                 differ at char 2042, line 10
+.EE
+.PP
+Same size, different content. So the store is NOT dead: the mutation
+persists in the
+.CW Prog
+and later passes read it, which no audit of what the CALLERS do could
+have shown. Reverted; the reverted compiler's output is byte-identical
+to the original's, and both differ from the mutated one \(em which is
+the check that makes the revert a fact rather than a hope.
+.PP
+.B "So the item changes shape."
+It is not "audit, then remove". Any removal has to be justified against
+OUTPUT, and the cheap instrument for that is one file compiled both ways
+\(em not a kernel pair, not a boot. Whether the normalisation is
+desirable is now an open question about the peephole pass rather than a
+cleanup, and
+.CW 5c
+has the same arm.
+.PP
+.B "And my first attempt to measure it was invalid, which is worth saying."
+I compared whole kernel images and they differed \(em but
+.CW kernel8.img
+embeds
+.CW KERNDATE ,
+so a rebuild differs by construction and the comparison could never have
+answered anything. The object comparison is the one that works.
+.NH 2
+A full recompile emits 92 distinct diagnostics that incremental builds never show
+.PP
+.CW kbuild
+prints "diagnostics in the log: N emission(s)" and warns in the same
+breath that it is "over what THIS run recompiled \(em a zero is not a
+clean tree". Forcing a full recompile puts a number on that:
+.IP
+.EX
+184 emissions, 92 distinct, in 19 files, ALL under os/inferno/port
+  106  format mismatch #p ULONG        proc.c 36, chan.c 28,
+   14  format mismatch p ULONG         taslock.c 26, alloc.c 18,
+    8  format mismatch ld INT          qlock.c 14, allocb.c 14, ...
+.EE
+.PP
+.B "NOT CLAIMED: that any of them prints a wrong number."
+A Plan 9
+.CW long
+is 32 bits and
+.CW %p
+expects a pointer, so the types disagree \(em but on the AArch64 vararg
+ABI a promoted 32-bit argument occupies a full eight-byte slot, so the
+value a
+.CW %p
+reads is most likely the right one, sign or zero extended. Demonstrating
+a wrong output would need a print compared against a known address and
+that has not been done.
+.PP
+.B "What IS established is the denominator."
+These are in
+.CW panic
+and trace paths \(em
+.CW taslock.c ,
+.CW qlock.c ,
+.CW proc.c
+\(em and the build carries
+.CW -DILOCKTRACE
+on all 153 compile lines, so the code is live rather than excluded. And
+an incremental build reports zero for all 92, which is the thing to
+remember when a clean build log is offered as evidence about the tree.
