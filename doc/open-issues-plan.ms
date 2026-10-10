@@ -15349,6 +15349,86 @@ installed through
 so that no board code sits in the shared
 .CW devcons.c ;
 they exist for this experiment and not as the start of a driver.
+.NH 2
+h2 run for the peer and VOID on two grounds, one of them a seam between trees
+.LP
+.CW rio-pi-tk 's
+h2 asks whether EXECUTE_QPU answers when the code lives in
+firmware-allocated memory.  Run here because only this rig has the board:
+hardreset, then their kernel JTAG-booted read-only from their worktree (IMG and
+ELF both theirs, build 1791629576), the sequence regenerated with their own
+.CW qpubattery.sh
+and written to
+.CW board.cmd
+as a file rather than typed.
+.PP
+.B "Control before, channel live:"
+.P1
+exec accepted code 0x80000000 tag 0x80000008 PROCESSED wrote 8 bytes 25 us
+value 0x5 0xee6b280 0x0 0x0
+enabled 1
+enable accepted
+.P2
+.CW 0xee6b280
+is 250000000, so GET_CLOCK_RATE answered 250 MHz on clock 5.
+.PP
+.B "VOID, ground one \(em their own stop condition:"
+.P1
+gpumem firmware handle 0x4 bus 0xbeaccf60 size 4096 ctlbus 0x0
+gpualloc tried alloc answered lock answered
+
+bus & 0xc0000000 = 0x80000000, not 0xc0000000
+.P2
+Without the alias bits
+.CW v3dexecraw
+falls back to the kernel alias, which is h1, so going on would have run h1
+twice.  But the address is not junk: on this chip the VideoCore windows are 0
+L1+L2 cached, 0x40000000 L2 coherent, 0x80000000 L2 cached non-allocating and
+0xC0000000 uncached, and
+.CW 0xbeaccf60
+sits in the 0x80000000 one.  The firmware answered both the allocation and the
+lock and handed back an L2-CACHED alias where the driver expects the UNCACHED
+one \(em a real allocation in the wrong window, which may be a MEM_ALLOC flag
+rather than anything about the GPU.
+.PP
+.B "VOID, ground two \(em and this one is a seam between trees:"
+.P1
+qputry 0x11111111 0x22222222 0x33333333 0x44444444
+sh: qputry: file does not exist
+.P2
+No exec ever ran.  Their KERNEL was booted, but the board serves THIS tree's
+.CW /dis
+over styx \(em
+.CW boardrun
+binds
+.CW /n/remote/dis
+\(em and raspi3b-port has no
+.CW qputry.dis .
+So every
+.CW /dev/v3dctl
+write worked, being their kernel, and the one step needing their Limbo command
+did not.  The status after it still showed the control's mailbox op
+.CW ( "args 0x5 0x0 0x0 0x0 ctlidx -1" ,
+.CW "tag 0x80000008" ),
+and their predicted "ENDS THE BOOT" did not happen for the same reason.  The
+control after was still alive.
+.PP
+.B "A kernel and its userland are two halves of one tree,"
+and booting one half across a tree boundary silently keeps the other.  The
+kernel half works, which is what makes it convincing: the run would have been
+reported as "the exec did not answer" when the exec was never submitted.  Ask
+whose kernel AND whose
+.CW /dis
+before any cross-tree board run.
+.PP
+.B "And one datum that corrects a liveness reading:"
+the V3D clock answered 250 MHz with
+.CW "enabled 0"
+and
+.CW "enable untried" ,
+before any enable in that boot \(em and the IDENT0 result above shows the block
+is GATED until SET_ENABLE_QPU.  So GET_CLOCK_RATE answering 250 MHz is not
+evidence the block is live, and was being read that way.
 .NH 1
 copyu mutates the program when it is only asked a question
 .LP
