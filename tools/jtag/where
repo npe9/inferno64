@@ -41,13 +41,21 @@ ROOT=`cd "$HERE/../.." && pwd`
 # to the writers and the long-runners and never to the tools either of
 # us reaches for first.
 #
-. "$ROOT/tools/jtag/boardlock.sh"
-boardfree || { echo "where: another openocd holds the adapter" >&2; exit 2; }
-boardlock where || { echo "where: another board operation is running" >&2; exit 2; }
-
+#
+# TMP is set and the trap installed with the SAME statement that takes
+# the lock, because anything between the two is a window where an exit
+# leaks the lock -- and a leaked lock on this adapter blocks every tool
+# in every worktree until someone notices the stale takeover message.
+# It was four assignments wide, which is small and is the kind of
+# window that only ever closes deliberately.
+#
 KERNEL=${KERNEL:-$ROOT/os/inferno/raspi3b/iraspi3b}
 ADAPTER=${ADAPTER:-interface/ftdi/olimex-arm-usb-tiny-h.cfg}
 TMP=${TMPDIR:-/tmp}/jtag-where.$$
+
+. "$ROOT/tools/jtag/boardlock.sh"
+boardfree || { echo "where: another openocd holds the adapter" >&2; exit 2; }
+boardlock where || { echo "where: another board operation is running" >&2; exit 2; }
 trap 'rm -f "$TMP"; boardunlock' 0 1 2 15
 
 tail_cmd='resume;'
