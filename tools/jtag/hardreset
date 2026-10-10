@@ -11,6 +11,46 @@
 # the same thing Linux uses -- so the VideoCore firmware restarts, the GPIO
 # expander is re-initialised, and the board loads kernel8.img from the card.
 #
+# THE ONE FAILURE IT CANNOT RECOVER, found 9 October 2026.
+#
+# This arms the PM watchdog by WRITING MEMORY THROUGH THE CORE'S debug
+# access, so it needs cpu0 to answer the debugger -- and one thing on
+# this board destroys exactly that: READING AN UNMAPPED PERIPHERAL
+# ADDRESS over JTAG.  Measured twice at 0x3f900000:
+#
+#	Error: abort occurred - dscr = 0x06047d53
+#
+# openocd then STOPS, so a script that put `resume' after the read never
+# runs it, and afterwards:
+#
+#	bcm2837.cpu1 halted in AArch64 state due to debug-request, EL1H
+#	bcm2837.cpu2 halted ... EL1H
+#	bcm2837.cpu3 halted ... EL1H
+#	Error: Timeout waiting for aarch64_exec_opcode     <- cpu0 only
+#
+# cpu1 to cpu3 are merely halted and answer normally.  cpu0 can no longer
+# execute debug opcodes, an explicit `resume' does not bring it back, and
+# hardreset then times out in precisely the same way as the thing it is
+# meant to rescue, because it is the same channel.  alive gets no answer
+# either.
+#
+# RECOVERY IS THE PLUG.  That is not the old "only power can reset this
+# board" claim below, which was about a running core and was wrong; it is
+# narrower and it is measured: once cpu0's debug access is gone, nothing
+# in this directory can reach the watchdog.
+#
+# SO DO NOT PROBE AN ADDRESS YOU ARE NOT SURE IS MAPPED, and above all do
+# not put such a probe in the same openocd script as a measurement: when
+# the script dies at the abort you cannot tell which line killed the
+# board.  I attributed one of these wedges to a V3D register read on that
+# evidence and was wrong -- the V3D read had never executed, because the
+# run died attaching to a cpu0 the PREVIOUS run's hole probe had already
+# destroyed.  See doc/open-issues-plan.ms, "V3D: what the read actually
+# did, and the control that cost two power cycles".
+#
+# See doc/open-issues-plan.ms, "V3D: what the read
+# actually did, and the control that cost two power cycles".
+#
 # THREE COMMENTS IN THIS DIRECTORY SAID THIS WAS IMPOSSIBLE, and two were wrong:
 #
 #	raspi3b.cfg:43   "Nothing here resets the machine, on purpose"

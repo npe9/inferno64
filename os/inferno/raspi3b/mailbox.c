@@ -1075,3 +1075,46 @@ mboxclockraw(u32 tag, int clkid, u32 *rate)
 		*rate = buf[6];
 	return 0;
 }
+
+/*
+ * SET_ENABLE_QPU (tag 0x00030012), for one specific experiment.
+ *
+ * This is not a GPU driver and must not grow into one -- rio-pi-tk owns
+ * devv3d and the QPU work.  It exists because that branch's decisive
+ * question needs a mailbox call and a JTAG register read IN THE SAME
+ * BOOT, and only this tree's board rig can do the second half.  The
+ * question is whether SET_ENABLE_QPU ungates the V3D register block:
+ * a read of 0x3fc00000 currently stalls the core and the recovery is a
+ * power cycle, so the enable has to be sent first, from the board, with
+ * nothing else intervening.
+ *
+ * Shape is the plain property-interface one: a 4-byte request (the
+ * enable flag) and a 4-byte reply, so the value buffer is 4 and not the
+ * 8 that mboxclockraw() uses for its id/rate pair.
+ *
+ * Returns 0 if the firmware ANSWERED, with its reply word, and -1 if
+ * the round trip or the response bit failed.  Answered-and-refused is
+ * not a failure here: it is the result.
+ */
+int
+mboxqpuenable(int on, u32 *reply)
+{
+	static u32 raw[8+4];
+	u32 *buf;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf[0] = 7 * 4;
+	buf[1] = 0;
+	buf[2] = 0x00030012;		/* tag: SET_ENABLE_QPU */
+	buf[3] = 4;			/* value buffer: the flag */
+	buf[4] = 4;			/* request length */
+	buf[5] = on != 0;
+	buf[6] = 0;			/* end tag */
+	if(mboxprop(buf) < 0)
+		return -1;
+	if((buf[4] & 0x80000000) == 0)
+		return -1;
+	if(reply != nil)
+		*reply = buf[5];
+	return 0;
+}

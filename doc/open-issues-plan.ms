@@ -15237,6 +15237,95 @@ because the ARM side cannot see it: the live mode's horizontal and vertical
 totals individually.  The product is pinned by pixclk times period and matches
 1080p60 exactly, and the 666us follows from any CEA 60Hz mode, so the conclusion
 does not depend on the split \(em but it is derived, not read.
+.NH 2
+V3D: what the read actually did, and the control that cost two power cycles
+.LP
+.B "RETRACTED BEFORE IT WAS BELIEVED."
+An earlier draft of this section said reading
+.CW V3D_IDENT0
+at
+.CW 0x3fc00000
+stalls the bus and wedged the core.  That is not what happened, and the peer
+who owns the GPU work was told so before they put my numbers in their driver.
+.PP
+.B "What the one run that reached V3D actually produced:"
+.P1
+CTRL-PM-RSTC  0x3f10001c: 00000102
+CTRL-PM-RSTS  0x3f100020: 00000000
+V3D-IDENT     0x3fc00000: deadbeef deadbeef deadbeef
+openocd exit 0; alive immediately after: alive 821499 (was 821129)
+.P2
+Exit 0, no abort, no timeout, and the board kept running.
+.B "The V3D read did not stall anything."
+.PP
+.B "What DID wedge the board, twice:"
+reading an address in a peripheral HOLE \(em the control I added to give
+"unmapped" a signature.
+.P1
+C-HOLE  0x3f900000: Error: abort occurred - dscr = 0x06047d53
+.P2
+openocd
+.I stops
+on that, so a script with
+.CW "resume; exit"
+after the read never runs it, and the state it leaves is specific:
+.P1
+bcm2837.cpu1 halted in AArch64 state due to debug-request, EL1H
+bcm2837.cpu2 halted ... EL1H
+bcm2837.cpu3 halted ... EL1H
+Error: Timeout waiting for aarch64_exec_opcode          <- cpu0 only
+.P2
+cpu1 to cpu3 are merely halted and answer normally; cpu0 can no longer execute
+debug opcodes, and an explicit
+.CW resume
+does not bring it back.
+.CW hardreset
+cannot either \(em it writes the watchdog through that same channel \(em so
+recovery is the plug.  Noted in hardreset's own header.
+.PP
+.B "HOW THE WRONG ATTRIBUTION HAPPENED, which is the part worth keeping."
+I put the destructive control in the same openocd script as the measurement.
+The script died at the abort, and the NEXT run \(em the one I read as "the V3D
+read timed out" \(em never executed a single
+.CW mdw :
+.P1
+grep -c 'A-CTRL-RSTC' on that run's log: 0
+.P2
+It timed out attaching to a cpu0 the previous run had already destroyed.  Every
+line I quoted as evidence about V3D was produced by a run that never reached
+V3D.  It took a third wedge, in a sequence containing no V3D read at all, to
+show it.
+.PP
+.B "Two rules out of it."
+A probe that can damage the target must not share a script with the
+measurement, because when the script dies you cannot tell which line killed it
+\(em which is exactly the caution the peer gave me about their own
+.CW ident
+command reading three words in sequence, one level up and in my own harness.
+And a control is only a control if its failure mode differs from the subject's:
+this one does not fail like a failed read, it destroys cpu0, so it never was a
+discriminator for
+.CW deadbeef .
+.PP
+.B "What is therefore still open."
+Whether
+.CW deadbeef
+is openocd's filler or three real reads of an unclocked block.  I have no
+control left for that question and am not claiming one.  The next reading is
+the peer's Boot A without the hole: controls at
+.CW 0x3f10001c
+and
+.CW 0x00080000
+only, then
+.CW "echo qpuenable > /dev/sysctl"
+on the board, then one word at
+.CW 0x3fc00000 .
+.CW SET_ENABLE_QPU
+(0x00030012) and that
+.CW sysctl
+command are built in this tree for exactly that experiment \(em not as the
+start of a GPU driver, which is
+.CW rio-pi-tk 's.
 .NH 1
 copyu mutates the program when it is only asked a question
 .LP

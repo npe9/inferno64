@@ -123,6 +123,7 @@ enum
 	CMsched,
 	CMsignfault,
 	CMbflag,
+	CMqpuenable,
 };
 
 /*
@@ -256,6 +257,16 @@ static Cmdtab sysctlcmd[] =
 	CMprocdump,	"procdump",	0,
 	CMilock,	"ilock",	0,
 	CMsched,	"sched",	0,
+	/*
+	 * SET_ENABLE_QPU, for one cross-branch experiment and not as the
+	 * start of a GPU driver -- rio-pi-tk owns devv3d and the QPU work.
+	 * It is here because the decisive question needs the mailbox call
+	 * and a JTAG read of 0x3fc00000 in the SAME BOOT, that read stalls
+	 * the core, and only this tree's rig can do the JTAG half.  Taking
+	 * no argument on purpose: the thing under test is the enable, and
+	 * a disable would be a different experiment.
+	 */
+	CMqpuenable,	"qpuenable",	0,
 	/*
 	 * THE POSITIVE CONTROL FOR trap.c's LOST-SIGN-EXTENSION HINT, and the
 	 * reason it is a facility rather than a one-off patch: the hint claims
@@ -1515,6 +1526,29 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 				print("SIGNFAULT read %#llux WITHOUT faulting"
 					" -- the hint cannot be tested here\n",
 					x);
+			}
+			break;
+		case CMqpuenable:
+			{
+				extern int mboxqpuenable(int, u32*);
+				u32 rep;
+				int ok;
+
+				rep = 0xdeadbeef;
+				ok = mboxqpuenable(1, &rep);
+				/*
+				 * Three outcomes printed apart, because
+				 * "answered and refused" is a result and
+				 * not a failure, and collapsing it into
+				 * one verdict is what hid the pixel clock
+				 * earlier today.
+				 */
+				if(ok < 0)
+					print("QPU-ENABLE unanswered"
+						" (mailbox or response bit)\n");
+				else
+					print("QPU-ENABLE answered, reply"
+						" %#ux (0 = accepted)\n", rep);
 			}
 			break;
 		case CMsched:
