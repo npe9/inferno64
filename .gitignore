@@ -602,3 +602,37 @@ libinterp/w[0-9]/
 # must stay after the globs above.
 #
 !fonts/**
+
+# --- pc64 reboot/AP-bootstrap build artifacts (added 2026-10-10) ---
+#
+# rebootcode.s and apbootstrap.s are the SOURCES; the mkfile builds the rest
+# (os/inferno/pc64/mkfile:148-155 and os/9front/pc64/mkfile:187-194):
+#
+#	$O.rebootcode:  rebootcode.$O        -> 6.rebootcode
+#	rebootcode.out: $O.rebootcode        -> rebootcode.out, rebootcode.i
+#
+# Ten of them were TRACKED, so every pc64 build left them modified in git
+# status -- the same noise the .j objects made, and ignoring never untracks.
+#
+# PATH-SCOPED, NOT BY SUFFIX, and that matters: *.i has 52 tracked files which
+# are mostly lib/ebooks/.../A.html.i, real content, and man/10/a.out is a MAN
+# PAGE.  A blanket *.i or *.out would have hidden all of them.  The existing
+# os/osprey/pc64/*.i rules above are the pattern this follows.
+#
+# initcode's artifacts are deliberately NOT here.  os/9front/pc64 has
+# 6.initcode, initcode.i and initcode.out with NO initcode.s or .c anywhere in
+# the tree, so they are not reproducible and the tracked copies are the only
+# ones.  Checked rather than assumed, per artifact.
+#
+os/inferno/pc64/[0-9].rebootcode
+os/inferno/pc64/rebootcode.i
+os/inferno/pc64/rebootcode.out
+os/inferno/pc64/[0-9].apbootstrap
+os/inferno/pc64/apbootstrap.i
+os/inferno/pc64/apbootstrap.out
+os/9front/pc64/[0-9].rebootcode
+os/9front/pc64/rebootcode.i
+os/9front/pc64/rebootcode.out
+os/9front/pc64/[0-9].apbootstrap
+os/9front/pc64/apbootstrap.i
+os/9front/pc64/apbootstrap.out
