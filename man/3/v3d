@@ -90,39 +90,57 @@ mailbox cannot: whether the hardware is there at all.
 is
 .RB ` V3D '.
 .PP
-.B "THIS WEDGES THE BOARD, measured on silicon, and the only way back is"
-.B "the power switch."
-The word
-.B force
-is required for that reason: without it the command refuses and says so.
+.B "The force is prudence, not a measurement, and this page said"
+.B "otherwise for one commit."
+Without it the command refuses and says so.
 .PP
-Read over JTAG with controls in the same boot, the three outcomes are
-distinguishable and only one of them was anticipated:
+What silicon actually shows, from the one reading that reached V3D
+(JTAG,
+.IR "rasberry pi inferno" ):
 .IP
 .EX
-0x3f10001c   00000102               the read path works
-0x00080000   the first instruction  DRAM reads fine
-0x3f900000   abort, dscr 0x06047d53 a REAL hole aborts cleanly
-0x3fc00000   debug-access timeout   V3D does neither
+0x3f10001c   00000102   PM_RSTC, so the read path works
+0x3f100020   00000000   PM_RSTS
+0x3fc00000   deadbeef deadbeef deadbeef
 .EE
 .PP
-So an unmapped address has a signature on this chip, and V3D does not
-have it: the access neither answers nor returns zero, it stalls the bus.
-.I Hardreset
-cannot recover it, because it arms the watchdog
-.I through
-the core and the core is what is stalled; the measurement cost one power
-cycle. A single earlier read returned
-.B 0xdeadbeef
-for all three words, which is the debugger's filler for an access that
-never completed and not a value \(em the hole control above is what
-proves that, since a real unmapped address aborts rather than filling.
+openocd exited 0, there was no abort and no timeout, and
+.I alive
+answered immediately afterwards with a counter that had advanced. So
+.B "that access did not stall the bus."
 .PP
-That measurement is
-.B rasberry pi inferno's,
-not this driver's: this file had only predicted that the access "can
-stall the bus", and the status string offered two outcomes, zero or a
-version word, where silicon gave a third.
+.B "An earlier report that it did was RETRACTED, and the retraction is"
+.B "the more useful result."
+The wedge in that run came from a different line of the same script: a
+read of a genuine peripheral hole at
+.BR 0x3f900000 ,
+which aborted, ended the script
+.I before
+its
+.B resume
+\(em and left
+.B cpu0
+unable to execute debug opcodes at all, while
+.B cpu1-3
+stayed merely halted and answered fine. An explicit
+.B resume
+did not bring it back. A later run reproduced the wedge
+.I without
+touching V3D, and never printed even its first control, which is what
+exposed the misattribution.
+.PP
+So the hole is disqualified as a control: it does not fail the way a
+failed read fails, it damages a core. That matters because it was the
+only discriminator for whether the
+.B 0xdeadbeef
+above is three real reads of an undriven block or the debugger\'s filler
+for an access that silently did nothing.
+.B "That question is open and this page will not dress it up."
+.PP
+What the force rests on instead is the asymmetry: a wedge costs a power
+cycle, a success buys one register, and this driver never sets the V3D
+clock, so the block being read is not known to be on. One success does
+not make an access safe.
 .PP
 It is a separate command for
 that reason, never part of a status read.
@@ -239,7 +257,9 @@ before any
 .B ident
 command, and
 .B STALLED
-when a read was begun and did not finish.
+when a read was begun and did not finish \(em which has never been
+seen, and is there because if it happens nothing in the kernel runs
+again to report it.
 .PP
 .B tried
 and

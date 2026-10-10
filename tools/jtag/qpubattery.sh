@@ -266,8 +266,9 @@ h1)
 	;;
 h5)
 	prologue
-	echo "echo '--- h5: the V3D IDENT0 register. THIS CAN HANG THE BOARD'"
-	echo "echo ident >/dev/v3dctl"
+	echo "echo '--- h5: the V3D IDENT0 register. MIGHT hang the board'"
+	echo "echo 'one word, and force is required: see man/3/v3d'"
+	echo "echo ident force 1 >/dev/v3dctl"
 	echo "cat /dev/v3dctl"
 	epilogue
 	;;

@@ -153,47 +153,73 @@ So the handler is
 .B "provoked by anything else #Q does,"
 each by a measurement rather than by argument.
 .PP
-.B "H5 is ANSWERED, on silicon, and it is neither outcome this plan
-.B "anticipated: reading V3D_IDENT0 stalls the bus."
-Measured over JTAG by
-.I "rasberry pi inferno,"
-with no code on the board and controls in the same boot:
+.B "H5: the V3D read does NOT stall the bus, and the first report that it
+.B "did was retracted."
+Both versions are recorded here because the retraction is the more
+useful result and because this plan carried the wrong one for a commit.
+.PP
+What the one run that reached V3D shows (JTAG,
+.IR "rasberry pi inferno" ):
 .DS
 .CW
-0x3f10001c   00000102               PM_RSTC, so the read path works
-0x00080000   the first instruction  DRAM reads fine
-0x3f900000   abort, dscr 0x06047d53 a REAL hole aborts CLEANLY
-0x3fc00000   debug-access timeout   V3D does neither
+0x3f10001c   00000102   PM_RSTC, so the read path works
+0x3f100020   00000000   PM_RSTS
+0x3fc00000   deadbeef deadbeef deadbeef
 .R
 .DE
 .PP
-The hole control is the finding, not the V3D read: an unmapped address
-on this chip has a signature, a clean bus abort the debugger survives,
-and V3D does not have that signature. It neither answers nor returns
-zero \(em it stalls, and
-.I hardreset
-cannot recover it because it arms the watchdog
-.I through
-the stalled core. One power cycle. A single earlier read gave
-.CW 0xdeadbeef
-for all three words, which the hole control proves is the debugger's
-filler for an access that never completed and not a value.
+openocd exit 0, no abort, no timeout, and
+.CW alive
+answered right afterwards with an advanced counter. The access
+completed and the board kept running.
 .PP
-.B "This plan and devv3d both offered two outcomes where there were
-.B "three."
-.CW man/3/v3d
-said the access "can stall the bus" as a caution and the status string
-chose between
-.CW V3D
-and
-.CW "ZERO (block off?)" ,
-so the third outcome could not be reported even in principle \(em and
-could not be reported from that board in any case, since nothing in the
-kernel runs again. Corrected: the read now needs
-.CW "ident force" ,
-reads ONE word by default, and sets a
+.B "The wedge came from the CONTROL."
+A read of a genuine peripheral hole at
+.CW 0x3f900000
+aborted, ended the openocd script
+.I before
+its
+.CW resume ,
+and left
+.CW cpu0
+unable to execute debug opcodes \(em while
+.CW cpu1-3
+stayed merely halted and answered normally. An explicit
+.CW resume
+did not recover it. The misattribution was exposed when a later run
+reproduced the wedge
+.I without
+touching V3D and never printed even its first control: the run that
+"timed out on V3D" had died during attach, before any read.
+.PP
+.B "So a destructive control in the same script as the measurement cost
+.B "the attribution."
+Which is the same mistake, one level up, as reading IDENT0..2 in one
+command: when the thing dies you cannot say which line killed it. Both
+are now separated \(em
+.CW "ident force"
+reads ONE word by default, and the re-run drops the hole entirely.
+.PP
+.B "And the discriminator is gone with it."
+The hole was the only characterisation of what a FAILED read looks like
+here, so it was what would have decided whether that
+.CW 0xdeadbeef
+is three real reads of an undriven block or the debugger's filler for
+an access that silently did nothing. It is disqualified, because it
+does not fail the way a failed read fails \(em it damages a core. That
+question is open and is not being dressed up.
+.PP
+.B "What this plan and devv3d still had wrong independently of that:"
+both offered two outcomes, a version word or zero, where
+.CW 0xdeadbeef
+is neither. The status string now has an
+.CW unknown
+branch for it, a
+.CW STALLED
+state for a read begun and not finished \(em never observed \(em and a
 .CW tried
-marker before each read so a halted target says which read died.
+marker set before each read so a halted target says which word died,
+since on a board that stalls nothing runs again to print anything.
 .PP
 .B "What it leaves is a conflict worth stating plainly."
 The domain query answers

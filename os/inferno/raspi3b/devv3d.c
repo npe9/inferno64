@@ -152,12 +152,20 @@ enum {
 	 * talk about it. On a Pi it should read 0x02443356 -- "V3D" with a
 	 * version nibble.
 	 *
-	 * READING THIS CAN HANG THE SOC. A peripheral whose power domain
-	 * is off does not politely return zero on this chip; the access
-	 * can stall the bus. So it is a separate command, never part of a
-	 * status read, and the battery puts it LAST and after the domain
-	 * has been asked to come on -- so everything else is collected
-	 * before anything risks the board.
+	 * READING THIS MIGHT HANG THE SOC, and `might' is the whole of
+	 * what is known.  A peripheral whose power domain is off is not
+	 * guaranteed to politely return zero on this chip and the access
+	 * may stall the bus.  THIS HAS NOT BEEN DEMONSTRATED: the one
+	 * silicon reading that reached 0x3fc00000 over JTAG returned
+	 * 0xdeadbeef three times with the debugger exiting 0 and the
+	 * board still running, and an earlier report that it stalled was
+	 * retracted (the wedge came from a peripheral-hole read in the
+	 * same script, which also left cpu0 unable to execute debug
+	 * opcodes).  So the caution stands on the asymmetry -- a wedge
+	 * costs a power cycle and a success buys little -- and not on
+	 * evidence.  It is a separate command needing an explicit force,
+	 * never part of a status read, and the battery puts it LAST and
+	 * after the domain has been asked to come on.
 	 */
 	V3dbase	= 0x3fc00000,
 	V3dident0 = 0,		/* word offsets */
@@ -788,21 +796,28 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			v3d.blk[0], v3d.blk[1], v3d.blk[2],
 			v3d.blk[3], v3d.blk[4], v3d.blk[5],
 			/*
-			 * This used to offer two outcomes, "V3D" or "ZERO
-			 * (block off?)", and SILICON GAVE A THIRD: the read
-			 * neither answers nor returns zero, it stalls the
-			 * bus.  Measured over JTAG with controls in the same
-			 * boot -- PM_RSTC read fine, DRAM read fine, a
-			 * genuine peripheral hole gave a clean abort with
-			 * dscr 0x06047d53, and V3D gave a debug-access
-			 * timeout instead.  So "unmapped" has a signature
-			 * here and V3D does not have it.
+			 * Three states, not the two this used to offer.
 			 *
-			 * That outcome can never appear in this string,
-			 * because nothing in this kernel runs again to
-			 * print it.  `tried\' above it is what distinguishes
-			 * a read that stalled from one never attempted, and
-			 * it is readable from a halted target.
+			 * The one silicon reading that reached V3D read
+			 * 0x3fc00000 over JTAG and got DEADBEEF THREE
+			 * TIMES, with openocd exiting 0, no abort, and the
+			 * board still running afterwards -- so that access
+			 * did not stall, and "unknown" below is the branch
+			 * it takes.  Whether those are three real reads of
+			 * an undriven block or the debugger's filler for an
+			 * access that silently did nothing is OPEN.  The
+			 * discriminator would be an address whose failed
+			 * read is already characterised; the one tried was
+			 * a peripheral hole, and it damaged cpu0 rather
+			 * than failing cleanly, so it is disqualified.
+			 *
+			 * STALLED is kept because the access is
+			 * undemonstrated rather than shown safe.  If one
+			 * ever does stall, nothing in this kernel runs
+			 * again to print anything -- identtried is set
+			 * before the read and identread after it, so a
+			 * halted target read over JTAG says which word
+			 * died.
 			 */
 			!v3d.identtried? "untried" :
 			  v3d.identread < v3d.identtried? "STALLED" :
@@ -885,15 +900,26 @@ v3dwrite(Chan *c, void *a, int n, vlong offset)
 			/*
 			 * ident force [nwords]
 			 *
-			 * The force is not ceremony.  This read has been
-			 * measured on silicon to STALL THE BUS: the core
-			 * stops answering, hardreset cannot recover it
-			 * because it arms the watchdog through the core,
-			 * and the only way back is the power switch.  So it
-			 * must not be one `echo ident' away.
+			 * The force is PRUDENCE AND NOT A MEASUREMENT,
+			 * which is the honest standing of this.  A read of
+			 * a block whose clock this driver never sets is not
+			 * known to be safe; the one silicon reading that
+			 * reached it came back fine, and one success does
+			 * not make an access safe when the failure mode
+			 * under discussion costs a power cycle.
+			 *
+			 * An earlier report that this read STALLED THE BUS
+			 * was retracted: the wedge in that run came from a
+			 * different address in the same script -- a
+			 * peripheral hole, which aborted, ended the script
+			 * before its resume, and left cpu0 unable to
+			 * execute debug opcodes.  So nothing here rests on
+			 * that, and the force stays because the cost of
+			 * being wrong is asymmetric, not because a stall
+			 * was shown.
 			 */
 			if(cb->nf < 2 || strcmp(cb->f[1], "force") != 0)
-				error("ident WEDGES THE BOARD until power is cycled; say `ident force [nwords]'");
+				error("ident reads a block whose clock is never set; not shown safe, and a wedge costs a power cycle -- say `ident force [nwords]'");
 			v3dident(cb->nf > 2? (int)strtol(cb->f[2], nil, 0) : 1);
 		}else if(strcmp(cb->f[0], "gpufake") == 0){
 			v3dgpufake();
