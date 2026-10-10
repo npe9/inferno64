@@ -55,7 +55,9 @@ the summary said "0 defect(s)".
 import glob
 import os
 import re
+import shutil
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT = os.path.join(HERE, '..', 'os', 'inferno', 'raspi3b')
@@ -88,39 +90,106 @@ def arity(params):
     return n
 
 
-#
-# A definition is a line at column 0 of the form name(params) whose NEXT
-# line opens a brace -- the Plan 9 style this tree is written in, where
-# the return type sits on its own line above.  Matching the brace too is
-# what keeps a call inside a function from being read as a definition.
-#
-defs = {}
-for path in sources:
-    with open(path, errors='surrogateescape') as f:
-        lines = f.read().split('\n')
-    for i, line in enumerate(lines):
-        m = re.match(r'^([a-zA-Z_][a-zA-Z0-9_]*)\((.*)\)\s*$', line)
-        if m and i + 1 < len(lines) and lines[i + 1].startswith('{'):
-            defs[m.group(1)] = (arity(m.group(2)),
-                                os.path.basename(path), i + 1)
+DECL = re.compile(r'\bextern\s+[a-zA-Z_][a-zA-Z0-9_ *]*?\s*\*?\s*'
+                  r'([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^;]*)\)\s*;')
 
-bad = []
-checked = 0
-for path in sources:
-    with open(path, errors='surrogateescape') as f:
-        for i, line in enumerate(f, 1):
-            m = re.search(r'\bextern\s+[a-zA-Z_][a-zA-Z0-9_ *]*?\s*\*?\s*'
-                          r'([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^;]*)\)\s*;', line)
-            if not m:
-                continue
-            name, want = m.group(1), arity(m.group(2))
-            if name not in defs:
-                continue            # defined elsewhere; not ours to judge
-            got, where, dline = defs[name]
-            checked += 1
-            if got != want:
-                bad.append((name, os.path.basename(path), i, want,
-                            where, dline, got))
+
+def scan(paths):
+    """Return (mismatches, how_many_compared) over these sources."""
+    #
+    # A definition is a line at column 0 of the form name(params) whose
+    # NEXT line opens a brace -- the Plan 9 style this tree is written
+    # in, where the return type sits on its own line above.  Matching
+    # the brace too is what keeps a CALL inside a function from being
+    # read as a definition.
+    #
+    defs = {}
+    for path in paths:
+        with open(path, errors='surrogateescape') as f:
+            lines = f.read().split('\n')
+        for i, line in enumerate(lines):
+            m = re.match(r'^([a-zA-Z_][a-zA-Z0-9_]*)\((.*)\)\s*$', line)
+            if m and i + 1 < len(lines) and lines[i + 1].startswith('{'):
+                defs[m.group(1)] = (arity(m.group(2)),
+                                    os.path.basename(path), i + 1)
+
+    found, compared = [], 0
+    for path in paths:
+        with open(path, errors='surrogateescape') as f:
+            for i, line in enumerate(f, 1):
+                m = DECL.search(line)
+                if not m:
+                    continue
+                name, want = m.group(1), arity(m.group(2))
+                if name not in defs:
+                    continue        # defined elsewhere; not ours to judge
+                got, where, dline = defs[name]
+                compared += 1
+                if got != want:
+                    found.append((name, os.path.basename(path), i, want,
+                                  where, dline, got))
+    return found, compared
+
+
+#
+# SELF-TEST FIRST, because a scanner that matches nothing and a clean
+# tree print the same sentence.
+#
+# This replaces a positive control that ran against a copy of the real
+# broken file in a scratch directory.  That proved the detector worked
+# ON THE DAY and then the directory was deleted, so nothing in the tree
+# re-ran it: a later suite run would get exit 0 with no evidence the
+# detector still fires.  A fixture that lives here cannot rot that way.
+#
+# Both halves are load-bearing.  The MISMATCH fixture is the real bug's
+# shape -- six declared against five defined.  The MATCHING one is the
+# control: a checker that reported a mismatch for every pair would pass
+# the first half and fail every real tree, which is the failure mode
+# that matters most here because a false positive would send someone
+# editing correct declarations.
+#
+# MEASURED BY MUTATION rather than argued, which is what makes the two
+# fixtures more than decoration:
+#
+#	scanner mutation                 self-test
+#	never report a mismatch          exit 1, CAUGHT
+#	report every pair as a mismatch  exit 1, CAUGHT
+#	unmutated                        exit 0
+#
+def selftest():
+    d = tempfile.mkdtemp(prefix='extern-arity-self.')
+    try:
+        with open(os.path.join(d, 'caller.c'), 'w') as f:
+            f.write('extern int fballoc(int, int, int, void*, void*, void*);\n'
+                    'extern int agree(int, int);\n')
+        with open(os.path.join(d, 'callee.c'), 'w') as f:
+            f.write('int\n'
+                    'fballoc(int w, int h, void *a, void *b, void *c)\n'
+                    '{\n\treturn 0;\n}\n'
+                    '\n'
+                    'int\n'
+                    'agree(int a, int b)\n'
+                    '{\n\treturn 0;\n}\n')
+        found = scan(sorted(glob.glob(os.path.join(d, '*.c'))))[0]
+        names = sorted(n for n, *_ in found)
+        if names != ['fballoc']:
+            return (f'planted one 6-vs-5 mismatch and one matching pair;'
+                    f' scanner reported {names or "nothing"}')
+        return None
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+why = selftest()
+if why is not None:
+    print(f'extern-arity: SELF-TEST FAILED -- {why}', file=sys.stderr)
+    print('extern-arity: the detector does not work, so a clean result below'
+          ' would mean nothing.', file=sys.stderr)
+    sys.exit(1)
+print('extern-arity: self-test ok (a 6-vs-5 mismatch is caught, a matching'
+      ' pair is not flagged)')
+
+bad, checked = scan(sources)
 
 for name, dfile, dline, want, sfile, sline, got in bad:
     print(f'extern-arity: {name}: {dfile}:{dline} declares {want} argument(s),'

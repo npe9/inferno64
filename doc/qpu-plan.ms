@@ -589,13 +589,30 @@ qputry: exec: gpu memory is not in RAM this kernel can reach
 Strip the L2 alias from 0xbeaccf60 and the physical address is
 0x3eaccf60, about 1002 MB. The boot log says
 .CW "arm-mem base 0x0 size 0x3c000000"
-\(em 960 MB. The firmware allocated above the ARM/VideoCore split, so
-the ARM cannot write the code it is being asked to run, and the driver
-is right to refuse. Changing the window would not fix that; changing
+\(em 960 MB. So the allocation is outside what the firmware told the
+kernel its RAM is.
+.PP
+.B "BUT THE REFUSAL IS THE KERNEL'S POLICY, NOT A MEASURED FAULT,"
+and the distinction matters because the reasoning is otherwise circular.
+The driver refuses because the address is outside what
+.CW confinit
+mapped, and
+.CW confinit
+mapped what the same mailbox report described. Nothing here has shown
+that an ARM access to
+.CW 0x3eaccf60
+actually faults \(em only that this kernel declined to map it. The
+refusal is almost certainly right, and it is still an assumption.
+.PP
+.B "The cheap test is a mapping, not a card edit."
+Mapping the VideoCore region read\-only and reading one word says
+whether the ARM can reach it at all, for the cost of a kernel rebuild.
+Only if it cannot is
 .CW gpu_mem
 in
 .CW config.txt
-is the knob, and it is a card edit and a reboot, not a code change.
+the answer, and that is a card edit and a reboot. Doing the card edit
+first would answer a question nobody has asked yet.
 .NH 2
 PROCESSED where this document recorded UNTOUCHED, on a card boot
 .PP
@@ -637,17 +654,35 @@ wait OUT OF TIME (no reply) after 1000000 us (asked 1000000)
 .I does
 touch the response buffer. Reproduced on two separate fresh card boots,
 one exec each. That is the only reading here that contradicts the
-sections above, and the candidate explanation is in those sections'
-own terms: they record that the ungated state
-.B "survives a JTAG boot and does not survive"
+sections above.
+.PP
+.B "TWO VARIABLES CHANGED AT ONCE AND I CANNOT SAY WHICH MOVED IT."
+The earlier UNTOUCHED readings were JTAG boots of
+.I that
+kernel; mine are card boots of the
+.I merged
+kernel. Boot path and kernel both differ, so neither can be credited.
+The plan above supplies a reason the boot path might matter \(em it
+records that the ungated state survives a JTAG boot and does not
+survive
 .IR hardreset ,
-so a JTAG boot inherits whatever the previous firmware session left and
-is not a clean slate. A card boot is a firmware restart. If that is the
-difference, then
-.B "the tag response is written only when the firmware session is fresh,"
-which is testable with one
-.I hardreset
-and one exec and would be worth the boot.
+so a JTAG boot inherits the previous firmware session where a card boot
+is a firmware restart. But the kernel differs too, and not trivially:
+this one has
+.CW mboxvsync
+and
+.CW mboxvirtoffset
+and a double\-buffered framebuffer, and
+.CW screenbcm.c 's
+vsync waits use the same property channel the exec does.
+.PP
+.B "The experiment that separates them is one boot:"
+.I hardreset ,
+then a JTAG boot of
+.I "this merged kernel,"
+then exactly one exec. If it reads PROCESSED the kernel is responsible;
+if UNTOUCHED, the boot path is. It needs the adapter, which is not
+plugged in here, so it is not mine to run.
 .PP
 .B "AND MY REPLICATION OF IT WAS WORTHLESS, by this document's own rule."
 I read PROCESSED, doubted it, ran it three more times in the SAME boot,
