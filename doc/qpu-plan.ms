@@ -153,8 +153,46 @@ So the handler is
 .B "provoked by anything else #Q does,"
 each by a measurement rather than by argument.
 .PP
-.B "H5: the V3D read does NOT stall the bus, and the first report that it
-.B "did was retracted."
+.B "H5 IS ANSWERED: SET_ENABLE_QPU ungates the V3D register block, and
+.B "the 0xdeadbeef was the debugger's filler for a gated one."
+Measured on silicon in ONE firmware session with
+.CW 0x3f10001c
+reading
+.CW 00000102
+throughout as a control, and no hole probe anywhere near it:
+.DS
+.CW
+before enable   0x3fc00000: deadbeef
+echo qpuenable  answered, reply 0x0 (accepted)
+after enable    0x3fc00000: 02443356
+.R
+.DE
+.PP
+and the KERNEL'S OWN read, through
+.CW "ident force 1"
+rather than the debugger, gave
+.CW 0x02443356
+in the same session. Two independent readers agreeing is what settled
+it, after the control that would have settled it was disqualified for
+damaging a core.
+.PP
+.B "So the block is THERE and gated, and h2 is worth its boot:"
+.CW EXECUTE_QPU
+not answering is no longer explicable as a dead block, provided the
+exec is issued after
+.CW enable .
+.PP
+.B "Persistence, which matters for choosing a starting state."
+The ungated state survives a JTAG boot and does NOT survive
+.IR hardreset .
+So a JTAG boot inherits whatever the firmware session already had and is
+.I not
+a clean slate for this question;
+.I hardreset
+is.
+.PP
+.B "And the read does not stall. The first report that it did was
+.B "retracted."
 Both versions are recorded here because the retraction is the more
 useful result and because this plan carried the wrong one for a commit.
 .PP

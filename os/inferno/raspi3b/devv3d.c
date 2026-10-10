@@ -163,9 +163,21 @@ enum {
 	 * same script, which also left cpu0 unable to execute debug
 	 * opcodes).  So the caution stands on the asymmetry -- a wedge
 	 * costs a power cycle and a success buys little -- and not on
-	 * evidence.  It is a separate command needing an explicit force,
-	 * never part of a status read, and the battery puts it LAST and
-	 * after the domain has been asked to come on.
+	 * evidence.  It is a separate command needing an explicit force
+	 * and never part of a status read.
+	 *
+	 * SET_ENABLE_QPU UNGATES THIS BLOCK, measured on silicon in one
+	 * firmware session: IDENT0 reads 0xdeadbeef through a debugger
+	 * before it and 0x02443356 after, and the kernel's own read
+	 * agrees -- so that deadbeef was the debugger's filler for a
+	 * GATED block, not a bus value.  Reading a gated block therefore
+	 * answers "absent" about hardware that is there, which is why
+	 * `enable' has to come first.
+	 *
+	 * This comment used to say the battery asked for the domain
+	 * before reading, and NO question in it did; fixed there too.
+	 * The ungated state survives a JTAG boot and does NOT survive
+	 * hardreset, so a JTAG boot is not a clean slate for this.
 	 */
 	V3dbase	= 0x3fc00000,
 	V3dident0 = 0,		/* word offsets */

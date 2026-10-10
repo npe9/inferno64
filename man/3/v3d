@@ -133,14 +133,52 @@ So the hole is disqualified as a control: it does not fail the way a
 failed read fails, it damages a core. That matters because it was the
 only discriminator for whether the
 .B 0xdeadbeef
-above is three real reads of an undriven block or the debugger\'s filler
+above is three real reads of an undriven block or the debugger's filler
 for an access that silently did nothing.
 .B "That question is open and this page will not dress it up."
 .PP
 What the force rests on instead is the asymmetry: a wedge costs a power
-cycle, a success buys one register, and this driver never sets the V3D
-clock, so the block being read is not known to be on. One success does
-not make an access safe.
+cycle and a success buys one register. One success does not make an
+access safe \(em and by now there are four silicon reads of this
+address, two gated and two not, none of which stalled anything, so this
+page will not call the read dangerous either. It is undemonstrated in
+both directions.
+.PP
+.B "SET_ENABLE_QPU ungates the block, which changes what this command"
+.B "means."
+Measured on silicon in one firmware session, with
+.B 0x3f10001c
+reading
+.B 00000102
+throughout as a control:
+.IP
+.EX
+before enable   0x3fc00000: deadbeef
+echo qpuenable  answered, reply 0x0 (accepted)
+after enable    0x3fc00000: 02443356
+.EE
+.PP
+and the kernel's own read \(em the second of two independent readers
+\(em gave
+.B 0x02443356
+in the same session. So the
+.B 0xdeadbeef
+above is the debugger's filler for a GATED block, not a bus value, and
+that question is closed. Reading the block without
+.B enable
+answers
+.RB ` absent '
+about hardware that is there, so
+.B enable
+comes first.
+.PP
+The ungated state survives a JTAG boot and does
+.I not
+survive
+.IR hardreset ,
+so a JTAG boot is not a clean slate for this question and a
+.I hardreset
+is.
 .PP
 It is a separate command for
 that reason, never part of a status read.

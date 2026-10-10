@@ -259,9 +259,35 @@ arith)
 h2)
 	prologue
 	echo "echo '--- h2: execute from firmware-allocated memory. ENDS THE BOOT'"
+	#
+	# reset and enable FIRST, exactly as h1 does, so h1 and h2 differ
+	# in ONE variable -- the memory the code is fetched from -- and
+	# not two.  Without the enable this read the V3D block while it
+	# was still GATED, which is a sufficient reason for EXECUTE_QPU
+	# not to answer and would have been scored as `the memory was in
+	# the wrong place'.  SET_ENABLE_QPU ungating the block is
+	# measured: IDENT0 reads deadbeef before it and 0x02443356 after.
+	#
+	echo "echo reset >/dev/v3dctl"
+	echo "echo enable >/dev/v3dctl"
+	echo "cat /dev/v3dctl"
 	echo "echo gpualloc 4096 >/dev/v3dctl"
 	echo "cat /dev/v3dctl"
-	echo "echo exec 1 1 0 1 1000 2000 >/dev/v3dctl"
+	#
+	# qputry, not a bare `exec'.  THE EXEC NEEDS CODE AND NOTHING
+	# HERE LOADED ANY: v3dexecraw() refuses with "no code loaded"
+	# when v3d.ncode is 0, and `reset' above sets it to 0.  Measured
+	# under QEMU -- the h2 command list produced
+	#
+	#	echo: write error: no code loaded
+	#
+	# so this question would have spent a board boot without ever
+	# sending EXECUTE_QPU, and the silence would have been scored as
+	# the hypothesis failing.  qputry writes the four words to
+	# /dev/v3dcode and then issues its own exec (appl/cmd/qputry.b),
+	# which is how `arith' already reaches the mailbox.
+	#
+	echo "qputry 0x11111111 0x22222222 0x33333333 0x44444444"
 	echo "cat /dev/v3dctl"
 	echo "echo gpufree >/dev/v3dctl"
 	epilogue
@@ -271,7 +297,21 @@ h1)
 	echo "echo '--- h1: execute from our own alias. ENDS THE BOOT'"
 	echo "echo reset >/dev/v3dctl"
 	echo "echo enable >/dev/v3dctl"
-	echo "echo exec 1 1 0 1 1000 2000 >/dev/v3dctl"
+	#
+	# qputry, not a bare `exec'.  THE EXEC NEEDS CODE AND NOTHING
+	# HERE LOADED ANY: v3dexecraw() refuses with "no code loaded"
+	# when v3d.ncode is 0, and `reset' above sets it to 0.  Measured
+	# under QEMU -- the h2 command list produced
+	#
+	#	echo: write error: no code loaded
+	#
+	# so this question would have spent a board boot without ever
+	# sending EXECUTE_QPU, and the silence would have been scored as
+	# the hypothesis failing.  qputry writes the four words to
+	# /dev/v3dcode and then issues its own exec (appl/cmd/qputry.b),
+	# which is how `arith' already reaches the mailbox.
+	#
+	echo "qputry 0x11111111 0x22222222 0x33333333 0x44444444"
 	echo "cat /dev/v3dctl"
 	epilogue
 	;;
@@ -279,6 +319,16 @@ h5)
 	prologue
 	echo "echo '--- h5: the V3D IDENT0 register. MIGHT hang the board'"
 	echo "echo 'one word, and force is required: see man/3/v3d'"
+	#
+	# ENABLE FIRST.  This question used to read the register block
+	# without it, and a gated block reads as 0xdeadbeef through a
+	# debugger -- so the question would have been answered `absent'
+	# about hardware that is there.  man/3/v3d and devv3d.c both
+	# claimed this battery asked for the domain before reading, and
+	# neither this nor any other question did.
+	#
+	echo "echo enable >/dev/v3dctl"
+	echo "cat /dev/v3dctl"
 	echo "echo ident force 1 >/dev/v3dctl"
 	echo "cat /dev/v3dctl"
 	epilogue
