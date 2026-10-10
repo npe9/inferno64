@@ -50,7 +50,7 @@ static	QLock	dllock;
 static	Dyndev**	finddyndev(char*);
 static	int	matched(Dyndev*, char*, char*);
 
-extern	Dynobj*	kdynloadfd(int, Dynsym*, int, ulong);
+extern	Dynobj*	kdynloadfd(int, Dynsym*, int);
 
 static void
 dlfree(Dyndev *l)
@@ -88,7 +88,7 @@ dlload(char *path, Dynsym *tab, int ntab)
 	l->path = strdup(path);
 	if(l->path == nil)
 		error(Enomem);
-	l->o = kdynloadfd(fd, tab, ntab, 0);
+	l->o = kdynloadfd(fd, tab, ntab);
 	if(l->o == nil)
 		error(up->env->errstr);
 	poperror();

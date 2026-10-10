@@ -1,7 +1,14 @@
 # Mismatches that are understood.  Anything NOT listed here fails the
 # run; this file is the difference between a check and a tool that
-# always says no.  Format: <name> <tab> reason.
+# always says no.
+#
+# Format:  <file>:<name> <tab> reason
+#
+# KEYED BY FILE, not by name alone.  It was keyed by name, and one entry
+# written about os/inferno/port/devdynld.c silently excused the same
+# mismatch in emu/port/devdynldx.c -- a second file, in a different
+# build, that nobody had looked at.  A baseline that over-matches is the
+# same defect as a check that cannot fail.
 #
 # Each line is a claim someone verified.  Re-verify before adding one.
-log	devbench.c defines a kernel logger log(char*, ...) at file scope while lib.h declares libc's double log(double).  A NAME COLLISION between two different functions, not a miscounted call: nothing calls log() expecting the maths function in a kernel that links devbench.o.  Worth fixing by renaming the logger, which is not this tool's business.
-kdynloadfd	devdynld.c declares and calls a 4-parameter kdynloadfd while both implementations, dynld.c and nodynld.c, define 3.  A REAL mismatch in code NO BOARD BUILDS: every config in os/inferno lists nodynld and none lists devdynld.  On the arm64 ABI the extra argument lands in x3 and is ignored, so it is latent rather than live, and it stays listed here until devdynld.c is either built or deleted.
+os/inferno/port/lib.h:log	devbench.c defines a kernel logger log(char*, ...) at file scope while lib.h declares libc's double log(double).  A NAME COLLISION between two different functions, not a miscounted call: nothing calls log() expecting the maths function in a kernel that links devbench.o.  The fix is to rename the logger, which is a change to devbench.c and not to this tool.

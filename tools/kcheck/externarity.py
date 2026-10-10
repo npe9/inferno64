@@ -14,7 +14,13 @@ with NO FRAMEBUFFER AT ALL.  Nothing in the toolchain could catch it,
 because the prototype and the definition were in different files and
 neither tool looks across them.
 
-	python3 tools/kcheck/externarity.py [dir ...]
+	python3 tools/kcheck/externarity.py os/inferno/raspi3b \\
+		os/inferno/port emu/port
+
+Scan the directories of ONE LINK together.  Scanning a board directory
+alone cannot see a declaration and its definition in different
+directories, which is most of them: 226 declarations over the two os/
+directories, 265 with emu/port, against 37 for emu/port by itself.
 
 POSITIVE CONTROL, which is the only reason to believe any of this.
 Reproduce the framebuffer bug and the tool must name it:
@@ -117,10 +123,11 @@ def main():
                 msg = ('%s:%d: %s declared with %s parameter(s);'
                        ' defined with %s in %s'
                        % (f, line, name, abs(got), abs(want), where))
-                if name in known:
+                key = '%s:%s' % (f, name)
+                if key in known:
                     excused += 1
                     print('externarity: known: ' + msg)
-                    print('    ' + known[name])
+                    print('    ' + known[key])
                 else:
                     bad += 1
                     print(msg, file=sys.stderr)
