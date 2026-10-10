@@ -147,6 +147,17 @@
 # well-formed and says NOTHING about the value.  There is no
 # nonsense-VALUE control, only the nonsense-TAG one.
 #
+# WRITE THESE TO board.cmd; DO NOT TYPE THEM AT A CONSOLE.  A console
+# can deliver a character twice -- seen under QEMU as `/dev//v3dctl' --
+# and a doubled digit here is silent and wrong: in
+#
+#	echo exec 1 1 0 1 1000 2000 >/dev/v3dctl
+#
+# a doubled 0 changes the timeout tenfold, and the answer you get is to
+# a question you did not ask.  Every line below is meant to go into
+# board.cmd as a file, where nothing retypes it.  Under QEMU, drive it
+# with os/inferno/raspi3b/qemufeed.sh, which checks what arrived.
+#
 set -e
 cd "$(dirname "$0")/../.."
 
