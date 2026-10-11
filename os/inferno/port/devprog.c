@@ -15,16 +15,25 @@
 int	SECURE = 0;
 
 /*
- * See dis.c's disracepid comment.  Cheap, capped reachability probe:
- * did any progpid()-based read here ever find a pid that dis.c's
- * delprog() had, at that same instant, mid-way through closing its
- * pgrp/fgrp/egrp/sigs (o->pgrp etc possibly already freed, p not yet
- * unlinked from proghash[])?  Diagnostic only; see doc/inferno-ports.ms.
+ * The delprog close-window counters.  dis.c's delprog() sets Pclosing on a
+ * Prog and then RELEASES the interpreter token to close its pgrp, fgrp, egrp
+ * and sigs -- so a reader here can find the Prog with those groups being
+ * freed under it.  It is no longer diagnostic only: proglive() refuses such a
+ * Prog, and these count the event on either side of that guard.
+ *
+ * dishitcount  readers that REACHED a closing Prog (the print is capped at 8)
+ * disraceblocked  readers that were then REFUSED one
+ *
+ * They count the same event and should be equal; if they ever disagree, one
+ * of the two is wrong.  None of them is static, so tools/jtag/vmheld can read
+ * them over JTAG at a wedge where the capped prints are useless -- and
+ * dishitcount is non-static DELIBERATELY: 7l does emit a symbol for a static
+ * and vmheld was reading it that way, but a name the linker is free to drop
+ * is not something a debugging tool should depend on.
  */
-extern int disracepid;
-static int dishitcount;
-int disreachcount;
-int disraceblocked;		/* readers refused a Prog in its close window */		/* not static: read over JTAG at a wedge */
+int dishitcount;
+int disreachcount;		/* progpid() reached, i.e. /prog entries read */
+int disraceblocked;		/* readers refused a Prog in its close window */
 static int disreachsaid;
 
 /*
@@ -57,7 +66,24 @@ disracecheck(Prog *p, char *where)
 		print("devprog: %s progpid() reached, count %d%s\n",
 			where, disreachcount,
 			disreachsaid == 8? " (last of these; read disreachcount)": "");
-	if(p != nil && disracepid != -1 && p->pid == disracepid && dishitcount < 8) {
+	/*
+	 * Pclosing, NOT disracepid, and that changes what the count means.
+	 *
+	 * disracepid is ONE SLOT: an overlapping delprog overwrites it, and
+	 * whichever of the two finishes first sets it back to -1 -- so during
+	 * an overlap the still-open window was neither watched nor reported
+	 * open.  Measured on this board: 539 of 21713 windows overlapped, so
+	 * the old test missed about one in forty and every count it produced
+	 * was a floor.
+	 *
+	 * The flag is per-Prog and is never cleared, so this is exact.  It
+	 * now tests the same condition proglive() refuses on, which is the
+	 * point: the number of times a reader reached a closing Prog and the
+	 * number of times one was refused are the same event counted on
+	 * either side of the guard, and if they ever disagree one of the two
+	 * is wrong.
+	 */
+	if(p != nil && (p->flags & Pclosing) && dishitcount < 8) {
 		dishitcount++;
 		print("devprog: %s touched pid %d live inside its own delprog close window\n",
 			where, p->pid);

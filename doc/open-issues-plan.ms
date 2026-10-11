@@ -17550,3 +17550,57 @@ No speculative guard was added to
 .CW killprog
 or to the rename walk. A prescribed change that cannot be shown to be
 needed is the thing H3 in this file exists to refuse.
+.NH 2
+The detector is exact now, and the two counts agree within their noise
+.LP
+.CW disracecheck()
+tested
+.CW "p->pid == disracepid"
+\(em one slot, so an overlapping
+.CW delprog
+overwrote the pid being watched and whichever finished first cleared it.
+Every count it ever produced was a floor. It tests
+.CW "p->flags & Pclosing"
+now, which is per\-Prog and never cleared, so it is exact.
+.PP
+.B "What that costs: hits and refusals are now the same test,"
+counted either side of
+.CW proglive() 's
+guard. They agree by construction rather than independently, which was
+the cross\-check that first proved the guard fires. The equality is still
+worth printing \(em if they ever disagree, one of the two is wrong \(em
+but it is no longer evidence about the guard.
+.PP
+.B "The comparison that IS meaningful, and it does not resolve anything:"
+.P1
+kernel                   windows  overlaps  hits  hits/window
+single-slot disracepid     21713      539     5     2.30e-4
+exact Pclosing             14252      356     4     2.81e-4
+.P2
+The exact detector found slightly more per window \(em the direction a
+2.4% blindness predicts \(em but
+.B "four events against five cannot resolve a two per cent effect."
+Hundreds would be needed. So the right statement is that the two agree
+within the noise of single\-digit counts, which is also what the overlap
+fraction predicted: the old detector's floor was close to the true
+number, not orders below it.
+.PP
+.CW dishitcount
+is no longer
+.CW static .
+7l does emit a symbol for a static and
+.CW vmheld
+was reading it that way, but a name the linker is free to drop is not
+something a debugging tool should rest on.
+.PP
+Verified: five
+.CW efs-fault
+repeats,
+.CW "EFS-FAULT-OK"
+five times, 13971 windows in the run, 4 detections and 4 refusals, no
+panic. Gates green,
+.CW raspi3b
+44 markers and
+.CW raspi3b-usb
+52. One new long VM hold appeared during the run (3 to 4), the first in
+these JTAG arms, and is noted rather than explained.
