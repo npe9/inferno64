@@ -17961,7 +17961,7 @@ What is still not done, precisely
 .B "The pointer does not move."
 .CW usbd
 attaches the boot\-mouse driver
-.CW ( "boot mouse on ep5.1" )
+.CW "boot mouse on ep5.1"
 and
 .CW mousereader
 blocks in
@@ -17986,7 +17986,7 @@ Ruled out already:
 and
 .CW SET_PROTOCOL
 are both sent
-.CW ( hidstart ,
+.CW hidstart ,
 duration 0 and boot protocol) and neither reports an error, so the
 device is configured as a boot mouse.
 .IP \(bu
