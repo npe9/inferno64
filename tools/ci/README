@@ -1,0 +1,78 @@
+tools/ci - workflow files staged here because they cannot be pushed from
+           a session whose token lacks `workflow' scope
+
+	cp tools/ci/*.yml .github/workflows/
+	git add .github/workflows && git commit
+
+WHY THEY ARE NOT ALREADY THERE.  GitHub refuses a push that creates or
+updates anything under .github/workflows unless the credential carries
+the `workflow' scope:
+
+	refusing to allow an OAuth App to create or update workflow
+	`.github/workflows/ci.yml` without `workflow` scope
+
+That is the same refusal that stopped 24 release tags from being pushed
+on 11 October 2026 (see doc/open-issues-plan.ms, the CI/CD section).  So
+these are ordinary files in tools/, which pushes fine, and moving them
+is one command with a credential that has the scope.
+
+WHAT IS HERE
+
+  host-gates.yml    T0+T1.  Builds the toolchain and every kernel, then
+                    runs tests/toolchain.  Minutes.  Every push.
+  boardsuite.yml    T2.  The 29 QEMU configurations in the container,
+                    with the patched qemu the Pi boards need.  Tens of
+                    minutes.  Nightly and on demand.
+
+AND ONE CHANGE THAT NEEDS NO NEW FILE, which is the most valuable single
+edit and also cannot be made from here, because editing an existing
+workflow needs the same scope:
+
+	.github/workflows/quick-smoke.yml carries
+
+		continue-on-error: true
+
+	DELETE THAT LINE.  It makes the job a permanent green: it can
+	fail outright and the check still reports success.
+
+HOW FAR THESE HAVE BEEN VERIFIED, stated because it is not far.  The
+build steps in host-gates.yml are transcribed from docker/build-and-run,
+which is the recipe the container has been using, and the boardsuite
+invocation is the one tools/boardsuite/run and docker/boardsuite.sh
+document.  THE YAML ITSELF HAS NEVER RUN: this session has no Actions
+runner, and the build chain could not be rehearsed locally either,
+because `cd utils && mk install' overwrites MacOSX/arm64/bin -- the
+toolchain binaries other sessions in this tree are using.  Expect the
+first run to need a fix, and read the step names rather than trusting
+the whole thing.
+
+TWO THINGS THAT WILL BITE ON A RUNNER AND ARE HANDLED HERE
+
+  - mkconfig carries an absolute ROOT and SYSHOST=MacOSX.  Both are
+    rewritten in the build step, exactly as docker/build-and-run does.
+    In this working tree that file is a load-bearing local edit and must
+    not be committed; in CI it is a fresh clone and rewriting it is
+    correct.
+
+  - docker/boardsuite.sh defaults to BOARDSUITE_PLATFORM=linux/arm64.
+    A GitHub x86_64 runner would emulate that and crawl, so
+    boardsuite.yml sets linux/amd64 explicitly.
+
+THE GRADING RULES these encode, each of which was paid for in
+doc/open-issues-plan.ms:
+
+  - judge a gate by its EXIT STATUS, never by grepping or tailing its
+    output;
+  - tests/toolchain has THREE states -- pass, defect, could not run --
+    and a could-not-run is a self-disabled test, i.e. a silent coverage
+    hole, not a yellow light;
+  - on a boardsuite marker diff a REMOVED marker is a regression and an
+    ADDED one means "re-record the baseline": both fail, differently,
+    and neither is green;
+  - keep the console rings as artifacts on success as well as failure,
+    because a ring is this project's only post-mortem channel.
+
+WHAT CI CANNOT DO HERE.  There is no board on a runner, so nothing about
+four-processor behaviour, USB split transactions, framebuffer tearing, or
+anything read with tools/jtag/* can be asserted at any tier.  A green CI
+does not mean the board works.

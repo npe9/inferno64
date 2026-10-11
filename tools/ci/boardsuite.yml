@@ -1,0 +1,65 @@
+#
+# T2: the 29 QEMU board configurations, in the container, with the
+# patched qemu the six Pi ones need.
+#
+# See tools/ci/README.  Tens of minutes, so NOT on every push: nightly,
+# on demand, and on a pull request carrying the `boardsuite' label.
+#
+name: Board suite (29 QEMU configurations)
+
+on:
+  schedule:
+    # 04:00 UTC daily.  A suite that runs weekly is one nobody trusts to
+    # bisect against; one that runs per-push costs more than it returns.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize]
+
+jobs:
+  boardsuite:
+    # Only on demand, nightly, or when a PR is labelled -- not on every
+    # push to a labelled PR's branch unless the label is still on it.
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'boardsuite')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache the patched qemu image layer
+        # The patched qemu is a source build and is the long pole.  Key it
+        # on the qemu version in the Dockerfile plus a hash of every
+        # patch, so it rebuilds exactly when a patch changes and not when
+        # the kernel does.
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-qemu
+          key: qemu-${{ hashFiles('docker/Qemu.Dockerfile', 'tools/qemu-patches/*.patch') }}
+
+      - name: Run the suite
+        # docker/boardsuite.sh `all' builds the patched-qemu image and the
+        # Pi-capable image, then builds the tree FROM SOURCE inside it --
+        # which is the honest way round, because .gitignore says kernel
+        # binaries do not belong in the tree.
+        #
+        # BOARDSUITE_PLATFORM is set explicitly: the script defaults to
+        # linux/arm64, and an x86_64 runner would emulate that and crawl.
+        env:
+          BOARDSUITE_PLATFORM: linux/amd64
+        run: sh docker/boardsuite.sh all
+
+      - name: Keep every configuration's console log
+        # ON SUCCESS TOO.  The ring is this project's only post-mortem
+        # channel; a failure with no log is a failure nobody can diagnose,
+        # and a pass with no log cannot be compared against the next one.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boardsuite-logs
+          path: |
+            /tmp/boardsuite-*/**
+            ${{ runner.temp }}/boardsuite-*/**
+          if-no-files-found: warn
+          retention-days: 30
