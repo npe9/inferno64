@@ -17438,17 +17438,46 @@ one whose close window is open \(em because holding the token does not
 prevent that, a
 .CW delprog
 that has already released is inside its window while this runs. It is
-safe because
+safe, and
+.B "this was checked by READING rather than by the names of the four"
+.B "functions,"
+which is how it was first asserted here.
+.CW "free(o->user)"
+is at
+.CW dis.c:515 ,
+in
+.CW delprog 's
+.I tail
+beside
+.CW free(p) ,
+after the
+.CW acquire()
+\(em so the full order is
+.IP
+.EX
+set Pclosing, release()
+close pgrp/fgrp/egrp/sigs    <- the window; o->user still valid
+acquire()
+delgrp, unlink from isched, remove from proghash
+free(o->user), free(p)
+.EE
+.PP
+Everything from the
+.CW acquire()
+down runs under the token, so a reader holding the token either finds
+the
+.CW Prog
+with a valid
 .CW o->user
-is not one of the four things the window frees;
+or cannot find it at all. None of
 .CW closepgrp ,
 .CW closefgrp ,
 .CW closeegrp
-and
+or
 .CW closesigs
-take the groups, not the
+reaches an
 .CW Osenv
-and not the user string.
+field: they free mount entries, the fd array and the signal keys.
 .PP
 .B "consintrproc and killgrp DO re-look-up a Prog by pid and act on it,"
 which is the same shape:
