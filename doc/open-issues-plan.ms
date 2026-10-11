@@ -99,8 +99,19 @@ now \(em kerndate for identity,
 advancing for liveness \(em and compares tick counts so that re-booting
 the same build is still detectable.
 .LP
-.B "The 9 October text follows and is kept for the verification it asks for."
-.LP
+.NH 2
+Superseded, 9 October 2026 \(em kept for the verification it asks for
+.PP
+.B "WHAT FOLLOWS IS NO LONGER CURRENT GUIDANCE."
+It was written while the card was out of the Pi and says so; in
+particular its "until then only JTAG\-reachable work is open" and "no
+change that needs four cores to validate should be started" were about
+.I that
+situation. The card is in. The standing restriction is the narrower one
+stated above: a JTAG boot is one processor, so a four\-core question
+needs a card boot \(em which is a reason to grade the USB fix on a card
+boot, not a reason to leave work unstarted.
+.PP
 .B "THE CARD IS BACK IN THE PI AND IT BOOTS."
 Confirmed 9 October 2026.  What follows was written while the card was out and
 is kept because the verification it asks for is the one that was then done.
@@ -16836,3 +16847,61 @@ The diagnostic counters and prints are deliberately
 ported. They earned their place on the 3B by being the instruments that
 found this; carrying them to a board nobody can read them on is
 divergence for nothing.
+.NH 2
+The next hardware test is a LOW-SPEED mouse, and it is a different path
+.PP
+.B "What the fix exercised was a full-speed CONTROL transfer."
+A mouse is
+.B "low speed"
+and its reports arrive on an
+.B "interrupt IN endpoint over PERIODIC splits,"
+which is a different scheduling discipline from control: the start\-split
+goes in one microframe and the complete\-splits in the ones that follow,
+and a NAK means re\-issue the start\-split next period rather than retry
+the complete\-split.
+.B "Nothing measured this week touched it."
+.PP
+What is known in its favour:
+.CW chansetup()
+sets
+.CW Lspddev
+for
+.CW Lowspeed
+and enables the split from
+.CW dev->tthub
+regardless of transfer type, so a low\-speed device's
+.I control
+stage now takes the path that works \(em which is the stage that was
+failing, and the stage a mouse must get through before its interrupt
+endpoint matters at all.
+.PP
+.B "THE PREDICTION, so the next ring can be read against it:"
+a low\-speed mouse should enumerate \(em
+.CW "port N: low epX.0 ... class 3"
+\(em and if anything then fails it should fail on
+.CW "epX.1"
+with
+.CW "type 3"
+(Tintr), not on
+.CW epX.0 .
+Both diagnostics are in
+.CW chanio ,
+which every transfer type goes through, so the ring will name the stage
+either way:
+.CW STALL
+lines carry the endpoint, address, stage and split phase, and
+.CW "moved NOTHING"
+lines carry
+.CW Pktcnt ,
+.CW Xfersize
+and the DMA pointer before and after.
+.PP
+No HID device has been plugged into this board since the fix, and the
+.CW USB-MOUSE-OK
+and
+.CW USB-KBD-OK
+markers in
+.CW doc/inferno-ports.ms
+remain
+.B "QEMU, root-port, non-split"
+\(em they have never meant anything about this path.
