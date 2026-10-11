@@ -207,6 +207,67 @@ retry:
 	for(i = 0; i < ctlr->nchan; i++)
 		if((bitmap & (1<<i)) == 0){
 			ctlr->chanbusy = bitmap | 1<<i;
+			/*
+			 * A FRESH CHANNEL STARTS WITH A CLEAN ACCUMULATOR.
+			 *
+			 * HYGIENE, AND NOT THE CAUSE OF ANYTHING OBSERVED --
+			 * this comment first claimed it was "why no
+			 * non-high-speed device would enumerate on this
+			 * board", which was written before it was tested and
+			 * is false.  With the clear in place the three
+			 * failing devices stall identically: 24 stalls,
+			 * hcint 0000000a, all START-split, byte for byte the
+			 * same signature.  So the Stall really does arrive
+			 * from the hardware for that transfer, and the
+			 * reasoning below describes a latent hazard rather
+			 * than the live bug.
+			 *
+			 * It is kept because the hazard is real by
+			 * construction, not hypothetical:
+			 *
+			 * The interrupt handler ORs into ctlr->hcintr[chan]
+			 * (`hcintr[i] |= v'), so its bits are sticky until
+			 * something clears them.  chanio() clears it inside
+			 * its loop, but a transfer that ends via
+			 * error(Estalled) leaves by longjmp and runs none of
+			 * that -- and neither chanalloc nor chanrelease
+			 * touched it.  So the next user of the channel
+			 * inherited the last one's Stall.
+			 *
+			 * That is fatal specifically for SPLIT transfers.
+			 * chanio's first act is to read the accumulator, to
+			 * catch a late event from the PREVIOUS attempt (see
+			 * the comment there); on a first iteration there is no
+			 * previous attempt and the value should be zero.  With
+			 * a stale Chhltd|Stall it instead satisfies
+			 *
+			 *   if(split && (i & ~(Chhltd|Nak|Ack|Nyet)) != 0
+			 *            && (i & Chhltd)) goto Result;
+			 *
+			 * exactly -- Stall is outside that mask and Chhltd is
+			 * set -- and lands on `if(i & Stall) error(Estalled)'.
+			 * The transfer is reported stalled before the channel
+			 * has been enabled for it even once.  The `split &&'
+			 * guard is why high-speed devices were unaffected.
+			 *
+			 * So a stale Stall COULD be reported before the
+			 * channel has been enabled even once.  That it is not
+			 * what happens here was established by making this
+			 * change and measuring no difference.
+			 *
+			 * Cleared here rather than in chanrelease so it holds
+			 * however the previous owner left -- including the
+			 * longjmp, which is the path that leaves a bit behind.
+			 *
+			 * AND THE SPEC PUZZLE IT WAS MEANT TO EXPLAIN IS STILL
+			 * OPEN: USB 2.0 permits a hub only ACK, NAK or NYET in
+			 * answer to a start-split, never STALL.  The bit is
+			 * genuinely from this transfer, so either the
+			 * controller raises Stall for something that is not a
+			 * device stall, or the start-split is being issued in
+			 * a way the hub objects to.  Not answered.
+			 */
+			ctlr->hcintr[i] = 0;
 			unlock(&ctlr->chanlock);
 			return &ctlr->regs->hchan[i];
 		}
