@@ -1461,6 +1461,41 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 							(hc->hctsiz & Pktcnt)>>OPktcnt,
 							ep->maxpkt, len, npkt,
 							ep->pollival, iters);
+					/*
+					 * AND THE PERIODIC SCHEDULING STATE,
+					 * which is what the plan asked for
+					 * next.  A NAK is not a valid
+					 * translator answer to a periodic
+					 * complete-split -- NYET, the data or
+					 * an error are -- so the question is
+					 * whether the core is servicing this
+					 * channel from the PERIODIC request
+					 * queue at all.
+					 *
+					 * hcfg's Fslspclksel and hfir's Frint
+					 * are never written by this driver,
+					 * so both are at reset defaults and
+					 * are printed rather than assumed.
+					 * hptxsts gives the periodic queue
+					 * and FIFO space; if the periodic
+					 * queue is never consumed, that is
+					 * the answer.
+					 */
+					if(nintrnak <= 2)
+						print("usbdwc:   periodic state:"
+							" hcfg %8.8ux (clksel %d)"
+							" hfir %8.8ux (frint %d)"
+							" hfnum %8.8ux hptxsts"
+							" %8.8ux (fifo %d queue"
+							" %d) hcchar %8.8ux\n",
+							r->hcfg,
+							r->hcfg & Fslspclksel,
+							r->hfir,
+							r->hfir & Frint,
+							r->hfnum, r->hptxsts,
+							r->hptxsts & Ptxfspcavail,
+							(r->hptxsts & Ptxqspcavail)>>16,
+							hc->hcchar);
 				}
 				if(((ep->ttype != Tbulk && ep->ttype != Tintr)
 				    || dir != Epin) && naks > Maxnak){
@@ -2282,6 +2317,34 @@ portreset(Hci *hp, int port, int on)
 		r->hport0 = Prtpwr | b;
 	if((s & Prtena) == 0)
 		print("usbdwc: host port not enabled after reset\n");
+	/*
+	 * THE PHY CLOCK SELECT WAS INVESTIGATED HERE AND RULED OUT.  Left
+	 * as a note so it is not re-derived from the same discrepancy.
+	 *
+	 * hcfg's Fslspclksel tells the core which clock to time the bus
+	 * on, and this driver never writes hcfg -- so it keeps whatever
+	 * reset or the Pi firmware left.  Measured with the LAN9514 hub on
+	 * the root port:
+	 *
+	 *   hprt 00001005   Prtspd 0, HIGH speed
+	 *   hcfg 00000001   Fslspclksel 1, the 48 MHz FULL-speed clock
+	 *   hfir 0000ea60   FrInt 60000, the 60 MHz value
+	 *
+	 * which is a genuine three-way disagreement, and it predicted the
+	 * symptom well: the core derives microframe boundaries from this
+	 * clock, control and bulk are not microframe-scheduled and work
+	 * over splits here, and PERIODIC transfers are and do not.
+	 *
+	 * IT IS NOT THE CAUSE.  Setting it from the port's reported speed
+	 * was tried two ways -- after the reset, and again followed by a
+	 * second port reset so the core re-times, which is the order dwc2
+	 * uses.  Both changed hcfg and neither changed the mouse.  A later
+	 * boot then ran with clksel already 0 from power-on (hcfg survives
+	 * a JTAG restart), with frint 60000 matching it and hptxsts
+	 * showing fifo 512 queue 8, and the interrupt endpoint still NAK'd
+	 * every complete-split.  So the periodic path fails with the clock
+	 * select RIGHT as well as wrong.
+	 */
 }
 
 static int

@@ -18188,3 +18188,94 @@ prints the first eight with phase, hctsiz decoded,
 and
 .CW pollival ,
 so none of the above has to be re\-derived.
+.NH 2
+The periodic split IN: everything measurable, measured \(em and ruled out
+.LP
+The handover for whoever picks this up. All of it read off the board, not
+derived:
+.P1
+hprt    00001005   Prtspd 0            the root port is HIGH speed
+hcfg    00000000   Fslspclksel 0       the correct clock for that
+hfir    0000ea60   FrInt 60000         the 60 MHz value, agreeing
+hptxsts 00080200   fifo 512 queue 8    periodic FIFO and queue have space
+hcint   00000012   Chhltd|Nak          a clean NAK, no error bits
+phase              COMPLETE-split      from the captured value
+hctsiz  00100008   xfersize 8 pktcnt 2 maxpkt 5 len 8 npkt 2 pollival 10
+.P2
+.PP
+.B "What is therefore NOT the problem:"
+.IP \(bu
+the split state machine \(em the start\-split is promoted and the
+complete\-split
+.I is
+issued, read from the captured phase rather than the register;
+.IP \(bu
+the driver reaching the wire \(em
+.CW usbd
+is blocked in
+.CW read(ep5.1/data)
+with its fd open, and the transfer is programmed and enabled;
+.IP \(bu
+HID configuration \(em
+.CW hidstart
+sends
+.CW SET_IDLE
+(duration 0) and
+.CW SET_PROTOCOL
+(boot) and neither errors;
+.IP \(bu
+the packet count \(em clamping periodic splits to
+.CW "xfersize 5 pktcnt 1"
+worked and changed nothing;
+.IP \(bu
+the PHY clock select \(em tried wrong (1), tried set to right (0), and
+tried right from power\-on with a second port reset. The endpoint NAKs in
+every one of those states;
+.IP \(bu
+periodic FIFO or queue exhaustion \(em both report space at the moment of
+the NAK.
+.PP
+.B "FIVE CHANGES WERE MADE AND ALL FIVE REVERTED."
+Each came from a sound argument \(em three from USB 2.0, two from a
+measured register disagreement \(em and not one moved the symptom. The
+accounting is in this file because the pattern is the lesson: a correct
+reading of the specification says what the hardware may do, and a
+register that disagrees with another register is a real defect, but
+neither is evidence about
+.I this
+failure until it is tested.
+.PP
+.B "WHAT IS LEFT, and it is a project rather than a patch:"
+a NAK is not a valid translator answer to a periodic complete\-split
+\(em NYET, the data, or an error are \(em so the remaining suspicion is
+.I when
+the complete\-split is issued. USB 2.0 requires it in the microframes
+following its start\-split; this driver sleeps
+.CW ep->pollival
+(10 ms) between attempts and re\-issues from the beginning, so the
+translator may never hold the report at the moment it is asked. Proving
+that needs the microframe number
+in
+.CW hfnum 's
+.CW Frnum
+is already in the diagnostic) at the start\-split and at each
+complete\-split, which is a change to
+.CW chanio 's
+split loop rather than a register write.
+.PP
+The diagnostic that produced all of the above is committed and bounded:
+.CW "INTR-IN NAK"
+prints the first eight with phase, decoded
+.CW hctsiz ,
+.CW maxpkt ,
+.CW len ,
+.CW npkt
+and
+.CW pollival ,
+and the first two also dump
+.CW hcfg ,
+.CW hfir ,
+.CW hfnum ,
+.CW hptxsts
+and
+.CW hcchar .
