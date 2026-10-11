@@ -18072,3 +18072,119 @@ diverted into a queue nobody reads.
 as the explanation for this desk's deaf console \(em that has a
 documented cause of its own \(em but it is a second mechanism with the
 same symptom and it was live on every boot.
+.NH 2
+The periodic split IN, measured to the wire \(em and three reverted changes
+.LP
+Where the mouse actually stops, with every number read rather than
+derived:
+.P1
+ep5.1 INTR-IN NAK 1: hcint 00000012 COMPLETE-split
+  hctsiz 00100008 (xfersize 8 pktcnt 2)
+  maxpkt 5 len 8 npkt 2 pollival 10 iters 1
+.P2
+.IP \(bu
+.CW hcint
+is
+.CW Chhltd|Nak
+\(em a clean NAK, no error bits.
+.IP \(bu
+the phase is the
+.B complete
+split, read from the captured value and not from the register, so the
+start\-split was promoted and the complete\-split
+.I was
+issued. The split state machine is doing its job.
+.IP \(bu
+.CW usbd
+is alive and blocked in
+.CW read(ep5.1/data)
+with its fd open, so the read reaches the wire.
+.IP \(bu
+.CW SET_IDLE
+(duration 0) and
+.CW SET_PROTOCOL
+(boot) are both sent by
+.CW hidstart
+without error, so the device is configured as a boot mouse.
+.PP
+.B "So the DEVICE is answering `nothing to report' while being moved."
+.NH 2
+THREE SPECIFICATION-LED CHANGES, ALL REVERTED
+.LP
+Each was a sound reading of USB 2.0 and none was the defect. They are
+listed because the pattern is the lesson:
+.IP 1.
+.B "Pktcnt 1 for CONTROL splits."
+Dropped before building: 27 of the 30 captured control stalls were
+already
+.CW "pktcnt 1" ,
+so it explained nothing. Multi\-packet control splits demonstrably work
+now \(em an 18\-byte descriptor over
+.CW maxpkt
+8 is three packets and the mouse enumerates.
+.IP 2.
+.B "Promote a periodic start-split without an Ack"
+(USB 2.0 20.2: a periodic start\-split has no handshake). Built, and
+then shown to be a
+.B no\-op
+by an A/B with an honest probe: COMPLETE\-split with the change in and
+with it out. The evidence for it had been a diagnostic reading
+.CW hc->hcsplt
+after the loop cleared
+.CW Compsplt .
+.IP 3.
+.B "Pktcnt 1 for PERIODIC splits"
+(the translator buffers one packet per periodic endpoint per
+microframe). Built, and it did exactly what it was meant to \(em
+.CW "xfersize 5 pktcnt 1"
+instead of
+.CW "xfersize 8 pktcnt 2"
+\(em
+.B "and changed nothing:"
+still NAK, still
+.CW USB-MOUSE-NONE .
+Reverted.
+.PP
+.B "A prescribed change that cannot be shown to be needed does not ship,"
+which is the rule H3 in this file exists for, and three chances to break
+it in one night is the reason to write it down.
+.NH 2
+What the next session should look at
+.IP \(bu
+.B "Whether the core is treating the channel as PERIODIC at all."
+A NAK is not a valid translator response to a periodic complete\-split
+\(em NYET, the data, or an error are. Getting
+.CW Nak
+suggests the channel is being serviced from the
+.I non\-periodic
+request queue. The DWC OTG picks the queue from
+.CW hcchar 's
+.CW Eptype ,
+which is
+.CW Epintr
+here, so the next thing to read is what else the core needs before it
+will schedule a periodic channel: the frame interval in
+.CW HFIR ,
+the periodic request\-queue space in
+.CW HPTXSTS ,
+and whether
+.CW Oddfrm
+is being set from the frame the transfer will actually start in rather
+than the one the SOF handler last saw.
+.IP \(bu
+.B "The scheduling, which is the other half."
+A complete\-split must follow its start\-split within a few microframes.
+This driver sleeps
+.CW ep->pollival
+(10 ms here) between attempts and re\-issues from the beginning, so the
+translator may never hold data at the moment it is asked.
+.IP \(bu
+The diagnostic is in place and bounded:
+.CW "INTR-IN NAK"
+prints the first eight with phase, hctsiz decoded,
+.CW maxpkt ,
+.CW len ,
+.CW npkt
+and
+.CW pollival ,
+so none of the above has to be re\-derived.

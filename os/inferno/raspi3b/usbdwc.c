@@ -842,6 +842,34 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		n = ROUND(len, ep->maxpkt);
 	else
 		n = len;
+	/*
+	 * ONE PACKET PER PERIODIC SPLIT WAS TRIED HERE AND REVERTED, which
+	 * is worth a note so it is not re-derived.
+	 *
+	 * A hub's transaction translator buffers one packet per periodic
+	 * endpoint per microframe, so asking a periodic split for two
+	 * looked wrong, and it was measurably what this driver did: a
+	 * low-speed boot mouse on ep5.1 was programmed
+	 *
+	 *   maxpkt 5 len 8 npkt 2, xfersize 8 pktcnt 2
+	 *
+	 * because usbd reads into an 8-byte buffer and HOWMANY(8,5) is 2.
+	 * Clamping to `n = maxpkt, npkt = 1' for Tintr/Tiso splits gave
+	 * exactly the intended programming -- xfersize 5 pktcnt 1 --
+	 * AND CHANGED NOTHING: the device still NAK'd every
+	 * complete-split while being moved, and USB-MOUSE-NONE still.
+	 *
+	 * So it is not the blocker and it does not ship.  Two other
+	 * specification-led changes went the same way the same night (a
+	 * periodic start-split promoted without an Ack, and this clamp for
+	 * CONTROL transfers), and in both cases the reading of the
+	 * specification was sound and the defect was elsewhere.
+	 *
+	 * Note for whoever picks this up: ROUND here is the power-of-two
+	 * form, so ROUND(8,5) is 8 rather than 10, which is why xfersize
+	 * did not agree with HOWMANY's packet count.  Harmless, and
+	 * confusing to read.
+	 */
 	hc->hctsiz = n | npkt<<OPktcnt | pid;
 	hc->hcdma  = dmaaddr(a);
 
@@ -1420,12 +1448,19 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 						print("usbdwc: ep%d.%d INTR-IN"
 							" NAK %d: hcint %8.8ux"
 							" %s hctsiz %8.8ux"
+							" (xfersize %d pktcnt %d)"
+							" maxpkt %ld len %d"
+							" npkt %d pollival %ld"
 							" iters %d\n",
 							ep->dev->nb, ep->nb,
 							naks, i,
 							cmpl? "COMPLETE-split":
 							  "START-split",
-							hc->hctsiz, iters);
+							hc->hctsiz,
+							hc->hctsiz & Xfersize,
+							(hc->hctsiz & Pktcnt)>>OPktcnt,
+							ep->maxpkt, len, npkt,
+							ep->pollival, iters);
 				}
 				if(((ep->ttype != Tbulk && ep->ttype != Tintr)
 				    || dir != Epin) && naks > Maxnak){
