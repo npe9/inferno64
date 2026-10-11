@@ -15615,11 +15615,11 @@ both arms JTAG\-booted so the core count is pinned at
 same
 .CW "gfxstress fill 4" :
 .IP
-.EX
+.P1
 Dbuf=0  build 1791245060   44500 43500             mean 44000
 Dbuf=1  builds 4182, 4716  41800 41900 42000 41800 mean 41875
 Dbuf=0  build 1791285322   42587 42700 42900       mean 42729
-.EE
+.P2
 .PP
 .B "Dbuf=1 is the arm in which drawpre() does its full work"
 \(em
@@ -15676,11 +15676,11 @@ and not 1168, in the ADD/SUB/logical/multiply arm, on the
 .CW "s == A"
 path \(em the substitution branch has already returned above it:
 .IP
-.EX
+.P1
 if(copyas(&p->to, v)) {
         if(p->reg == NREG)
                 p->reg = p->to.reg;
-.EE
+.P2
 .PP
 Twelve of
 .CW copyu 's
@@ -15711,11 +15711,11 @@ Removing the two lines, rebuilding
 .CW 7c
 and compiling one file both ways:
 .IP
-.EX
+.P1
 7c.old  mailbox.7   40134 bytes
 7c.new  mailbox.7   40134 bytes
 cmp                 differ at char 2042, line 10
-.EE
+.P2
 .PP
 Same size, different content. So the store is NOT dead: the mutation
 persists in the
@@ -15749,12 +15749,12 @@ prints "diagnostics in the log: N emission(s)" and warns in the same
 breath that it is "over what THIS run recompiled \(em a zero is not a
 clean tree". Forcing a full recompile puts a number on that:
 .IP
-.EX
+.P1
 184 emissions, 92 distinct, in 19 files, ALL under os/inferno/port
   106  format mismatch #p ULONG        proc.c 36, chan.c 28,
    14  format mismatch p ULONG         taslock.c 26, alloc.c 18,
     8  format mismatch ld INT          qlock.c 14, allocb.c 14, ...
-.EE
+.P2
 .PP
 .B "NOT CLAIMED: that any of them prints a wrong number."
 A Plan 9
@@ -15796,12 +15796,12 @@ a
 .I hardreset
 \(em so it is the device and not a one\-off.
 .IP
-.EX
+.P1
 panic: trap
 dumpstack:
   vectrap <- dcivac <- cacheinval <- ctltrans <- epwrite
           <- usbwrite <- Sys_write <- xec
-.EE
+.P2
 .PP
 .CW dcivac
 is invalidate\-data\-cache\-by\-VA, and it trapped. The only
@@ -15851,13 +15851,13 @@ shutdown, which does a controller\-wide
 .B "core reset"
 \(em and that destroyed the ethernet's in\-flight transfers:
 .IP
-.EX
+.P1
 usbdwc: core reset for shutdown
 usbdwc: ep3.1 completion missed ...
 usbdwc: ep3.2 completion timeout channel 2
 usbdwc: ep3.2 channel won't halt hcchar c0d81200
 etherusb: ep3.0: transmit: i/o error
-.EE
+.P2
 .PP
 .B "And the board's own instruments said which it was."
 .CW alive
@@ -15910,7 +15910,7 @@ The ctltrans panic: five hypotheses eliminated, and the one test left
 .B "Every cheap cause was checked against the source and none holds."
 Written down so the next reader does not spend the afternoon I did:
 .IP
-.EX
+.P1
 a negative transfer length    chanio returns len - nleft, and nleft is
                               CLAMPED (`if(n > nleft) n = nleft'), so
                               the result is 0..len
@@ -15926,7 +15926,7 @@ the non-split path            multitrans is line 1128 and is reached
                               device behind the LAN9514 has tthub set
                               (devusb.c:519, speed < Highspeed), so the
                               split path at 1130 is what ran
-.EE
+.P2
 .PP
 .B "What is in place instead of a fix:"
 .CW ctltrans
@@ -15965,12 +15965,12 @@ ANSWERED: the split path is broken for EVERY TT device, not just low speed
 A full\-speed USB\-serial adapter on the same hub port fails exactly as
 the low\-speed mouse does:
 .IP
-.EX
+.P1
 usbdwc: ep6.0 STALL hcint 0000000a hcchar 01900040 hcsplt 8000c102
         hctsiz 60080008 speed 0 START-split (the HUB answered)
 usbd: ep2.0: port 2: device descriptor (full speed): endpoint stalled
         (gave up after 6 attempts)
-.EE
+.P2
 .PP
 .CW "speed 0"
 is
@@ -15985,11 +15985,11 @@ quirk.
 .PP
 .B "And every stage of the control transfer stalls, not one:"
 .IP
-.EX
+.P1
 21 x hctsiz 60080008   PID 3 = SETUP, 8 bytes
  3 x hctsiz 40080040   PID 2 = DATA1, 64 bytes   (data stage)
  6 x hctsiz 40080000   PID 2 = DATA1, 0 bytes    (status stage)
-.EE
+.P2
 .PP
 All 30 are
 .CW "START-split"
@@ -16018,11 +16018,11 @@ And the panic fix is CONFIRMED under its own reproducer
 The same full\-speed device that panicked this kernel twice was plugged
 into the same port of the same hub, and:
 .IP
-.EX
+.P1
 ctltrans clamp lines   0   (was 24)
 panic lines            0   (was `panic: trap')
 board                  alive on the network throughout
-.EE
+.P2
 .PP
 .B "Zero clamp lines is the stronger of the two numbers."
 The validating print exists to catch a length outside the allocation; it
@@ -16035,12 +16035,12 @@ Three independent devices, one signature: it is our start\-split
 A SECOND, different full\-speed USB\-serial adapter, substituted because
 the first might itself have been faulty, fails identically:
 .IP
-.EX
+.P1
 port 2: device descriptor (full speed): endpoint stalled (retrying)
 port 2: device descriptor (full speed): endpoint stalled (gave up ...)
 port 2: detached
 port 2: device descriptor (full speed): endpoint stalled (retrying)
-.EE
+.P2
 .PP
 with the same
 .CW "START-split (the HUB answered)"
@@ -16050,11 +16050,11 @@ and
 .CW "hctsiz 60080008" .
 So the population is now:
 .IP
-.EX
+.P1
 IBM 3-button mouse      low speed    SETUP start-split stalled
 USB-serial adapter #1   full speed   SETUP start-split stalled
 USB-serial adapter #2   full speed   SETUP start-split stalled
-.EE
+.P2
 .PP
 .B "Three devices, two speeds, two vendors, one signature."
 A device\-specific fault would have to be shared by three unrelated
@@ -16097,12 +16097,12 @@ RETRACTED: "the split path is broken for every TT device" rests on ONE port
 .B "success is high speed."
 Counted across five rings:
 .IP
-.EX
+.P1
 port 1  high   10 successes   internal ethernet
 port 4  high    5 successes   Teensy 4.x
 port 5  high    5 successes   flash drive
 port 2         12 FAILURES    mouse, serial #1, serial #2
-.EE
+.P2
 .PP
 So two explanations fit the data exactly as well:
 .IP \(bu
@@ -16134,13 +16134,13 @@ exchange the full\-speed serial adapter with the flash drive, putting a
 full\-speed device on a port known to work and a high\-speed device on
 port 2.
 .IP
-.EX
+.P1
 serial works on 5, flash FAILS on 2    -> PORT 2 is the fault
 serial FAILS on 5, flash works on 2    -> the split path is the fault
 both work                              -> the fault needs port 2 AND
                                           a non-high-speed device
 both fail                              -> something else again
-.EE
+.P2
 .PP
 Only the second outcome preserves the withdrawn conclusion, and it is
 the one I had assumed without testing.
@@ -16362,10 +16362,10 @@ the pre\-Apple\-Silicon brew prefix \(em and
 .CW boardsuite
 reports
 .IP
-.EX
+.P1
 raspi3b-usb: FAIL qemu: dyld[69627]: Library not loaded:
   /usr/local/opt/glib/lib/libgio-2.0.0.dylib (0 markers, ...)
-.EE
+.P2
 .PP
 and a line with 0 markers in it reads as a kernel that produced nothing.
 Written down because
@@ -16380,11 +16380,11 @@ per\-port table at hub\-add turns out to settle the port\-2 confound by
 itself. On real hardware it reports, for every port, whether a device is
 present and at what speed:
 .IP
-.EX
+.P1
 usbd: ep2.0: port 2 status 0x10101 (present DISABLED
   full-speed (needs split) change 0x1)
 usbd: ep2.0: port 6 status 0x100 (empty)
-.EE
+.P2
 .IP \(bu
 port 2 reporting
 .B "present FULL-SPEED"
@@ -16428,9 +16428,9 @@ MEASURED on silicon: the stalls are COMPLETE-splits, and the split path works
 Booted over JTAG \(em no card swap \(em and read with
 .CW kmesg :
 .IP
-.EX
+.P1
 24 STALL SETUP stage, COMPLETE-split (the DEVICE answered)
-.EE
+.P2
 .PP
 .B "Every one of them, and not a start-split anywhere."
 The
@@ -16454,9 +16454,9 @@ start\-split only ACK, NAK or NYET. The argument is withdrawn.
 .B "And the split path demonstrably works."
 Each of the six attach attempts logs
 .IP
-.EX
+.P1
 splits ok 2 (1 with data) -> 4 (2) -> 6 (3) -> ... -> 12 (6)
-.EE
+.P2
 .PP
 \(em exactly two successful split transfers per attempt, one with data.
 That pair is SET_ADDRESS: its 8\-byte SETUP and its zero\-length status
@@ -16499,12 +16499,12 @@ CORRECTION: the per-port table is a snapshot, not a census
 It was presented here as the port\-by\-port control that would settle the
 port\-2 confound. Checked against what later enumerated in the same boot:
 .IP
-.EX
+.P1
 hub-add table        what attached afterwards
 port 3 (empty)       -
 port 4 (empty)       high ep4.0 vid 16c0 did 0483  (Teensy)
 port 5 (empty)       high ep5.0 vid 058f did 6387  (flash drive)
-.EE
+.P2
 .PP
 The table is read straight after
 .CW Fportpower
@@ -16564,9 +16564,9 @@ zeroes
 so a count going DOWN distinguishes a new instance from the old one with
 no knowledge of HZ:
 .IP
-.EX
+.P1
 boot: build 1791682112 is running (attempt 1, ticks 2523 against 0 before)
-.EE
+.P2
 .PP
 .B "A banner is the wrong instrument twice over:"
 it is a print, so it competes for a fixed ring with everything else the
@@ -16586,9 +16586,9 @@ argument, which
 .CW req[]
 for the setup stage:
 .IP
-.EX
+.P1
 req 80 06 00 01 00 00 08 00
-.EE
+.P2
 .PP
 \(em
 .CW bmRequestType
@@ -16605,12 +16605,12 @@ out: the device is refusing something correct.
 .PP
 .B "And the retry counts point at the NYET path:"
 .IP
-.EX
+.P1
   2  iters 1  nyets 0
   1  iters 2  nyets 0
  12  iters 2  nyets 1
   9  iters 3  nyets 1
-.EE
+.P2
 .PP
 .B "21 of 24 stall after exactly one trip through the main loop's NYET"
 .B "arm, and NYET is handled in TWO places for the same event:"
@@ -16918,10 +16918,10 @@ never existed, and
 .B "the remote-command poller is ONE COMMAND DEEP."
 The ring shows
 .IP
-.EX
+.P1
 RCMD-BEGIN 4 ... ls /n/usb | head ...
 (no RCMD-END 4, and no RCMD-BEGIN 5 ever after it)
-.EE
+.P2
 .PP
 so every later
 .CW boardrun
@@ -17001,9 +17001,9 @@ bulk IN path,
 .CW "dd -bs 8192" ,
 five repeats, real\-time column:
 .IP
-.EX
+.P1
 1.33  1.35  1.37  seconds   (555-572 KB/s)
-.EE
+.P2
 .PP
 .B "This is NOT a before-and-after."
 No pre\-fix single\-processor baseline exists, so it cannot say whether
@@ -17415,7 +17415,7 @@ reachable, have somebody find it) exists elsewhere. Every
 in
 .CW os/inferno/port/dis.c :
 .IP
-.EX
+.P1
 427   delprog's close window        THE DEFECT, now guarded
 533   the user-rename walk          holds the token for the whole walk
 1151  consintrproc, no prog         error/empty paths
@@ -17424,7 +17424,7 @@ in
 1192  killgrp
 1208  killgrp
 1313  cblock                        the standard block-and-release
-.EE
+.P2
 .PP
 .B "533 is safe but for a reason worth stating:"
 it walks
@@ -17454,13 +17454,13 @@ after the
 .CW acquire()
 \(em so the full order is
 .IP
-.EX
+.P1
 set Pclosing, release()
 close pgrp/fgrp/egrp/sigs    <- the window; o->user still valid
 acquire()
 delgrp, unlink from isched, remove from proghash
 free(o->user), free(p)
-.EE
+.P2
 .PP
 Everything from the
 .CW acquire()
@@ -17720,3 +17720,212 @@ with
 .CW "git rm --cached" ,
 so nothing breaks even if something did reach for one. 110 inert matches
 down to 103, all of them now deliberate.
+.NH 1
+CI/CD: what exists, what it does not catch, and the tiers that would
+.LP
+Asked for on 11 October 2026, after a full\-suite run found three
+configurations failing on baselines nobody had re\-recorded and two on a
+staleness check firing on an unrelated file. This is a design, not a
+built thing; the one piece that cannot be committed from this session is
+noted at the end.
+.NH 2
+What is already there
+.LP
+Three workflows, last touched 5 September 2026:
+.IP
+.P1
+quick-smoke.yml     build on ubuntu + macos, compile/load
+full-emu-smoke.yml  Docker, then emu under xvfb on a smoketest
+man-pages.yml       scripts/check-man-pages.sh vs origin/main
+.P2
+.PP
+.B "AND quick-smoke.yml CARRIES"
+.CW "continue-on-error: true" .
+.B "That makes it a permanent green:"
+the job can fail outright and the check still reports success. It is the
+same shape as every other false pass in this file \(em
+.CW drawink
+exiting 0 while printing nothing, a test that cannot fail, a gate judged
+by its output instead of its status \(em and it is the first thing to
+remove.
+.NH 2
+What exists in the tree and CI does not run
+.LP
+This is the larger gap, and none of it needs writing:
+.IP \(bu
+.CW tests/toolchain
+\(em 14 host tests, each the surviving witness to a real miscompilation,
+with a three\-state verdict \(em
+.CW pass ,
+.CW defect ,
+.CW "could not run"
+\(em that CI could consume directly. It found a disabled test and an
+undocumented pair of ctl commands the first time it was run tonight.
+.IP \(bu
+.CW tools/boardsuite/run
+\(em 29 configurations over 8 kernels, graded on markers in console
+output.
+.IP \(bu
+.CW docker/boardsuite.sh
+\(em already containerised, with
+.CW build
+and
+.CW all
+modes and
+.CW Qemu.Dockerfile
+/
+.CW Boardsuite-pi.Dockerfile
+for the patched qemu the Pi configurations need. The expensive tier is
+built and unused.
+.IP \(bu
+.CW tests/man-cmdtab.sh
+\(em ctl\-command documentation coverage, a different question from
+.CW check-man-pages.sh
+(which asks whether a new program has a page at all).
+.NH 2
+Four tiers, by cost
+.LP
+.B "T0, seconds, every push."
+Build the host toolchain
+from
+.CW utils :
+.CW 7c ,
+.CW 7l ,
+.CW 6c ,
+.CW 6l ,
+.CW limbo ,
+.CW mk ,
+.CW iyacc )
+and run the members of
+.CW tests/toolchain
+that need only a compiler, plus the troff gates,
+.CW man-cmdtab.sh
+and
+.CW extern-arity.py .
+.CW kencc-selfbranch
+is the exception: it scans
+.I linked
+kernels, so it belongs in T1.
+.PP
+.B "T1, minutes, every push."
+Build all 8 kernels
+namely
+.CW raspi3b ,
+.CW raspi4 ,
+.CW virtarm64 ,
+.CW sifiveu ,
+.CW virt ,
+.CW virts ,
+.CW virt32 ,
+.CW virt32s )
+and
+.CW emu ,
+then run
+.CW tests/toolchain
+whole. All eight build today, riscv and 32\-bit included. A build matrix
+over them catches the class this file keeps hitting: shared code under
+.CW os/inferno/port
+compiling for the board in front of you and not for another.
+.PP
+.B "T2, tens of minutes, on a label and nightly."
+.CW docker/boardsuite.sh all
+\(em the 29 configurations. Too slow for every push and too valuable to
+run weekly. The patched qemu build is the long pole and is cacheable:
+key the cache on the qemu version plus a hash of
+.CW tools/qemu-patches ,
+so it rebuilds only when a patch changes.
+.PP
+.B "T3, manual, hardware, NEVER in CI."
+The Pi over JTAG. A runner has no board, no SD card and no debugger, so
+the claims in this file that need one \(em four\-processor behaviour,
+split transactions, tearing, anything measured by
+.CW vmheld
+or
+.CW kmesg
+\(em cannot be made by CI at any tier. Saying so is part of the design:
+a green CI must not read as "the board works".
+.NH 2
+The grading rules, which are the part worth getting right
+.LP
+Every one of these was paid for in this file:
+.IP \(bu
+.B "Judge a gate by its EXIT STATUS, never by its output."
+Tonight a
+.CW troff-argorder
+failure was committed over because the run was piped to
+.CW "tail -2"
+and the last two lines of its failure advice read like a pass \(em and
+the pipe discarded the status.
+.IP \(bu
+.B "Three states, not two."
+.CW "could not run"
+is neither a pass nor a defect.
+.CW tests/toolchain
+already separates them; CI must surface the third rather than fold it
+into either, because a self\-disabled test is a silent coverage hole.
+.IP \(bu
+.B "On a marker diff, REMOVAL fails and ADDITION fails differently."
+A disappeared marker is a regression. A new one is usually a feature
+landing, and the right response is "re\-record the baseline", not a
+silent pass \(em but it must not be green either, or baselines rot. This
+was applied by hand to five configurations tonight and is mechanical.
+.IP \(bu
+.B "No"
+.CW continue-on-error .
+.IP \(bu
+.B "Keep the rings."
+Upload the per\-configuration console logs as artifacts on failure and
+on success. The ring is the only post\-mortem channel this project has,
+and losing one capture tonight cost a board cycle; a CI failure with no
+log is a failure nobody can diagnose.
+.IP \(bu
+.B "Name the flaky markers rather than baking them in."
+.CW TIVERIFY-OK
+appeared in one
+.CW raspi3b-4g
+run and not the next, and the suite already reports "on the second boot;
+the first was starved" for others. A marker that comes and goes needs a
+quarantine list that is visible, not a baseline that happens to have
+caught it absent.
+.NH 2
+Two things that make CI easier here than it looks
+.IP \(bu
+.B "The mtime staleness check stops being a problem in CI."
+.CW tools/boardsuite/run
+refuses to grade a kernel older than any source, which fires on
+unrelated touches in a working tree \(em three times tonight, once
+because restoring a file with
+.CW cp
+after a mutation test moved its mtime. A CI job clones fresh and builds
+everything, so the kernel is always the newest artifact and the check
+becomes free insurance instead of a nuisance.
+.IP \(bu
+.B "There are no secrets to manage."
+The Wi\-Fi passphrase lives in
+.CW /n/dos/wifi.cfg
+on the SD card and
+.CW board.cmd
+is gitignored, so nothing in the repository needs a credential to test.
+.NH 2
+What this session cannot do, and why
+.LP
+.B "The workflow files cannot be committed from here."
+This session's GitHub credential is an OAuth App token without
+.CW workflow
+scope, which is also why 24 release tags could not be pushed:
+.IP
+.P1
+refusing to allow an OAuth App to create or update
+workflow `.github/workflows/ci.yml` without
+`workflow` scope
+.P2
+.PP
+So anything under
+.CW .github/workflows
+has to be committed with a credential that has that scope. The design is
+written down here so that it is a paste rather than a rediscovery, and
+.B "the one change worth making first needs no new file at all:"
+delete
+.CW "continue-on-error: true"
+from
+.CW quick-smoke.yml .
