@@ -16256,3 +16256,29 @@ structures was the first guess and
 it is written here as the symptom only. It matters beyond tidiness: it
 makes usbd unrestartable without a reboot, which is what turned a
 read\-only measurement into a power cycle.
+.NH 2
+The patched qemu for the Pi configurations
+.PP
+.CW /Users/npe/src/qemu-v10.1.3/build/qemu-system-aarch64
+is the build the six Pi configurations need; it carries
+.CW hw/usb/dev-lan9514.c
+and the rest of
+.CW tools/qemu-patches .
+.PP
+.CW /Users/npe/src/qemu/aarch64-softmmu/qemu-system-aarch64
+is a July 2020 x86 build that no longer starts \(em it wants libgio from
+the pre\-Apple\-Silicon brew prefix \(em and
+.B "its failure does not look like a stale emulator."
+.CW boardsuite
+reports
+.IP
+.EX
+raspi3b-usb: FAIL qemu: dyld[69627]: Library not loaded:
+  /usr/local/opt/glib/lib/libgio-2.0.0.dylib (0 markers, ...)
+.EE
+.PP
+and a line with 0 markers in it reads as a kernel that produced nothing.
+Written down because
+.CW QEMU=
+has to be set by hand and the wrong one is the first match under
+.CW ~/src .
