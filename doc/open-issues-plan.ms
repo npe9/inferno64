@@ -17604,3 +17604,118 @@ panic. Gates green,
 .CW raspi3b-usb
 52. One new long VM hold appeared during the run (3 to 4), the first in
 these JTAG arms, and is noted rather than explained.
+.NH 2
+A .gitignore rule does not apply to a file git already tracks
+.LP
+.CW emu/MacOSX/o.emu-cocoa
+and
+.CW o.emu-g
+were tracked, so every rebuild by any session showed two modified Mach\-O
+binaries in
+.CW "git status" .
+.CW .gitignore
+had carried
+.CW emu/*/o.emu-*
+for a while, with a comment saying as much \(em
+.B "and the rule did nothing,"
+because an ignore entry does not apply to a file git is already
+tracking. The last commit to touch them was "emu: rebuild the tracked
+binaries against the merged tree", which is committing the noise the
+pattern was added to stop.
+.PP
+.B "The tell, and it reads as the opposite of what it is:"
+.CW "git check-ignore -q"
+reported
+.CW o.emu-cocoa
+and
+.CW o.emu-g
+as
+.B "NOT ignored"
+while
+.CW o.emu-cpu
+.I was,
+on the same pattern in the same directory.
+.CW check-ignore
+does not apply ignore rules to tracked paths, so that asymmetry is the
+signature of a file still being tracked \(em not of a pattern that fails
+to match, which is how I first read it.
+.PP
+.B "AND THE FIRST FIX DID NOT WORK, which is its own trap:"
+.CW "git rm --cached"
+stages the deletion, and then
+.P1
+git commit -- <paths>
+.P2
+commits the
+.B "WORKING TREE"
+content of those paths rather than what is staged for them. The files
+are still on disk, so git re\-added them and the staged deletion was
+discarded. The pathspec form is what this tree's rules ask for \(em
+several sessions share one index, so committing everything staged is not
+safe \(em and it is exactly wrong for removing a file that still exists.
+Stage only the deletions, check
+.CW "git diff --cached --name-status"
+is only them, and commit with no pathspec.
+.PP
+.B "Generalised:"
+.CW "git ls-files -i -c --exclude-standard"
+names every tracked file an ignore rule matches, i.e. every inert rule.
+110 of them, in three groups, and only one group was a defect:
+.IP \(bu
+the
+.CW /<platform>/include
+rules, most of the 110 \(em
+.B deliberate.
+Those directories are filled by
+.CW "mk install" ,
+but a few real headers live in them and are committed. A pattern broader
+than its intent is harmless when the files are tracked on purpose.
+.IP \(bu
+.CW /dis/demo ,
+11 \(em also deliberate:
+.CW .bit ,
+.CW .srec
+and shell scripts that are source, under a directory the rule ignores
+wholesale.
+.IP \(bu
+.CW *.dis
+and
+.CW *.sbl ,
+9 \(em build outputs. Seven were strays and are untracked now:
+.CW hanoi ,
+.CW pinboard
+and
+.CW tkclient
+.CW .dis / .sbl
+at the
+.I repository root,
+plus
+.CW dis/temple/flattops.sbl .
+All six root ones arrived in one commit,
+.CW 18bf87713
+"Improve JIT and graphics performance" \(em about neither demos nor
+packaging, so a broad
+.CW "git add"
+during unrelated work.
+.CW dis/lib/tkclient.dis
+is the canonical copy, no mkfile produces a root\-level
+.CW .dis ,
+and nothing references the root paths.
+.CW flattops.sbl
+was the only tracked file in its directory.
+.PP
+.CW os/inferno/init/disinit.dis
+and
+.CW .sbl
+are the other two matches and
+.B "stay tracked on purpose:"
+that init module is hand\-built and needs
+.CW DISWORD=4 ,
+so it is not reproducible by an ordinary
+.CW mk
+and being in the repository is the point.
+.PP
+Files were left on disk in every case
+.CW ( "git rm --cached" ),
+so nothing breaks even if something did reach for one. 110 inert matches
+down to 103, all of them now deliberate.
