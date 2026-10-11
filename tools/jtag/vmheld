@@ -77,6 +77,26 @@ A_BEAT=`sym disbeat`
 A_PFULL=`sym npollfull`
 A_PCHAR=`sym npollchar`
 A_REACH=`sym disreachcount`
+#
+# THE delprog CLOSE-WINDOW COUNTERS, because the printed lines are capped
+# at EIGHT PER BOOT and the counters are not.
+#
+# dis.c prints `opening window while pid N's was still open' only while
+# disraceoverlaps <= 8, and devprog.c prints `touched pid N live inside
+# its own delprog close window' only while dishitcount < 8.  Counting the
+# printed lines across boots therefore measures the CAP, not the race: I
+# aggregated them over fourteen boots, got 118, and nearly reported it as
+# an overlap count when it is 8 per boot.
+#
+# And the detector is SINGLE-SLOT, which is why the hit count is a floor:
+# disracepid holds one pid, so a second overlapping delprog overwrites the
+# first's, and whichever finishes first sets it back to -1 -- so during an
+# overlap the still-open window is both unwatched and reported closed.
+#
+A_DRWIN=`sym disracewindows`
+A_DROVL=`sym disraceoverlaps`
+A_DRGC=`sym disracehits`
+A_DRHIT=`sym dishitcount`
 A_NHELD=`sym nvmheld`
 A_GCSW=`sym gcsweeps`
 A_GCBRK=`sym gcbroken`
@@ -154,6 +174,10 @@ trap 'rm -f "$TMP"' 0 1 2 15
 	-c "echo \"VMHELD-PFULL\"; mdw ${A_PFULL:-0} 1" \
 	-c "echo \"VMHELD-PCHAR\"; mdw ${A_PCHAR:-0} 1" \
 	-c "echo \"VMHELD-REACH\"; mdw ${A_REACH:-0} 1" \
+	-c "echo \"VMHELD-DRWIN\"; mdw ${A_DRWIN:-0} 1" \
+	-c "echo \"VMHELD-DROVL\"; mdw ${A_DROVL:-0} 1" \
+	-c "echo \"VMHELD-DRGC\"; mdw ${A_DRGC:-0} 1" \
+	-c "echo \"VMHELD-DRHIT\"; mdw ${A_DRHIT:-0} 1" \
 	-c "echo \"VMHELD-NHELD\"; mdw ${A_NHELD:-0} 1" \
 	-c "echo \"VMHELD-GCSW\"; mdw ${A_GCSW:-0} 1" \
 	-c "echo \"VMHELD-GCBRK\"; mdw ${A_GCBRK:-0} 1" \
@@ -308,6 +332,26 @@ fi
 
 if [ -n "$A_REACH" ]; then
 	echo "vmheld: progpid() reached `dec \`val VMHELD-REACH\`` times (devprog's race window)"
+fi
+
+if [ -n "$A_DRWIN" ]; then
+	W=`dec \`val VMHELD-DRWIN\``
+	O=`dec \`val VMHELD-DROVL\``
+	G=`dec \`val VMHELD-DRGC\``
+	H=`dec \`val VMHELD-DRHIT\``
+	echo "vmheld: delprog close windows $W, of them OVERLAPPING $O;" \
+		"gc-during-window $G, /prog touched a closing pid $H"
+	#
+	# The hit count is a FLOOR and the line says so, because disracepid is
+	# one slot: an overlapping delprog overwrites the pid being watched and
+	# the first to finish clears it, so during an overlap the still-open
+	# window is neither watched nor reported open.  With $O overlaps the
+	# detector was blind for part of its own run.
+	#
+	if [ "${O:-0}" -gt 0 ]; then
+		echo "vmheld:   $H is a FLOOR -- disracepid is a single slot and" \
+			"$O windows overlapped, so some went unwatched"
+	fi
 fi
 
 #

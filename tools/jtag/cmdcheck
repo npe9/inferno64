@@ -78,7 +78,20 @@ def words(cmd):
         # LEADING quote and no closer in Inferno sh, so a quoted word
         # arrives here with one.
         #
-        tok = tok.lstrip("'\"")
+        #
+        # A leading `{' goes too.  `{' is not a split boundary (see SPLIT)
+        # but a BACKGROUNDED block puts one right after the `&', so
+        # `... & {for i in ...' arrived here as the token `{for' and was
+        # refused -- a false positive the self-test had not covered,
+        # because none of its cases backgrounded a block.
+        #
+        tok = tok.lstrip("'\"{(")
+        #
+        # And a trailing brace, so a one-command block reports the program
+        # and not `notinhere}'.  No program name ends in one of these, so
+        # stripping them cannot hide a real name.
+        #
+        tok = tok.rstrip("});")
         if not tok:
             continue
         out.append(tok)
@@ -135,6 +148,9 @@ SELFTEST = [
     ("load std; time {notinhere -x}", []),
     ("ls /n/usb; echo ---; ls /chan | grep usb", []),
     ("notaprogram -x", ["notaprogram"]),
+    # a backgrounded block: `{for' must not be read as a program name
+    ("load std; {for i in 1 2 {ps}} & for j in 1 2 {status}; echo R1", []),
+    ("load std; {notinhere} & echo ok", ["notinhere"]),
 ]
 
 

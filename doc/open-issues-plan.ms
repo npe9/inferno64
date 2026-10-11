@@ -17027,3 +17027,99 @@ visible. That is an argument, not a measurement, and is labelled as one.
 .B "Single processor, as everything since 10 October."
 A card boot is what measures this properly, and it would also exercise
 the concurrency the fix is about.
+.NH 2
+The delprog close-window race: SECOND SIGHTING, and the counters are readable now
+.LP
+H4's residue ended with an undiagnosed line, written down "so that the
+next sighting is a second one rather than a first". It is a second one:
+.P1
+devprog: progpid touched pid 25 live inside its own delprog close window
+.P2
+pid 25 this time against pid 386 then, on a different build, a different
+boot and an unrelated workload (USB enumeration). So the race
+reproduces.
+.PP
+.B "RETRACT A COUNT I ALMOST PUBLISHED."
+Fourteen of tonight's captures carry
+.CW "delprog: pid N opening window while pid M's was still open" ,
+118 lines in all, and I had that as an overlap count.
+.B "It is the CAP."
+.CW dis.c
+prints that line only while
+.CW "disraceoverlaps <= 8"
+and
+.CW devprog.c
+prints its sibling only while
+.CW "dishitcount < 8" ,
+so counting printed lines across boots measures the rate limiter at
+8-per-boot and nothing else.
+.PP
+.B "The real counters are readable now."
+.CW disracewindows ,
+.CW disraceoverlaps ,
+.CW disracehits
+and
+.CW dishitcount
+are all globals with symbols;
+.CW tools/jtag/vmheld
+reads them over JTAG.
+.PP
+.B "And the window counter is VALIDATED against a known number of exits:"
+.P1
+            windows  overlaps  gc-in-window  /prog-hit  progpid reads
+idle          370       5           0            0           1769
++200 exits    579       5           8            0            -
++concurrent  1031       5           8            0          56813
+.P2
+370 to 579 is +209 for about 200 process exits \(em the extra few being
+the shells themselves \(em so the counter does count what it claims.
+.PP
+.B "THE RACE DID NOT REPRODUCE ON DEMAND, and that is the useful half."
+120 concurrent
+.CW /prog
+scans against 200 exiting processes drove
+.CW progpid()
+to 56813 entry reads across 452 close windows and produced
+.B "zero"
+hits. So the window is normally very short \(em it is
+.CW release() ,
+four
+.CW close*()
+calls, and
+.CW acquire()
+\(em and a scan landing inside one is improbable even at fifty thousand
+reads.
+.PP
+.B "Overlaps are rare and are NOT driven by process churn:"
+5, unchanged across 661 further windows including a concurrent arm. So
+the single-slot detector
+.CW ( disracepid
+holds one pid, and whichever delprog finishes first clears it) is only
+slightly blind, not badly. Its hit count is still a floor, and
+.CW vmheld
+now says so, but the undercount is of order 1%.
+.PP
+.B "WHAT CONNECTS IT TO H4, stated as a hypothesis and not a finding:"
+.CW gc-in-window
+went 0 to 8 over those 200 exits, so collections
+.I do
+land inside the close window. H4 measured GC holds of 53 to 121 ticks
+\(em up to 1.21 seconds \(em arriving every nine seconds under load. A
+collection inside the window
+.B "widens the window by its own duration,"
+and a window open for a second is one that any
+.CW /prog
+scan will hit. Both sightings came from GC-heavy loads (the efs-fault
+suite, whose watcher scans
+.CW /prog
+every five seconds) and neither from the churn above, which is
+GC-light.
+.PP
+.B "The experiment that would settle it needs no new code:"
+run
+.CW tests/efs-fault
+and read
+.CW dishitcount
+by difference. If the hits track the long holds, then H4's latency
+problem and this race are one item and bounding the holds fixes both;
+if they do not, they are two.
