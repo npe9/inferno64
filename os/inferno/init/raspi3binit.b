@@ -2696,6 +2696,29 @@ diskcheck()
 # wrongly gives USB-MOUSE-FAIL.
 mousecheck()
 {
+	#
+	# ITS OWN FD GROUP, and this is the fix that matters.
+	#
+	# spawn SHARES the file-descriptor group, so an open here lands in
+	# the group almost everything on this board inherits -- usbd's
+	# processes included.  /dev/pointer allows exactly one reader
+	# (devpointer.c pointeropen: `incref(&mouse.ref) != 1' is Einuse;
+	# a write-only open such as usbd's mouse driver coexists), so the
+	# check's read fd held the only reader slot FOR THE LIFE OF THE
+	# KERNEL and no later consumer -- wm included -- could open it.
+	#
+	# Measured: /prog/307/fd, /prog/308/fd and /prog/312/fd, all usbd
+	# processes, each showed
+	#
+	#	 6 r  m  ... /dev/pointer
+	#	25 w  m  ... /dev/pointer
+	#
+	# fd 25 being usbd's own writer and fd 6 the inherited reader.
+	# Killing the reading process does not help, because fd 6 belongs
+	# to the GROUP and not to that process -- which is why the kill
+	# below, added first, was not enough on its own.
+	#
+	sys->pctl(Sys->FORKFD, nil);
 	fd := sys->open("/dev/pointer", Sys->OREAD);
 	if(fd == nil){
 		sys->print("USB-MOUSE-NONE /dev/pointer: %r\n");
@@ -2723,7 +2746,9 @@ mousecheck()
 
 	evc := chan of string;
 	tmo := chan of int;
-	spawn mousereadproc(fd, evc);
+	mpidc := chan of int;
+	spawn mousereadproc(fd, evc, mpidc);
+	mreader := <-mpidc;
 	spawn mousetimer(tmo, 25000);
 
 	prevx := -1;
@@ -2770,6 +2795,41 @@ loop:
 	<-tmo =>
 		break loop;
 	}
+
+	#
+	# KILL THE READER, AND THIS IS NOT TIDYING UP.
+	#
+	# /dev/pointer allows exactly ONE reader (devpointer.c's
+	# pointeropen: `incref(&mouse.ref) != 1' is Einuse, and a
+	# write-only open such as usbd's mouse driver coexists with it).
+	# mousereadproc blocks in sys->read() for ever when the mouse has
+	# nothing to say, so returning from here left it alive holding fd
+	# -- and therefore holding the only reader slot FOR THE LIFE OF
+	# THE KERNEL.
+	#
+	# What that costs is not the boot check, which has already
+	# finished: it is everything afterwards.  No later consumer can
+	# open /dev/pointer for reading, wm included, so a mouse that
+	# enumerates and reports correctly still moves no pointer.  Found
+	# by trying to read one event from a working low-speed mouse and
+	# getting
+	#
+	#	dd: open /dev/pointer: device or object already in use
+	#
+	# with no pointer reader anywhere in ps.  Closing fd here would
+	# not do it: the spawned process holds its own reference, so the
+	# slot stays taken until that process dies.
+	#
+	# The pid-and-kill idiom is the one this file already uses for
+	# schedhog.
+	#
+	if(mreader > 0){
+		kfd := sys->open("/prog/" + string mreader + "/ctl", Sys->OWRITE);
+		if(kfd != nil)
+			sys->fprint(kfd, "kill");
+		kfd = nil;
+	}
+	fd = nil;
 
 	tabletreport(nev, tabhit, wantx, wanty, scrw, scrh, bestx, besty);
 
@@ -2833,8 +2893,15 @@ iabs(v: int): int
 	return v;
 }
 
-mousereadproc(fd: ref Sys->FD, evc: chan of string)
+mousereadproc(fd: ref Sys->FD, evc: chan of string, pidc: chan of int)
 {
+	#
+	# ITS PID, so mousecheck can KILL IT.  This process blocks in
+	# sys->read() for ever when the mouse says nothing, and it holds
+	# `fd' while it does -- see the kill in mousecheck and why it
+	# matters.
+	#
+	pidc <-= sys->pctl(0, nil);
 	buf := array[64] of byte;
 	for(;;){
 		n := sys->read(fd, buf, len buf);
@@ -2867,6 +2934,14 @@ Kbdword: con "hello";
 
 kbdcheck()
 {
+	#
+	# ITS OWN FD GROUP, for the same reason mousecheck forks one: a
+	# spawned process shares the group, so this open would otherwise
+	# leave a keyboard reader in it for ever -- and devcons.c counts
+	# those in kbd.kbdr and routes console input to the GRAPHICS queue
+	# while any exist (devcons.c:1084).
+	#
+	sys->pctl(Sys->FORKFD, nil);
 	fd := sys->open("/dev/keyboard", Sys->OREAD);
 	if(fd == nil){
 		sys->print("USB-KBD-NONE /dev/keyboard: %r\n");
@@ -2874,7 +2949,9 @@ kbdcheck()
 	}
 	evc := chan of string;
 	tmo := chan of int;
-	spawn mousereadproc(fd, evc);
+	kpidc := chan of int;
+	spawn mousereadproc(fd, evc, kpidc);
+	kreader := <-kpidc;
 	# Twenty seconds against the mouse check's twenty-five, and the
 	# difference is deliberate.  Both are spawned together and both
 	# report -NONE by timing out, so on a board with neither device
@@ -2899,6 +2976,31 @@ loop:
 	<-tmo =>
 		break loop;
 	}
+
+	#
+	# KILL THE READER, for the same reason mousecheck does -- and here
+	# the cost is sharper than a taken slot.
+	#
+	# devcons.c counts open keyboard readers in kbd.kbdr, and at
+	# devcons.c:1084 `if(kbd.raw || kbd.kbdr)' routes input to the
+	# GRAPHICS queue instead of the console.  mousereadproc blocks in
+	# sys->read() for ever when nothing is typed, so returning from
+	# here left kbdr permanently non-zero: console input diverted into
+	# a queue whose only reader is a process that is never scheduled
+	# again, which eats keystrokes rather than merely declining them.
+	#
+	# NOT CLAIMED as the explanation for this desk's deaf console --
+	# that has a documented cause of its own in the USB-serial adapter
+	# wedging -- but it is a second mechanism with the same symptom and
+	# it was live on every boot.
+	#
+	if(kreader > 0){
+		kkfd := sys->open("/prog/" + string kreader + "/ctl", Sys->OWRITE);
+		if(kkfd != nil)
+			sys->fprint(kkfd, "kill");
+		kkfd = nil;
+	}
+	fd = nil;
 
 	if(got == nil){
 		sys->print("USB-KBD-NONE no keystrokes (no keyboard attached?)\n");

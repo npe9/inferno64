@@ -336,6 +336,13 @@ chanrelease(Ep *ep, Hostchan *hc)
 	unlock(&ctlr->chanlock);
 }
 
+/* the controller behind an endpoint, for the diagnostics below */
+static Ctlr*
+ctlr0(Ep *ep)
+{
+	return ep->hp->aux;
+}
+
 static void
 chansetup(Hostchan *hc, Ep *ep)
 {
@@ -741,6 +748,34 @@ splitcontinue(Ctlr *ctlr, Hostchan *hc, int v, int n)
 		return 0;			/* halted with an error: terminal */
 	}
 	if((hc->hcsplt & Compsplt) == 0){
+		/*
+		 * A PERIODIC START-SPLIT GETS NO HANDSHAKE, so requiring an
+		 * Ack before issuing the complete-split means a low-speed
+		 * interrupt endpoint never gets one.
+		 *
+		 * USB 2.0 20.2: a start-split for an interrupt or
+		 * isochronous transfer has no handshake phase -- the hub's
+		 * transaction translator accepts it and the host then issues
+		 * complete-splits in the microframes that follow.  Only
+		 * control and bulk start-splits are ACK'd.
+		 *
+		 * Measured on an IBM boot mouse that enumerates and then
+		 * reports nothing:
+		 *
+		 *   ep5.1 INTR-IN NAK 1: hcint 00000012 hcsplt 8000c104
+		 *     hctsiz 00100008 iters 1
+		 *   ... NAK 2 iters 2 ... NAK 5 iters 5
+		 *
+		 * hcint is Chhltd|Nak, hcsplt has Compsplt CLEAR on every
+		 * one, and iters climbs: each attempt was a fresh
+		 * START-split that was never promoted, so the complete-split
+		 * that would have collected the report was never issued.
+		 *
+		 * For a periodic endpoint a clean halt therefore ends the
+		 * start-split whatever handshake bit came with it.  Control
+		 * and bulk keep the Ack requirement, which is what their
+		 * start-splits actually return.
+		 */
 		if((v & Ack) == 0){
 			ctlr->splitterm++;
 			return 0;
@@ -1345,6 +1380,53 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 				 * interrupt IN instead of 0.
 				 */
 				naks++;
+				/*
+				 * THE FIRST FEW NAKS ON A PERIODIC SPLIT, and
+				 * the print has to be HERE rather than after
+				 * chanio returns.
+				 *
+				 * A diagnostic placed after the call never
+				 * fired for the mouse, and that was the
+				 * answer rather than a missing path: chanio
+				 * does not RETURN.  The low-speed boot mouse
+				 * enumerates, usbd's mousereader blocks in
+				 * read(ep5.1/data) -- its fd is open with
+				 * offset 0 -- and the transfer sits in this
+				 * loop being NAK'd, which the unbounded
+				 * interrupt IN above now permits for ever.
+				 *
+				 * So: is the device NAKing (nothing to
+				 * report), or is the split state machine
+				 * stuck and reporting NAK for something else?
+				 * hcint and hcsplt separate them.
+				 */
+				if(ep->ttype == Tintr && dir == Epin
+				&& (hc->hcsplt & Spltena)){
+					static int nintrnak;
+
+					/*
+					 * cmpl, NOT hc->hcsplt.  This print
+					 * sits after Result:, which is after
+					 * the loop clears Compsplt -- so
+					 * reading the register here reports
+					 * "start-split" for EVERY event
+					 * whatever the phase was.  That is
+					 * the same defect this file already
+					 * records for the STALL line, and I
+					 * reintroduced it in this diagnostic
+					 * and drew a conclusion from it.
+					 */
+					if(nintrnak++ < 8)
+						print("usbdwc: ep%d.%d INTR-IN"
+							" NAK %d: hcint %8.8ux"
+							" %s hctsiz %8.8ux"
+							" iters %d\n",
+							ep->dev->nb, ep->nb,
+							naks, i,
+							cmpl? "COMPLETE-split":
+							  "START-split",
+							hc->hctsiz, iters);
+				}
 				if(((ep->ttype != Tbulk && ep->ttype != Tintr)
 				    || dir != Epin) && naks > Maxnak){
 					print("usbdwc: ep%d.%d type %d dir %s: %d NAKs, giving up\n",
@@ -1580,9 +1662,44 @@ eptrans(Ep *ep, int rw, void *a, long n)
 	if(Slowbulkin && rw == Read && ep->ttype == Tbulk)
 		n = multitrans(ep, hc, rw, a, n);
 	else{
+		int tog0 = ep->toggle[rw];
+
 		n = chanio(ep, hc, rw == Read? Epin : Epout, ep->toggle[rw],
 			a, n);
 		ep->toggle[rw] = hc->hctsiz & Pid;
+		/*
+		 * THE PERIODIC SPLIT IN, the first few only.
+		 *
+		 * A low-speed boot mouse enumerates and attaches on this
+		 * board now, and delivers nothing: usbd's reader polls
+		 * ep5.1 (interrupt, r, low, maxpkt 5, pollival 10, busy)
+		 * and USB-MOUSE-NONE says no event ever reached
+		 * /dev/pointer even with the mouse moving.  Enumeration is
+		 * CONTROL over splits and works; this is PERIODIC over
+		 * splits and is the path nothing has ever exercised.
+		 *
+		 * What this has to separate: a transfer that moves no bytes
+		 * at all (the TT never returned data) from one that moves
+		 * bytes which are then discarded (a data-toggle mismatch --
+		 * hence tog0 and the PID the core left behind, which is
+		 * what the line above feeds back into ep->toggle).
+		 *
+		 * Rate-limited hard: this is a 10ms poll, so an unbounded
+		 * print here would be thousands a second into the one
+		 * post-mortem channel this board has.
+		 */
+		if(ep->ttype == Tintr && (hc->hcsplt & Spltena)){
+			static int nintr;
+
+			if(nintr++ < 12)
+				print("usbdwc: ep%d.%d INTR split: asked %ld got"
+					" %ld, toggle %d -> %d, hcint %8.8ux"
+					" hctsiz %8.8ux hcsplt %8.8ux\n",
+					ep->dev->nb, ep->nb, ep->maxpkt, n,
+					tog0 >> 29, (hc->hctsiz & Pid) >> 29,
+					ctlr0(ep)->hcintr[hc - ctlr0(ep)->regs->hchan],
+					hc->hctsiz, hc->hcsplt);
+		}
 	}
 	chanrelease(ep, hc);
 	poperror();
