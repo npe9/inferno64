@@ -22,6 +22,7 @@ fpgaload fpgaload
 ftl ftl
 getauthinfo getauthinfo
 httpd httpd
+hubports hubports
 info create
 init init
 inst create

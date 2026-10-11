@@ -1,0 +1,102 @@
+.TH HUBPORTS 8
+.SH NAME
+hubports \- ask a USB hub what it sees on each of its ports
+.SH SYNOPSIS
+.B usb/hubports
+.I epN.M
+[
+.I nports
+]
+.SH DESCRIPTION
+.I Hubports
+sends a hub-class
+.B GET_STATUS
+to a USB hub for each of its ports and prints the reply decoded:
+whether a device is attached, at what speed, whether the port is enabled
+or powered, and the port's change bits.
+.I EpN.M
+is the hub's control endpoint as named in
+.BR /dev/usb ,
+for instance
+.B ep2.0
+for the Raspberry Pi 3B's onboard LAN9514.
+.PP
+The port count comes from the hub descriptor when
+.I nports
+is not given, so a wrong guess cannot silently shorten the survey \- a
+survey that stops early looks exactly like a hub with fewer ports.
+.PP
+The output names the speed in full, and says which speeds need a split
+transaction:
+.IP
+.EX
+hubports: ep2.0: hub descriptor says 5 ports
+hubports: ep2.0 port 1: status 0103 change 0000 present enabled high-speed (no split)
+hubports: ep2.0 port 2: status 0101 change 0001 present DISABLED FULL-SPEED (needs split)
+hubports: ep2.0 port 3: status 0000 change 0000 empty
+.EE
+.PP
+Neither speed bit set means full speed; there is no "full" bit.
+.SH "WHY IT EXISTS"
+An investigation into full-speed devices failing behind the Pi 3B's
+onboard hub ran twelve times on one physical port and recorded twelve
+failures, while every port that worked had only ever carried a
+high-speed device. Nothing in that population distinguishes "the
+split-transaction path is broken" from "that port is broken", because
+the port was never varied.
+.PP
+A hub's own
+.B GET_STATUS
+separates them and needs no device moved: the request goes to the
+.I hub
+at high speed, with no split transaction anywhere in it, so it
+exercises a path the board is known to serve. A port reporting a
+full-speed device present is a port doing its job, which moves the fault
+downstream into the split path; a port reporting nothing, with a device
+plugged into it, is the port.
+.PP
+It is read-only on purpose.
+.B GET_STATUS
+changes no state, so it is safe to run against a live hub on a board
+whose only recovery is a power cycle.
+.SH "WHAT IS REAL AND WHAT IS NOT"
+.B "The tool works and has been run; its decoding has not been checked"
+.B "against a hub that reports a fault."
+Every reading taken so far is of healthy high-speed ports or of QEMU's
+hub, which reports all of its ports present and unreset before
+enumeration. The
+.B "the hub would not answer"
+and
+.B OVERCURRENT
+arms have never fired.
+.PP
+.B "It cannot run beside a live"
+.IR usbd (8)
+.BR "on this kernel."
+.I Usbd
+keeps a data fd open for every device it attaches, so the hub's control
+endpoint is
+.B Einuse
+and
+.I hubports
+fails with
+.BR "device or object already in use" .
+Killing
+.I usbd
+does not help: the endpoints stay
+.B busy
+with no
+.B Usbd
+process in
+.IR ps ,
+which is a separate open issue. So this is a tool for a boot where
+.I usbd
+is not started.
+.SH SOURCE
+.B /appl/cmd/usb/hubports.b
+.SH "SEE ALSO"
+.IR usb (3)
+.SH BUGS
+The 16-bit status and change words are printed as the hub returns them,
+with no attempt to reconcile USB 2.0 and USB 3 port bit assignments; on
+a USB 3 hub the speed decode is meaningless.

@@ -1417,6 +1417,12 @@ newhub(name: string, d: ref Dev): ref Hub
 			sys->print("usbd: %s: port %d status %#ux%s\n",
 				h.dev.name, i, sts, portdecode(sts));
 		}
+		#
+		# A hub reporting every port present at this point is what
+		# QEMU does, so the line above is a statement of the hub's
+		# claim and not of what is plugged in.  Said once, here,
+		# rather than per port.
+		#
 	}
 	hubs = h :: hubs;
 	if(debug)
@@ -1490,12 +1496,27 @@ portfeature(h: ref Hub, port, f, on: int): int
 # the bits that decide whether a port is worth attaching to, spelled out:
 # a bare hex word is hard to compare across a log by eye, and comparing
 # ports across a log is the whole point of printing them.
-portdecode(sts: int): string
+portdecode(w: int): string
 {
-	if(sts == -1)
+	if(w == -1)
 		return " (the hub would not answer)";
-	if((sts & PSpresent) == 0)
+	#
+	# THE LOW HALF IS wPortStatus AND THE HIGH HALF IS wPortChange,
+	# and portstatus() returns all four bytes as one int.  Decoding the
+	# whole word treats a change bit as a status bit: QEMU's hub reports
+	# 0x00010101 before a reset -- status 0x0101 (present, powered) with
+	# C_PORT_CONNECTION set -- and reading 32 bits put a stray 0x10000
+	# into the same test.  It happened not to collide with a bit this
+	# decode names, which is the sort of luck that stops holding when
+	# somebody adds PSslow's neighbour.
+	#
+	chg := (w >> 16) & 16rffff;
+	sts := w & 16rffff;
+	if((sts & PSpresent) == 0){
+		if(chg != 0)
+			return sys->sprint(" (empty, change %#ux)", chg);
 		return " (empty)";
+	}
 	s := " present";
 	if(sts & PSenable)
 		s += " enabled";
@@ -1503,12 +1524,21 @@ portdecode(sts: int): string
 		s += " DISABLED";
 	if(sts & PSsuspend)
 		s += " suspended";
+	#
+	# NEITHER SPEED BIT SET MEANS FULL SPEED -- there is no "full" bit.
+	# Spelling it out is the point: a full- or low-speed device is the
+	# one that needs a split transaction through the hub's transaction
+	# translator, so which of the three a port reports is the first
+	# thing worth knowing about a port that misbehaves.
+	#
 	if(sts & PSslow)
-		s += " low-speed";
+		s += " low-speed (needs split)";
 	else if(sts & PShigh)
-		s += " high-speed";
+		s += " high-speed (no split)";
 	else
-		s += " full-speed";
+		s += " full-speed (needs split)";
+	if(chg != 0)
+		s += sys->sprint(" change %#ux", chg);
 	return " (" + s[1:] + ")";
 }
 
