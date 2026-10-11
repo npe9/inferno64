@@ -105,7 +105,8 @@ cd "$ROOT" || exit 1
 TESTS="kencc-brloop.sh kencc-selfbranch.sh kencc-narrowcast.sh \
 	kencc-widencast.sh 7l-bigconst.sh troff-argorder.sh man-cmdtab.sh \
 	troff-ctlchars.sh selfbranch-refused.sh troff-p1.sh \
-	kencc-shiftfold.sh kencc-widthprop.sh"
+	kencc-shiftfold.sh kencc-widthprop.sh \
+	extern-arity.py castlefrankenstein.py"
 
 pass=0
 broke=0
@@ -130,7 +131,17 @@ worst=0
 #
 for t in $TESTS; do
 	[ -f "tests/$t" ] || { echo "toolchain: no tests/$t"; broke=`expr $broke + 1`; continue; }
-	out=`sh "tests/$t" 2>&1`
+	#
+	# DISPATCH ON THE EXTENSION.  This ran `sh "tests/$t"' for
+	# everything, so a .py member would have been handed to sh and
+	# reported BROKE -- which is why extern-arity.py sat outside the
+	# runner after being written to guard a real merge defect, and a
+	# test nobody runs is not a test.
+	#
+	case $t in
+	*.py)	out=`python3 "tests/$t" 2>&1`;;
+	*)	out=`sh "tests/$t" 2>&1`;;
+	esac
 	rc=$?
 	#
 	# printf '%s\n', NOT echo, to display a member's output.  sh's echo

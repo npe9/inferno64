@@ -143,4 +143,11 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (AssertionError, OSError, ValueError) as error:
         print(f"castlefrankenstein: {error}", file=sys.stderr)
-        raise SystemExit(1)
+        #
+        # EXIT 2, NOT 1, because tests/toolchain reads 2 as a DEFECT and 1
+        # as "could not run".  Exiting 1 for a failed check would have had
+        # the runner report a real defect as BROKE -- a yellow light where
+        # it should be red.  This tree has been bitten by that inversion
+        # before: five of eight tests returned 1 for a defect.
+        #
+        raise SystemExit(2)
