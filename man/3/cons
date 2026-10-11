@@ -296,14 +296,36 @@ also accepts
 .BR rdb ,
 .BR procdump ,
 .BR ilock ,
-.B sched
-and
+.BR sched ,
 .BR signfault ,
+.B qpuenable
+and
+.BR qpuident ,
 none of which this page described; the four it did describe read as the
 whole set.
 An incomplete list that looks complete misleads in the same way a stale
 status claim does, so the names are given here even where the behaviour
 is not yet written up.
+.PP
+.B qpuenable
+and
+.B qpuident
+reach the board's graphics unit through a hook rather than directly:
+.I devcons
+is shared by every board, so it holds a function pointer
+.CW ( archqpucmd )
+that a board sets if it has one.
+.B qpuident
+reads the unit's identity register and
+.B qpuenable
+powers it up;
+.I devcons
+distinguishes them by which one was written rather than by an argument.
+A board that sets no hook answers
+.B "QPU: no hook on this board"
+rather than failing to link, which is the point of the pointer \(em an
+earlier version called the Pi's mailbox routine from this shared file and
+broke every other board's build.
 .PP
 The
 .B sysname

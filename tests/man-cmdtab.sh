@@ -110,14 +110,29 @@ gaps() {	# gaps <device .c> <page>; prints the undocumented names
 # of b2dad56f5 is the page with eight known gaps; if this check cannot
 # reproduce those eight, nothing below it can be believed.
 #
+# BOTH HALVES OF THE PAIR COME FROM THAT COMMIT, and that is a fix.  This
+# compared the HISTORICAL page against the CURRENT devcons.c, so the
+# control's answer moved whenever the command table legitimately grew: the
+# V3D work added `qpuenable' and `qpuident', the count went 8 -> 10, and
+# the whole test refused to run -- correctly, by its own rules, but for a
+# reason that was nothing to do with the checker.  A fixture has to be
+# fixed at both ends or it is not a fixture; pinning the page and reading
+# the live code tests the TREE, which is what the real check below is for.
+#
 SELF=/tmp/man-cmdtab-self.$$
+SELFC=/tmp/man-cmdtab-selfc.$$
 if ! git show b2dad56f5~1:man/3/cons > $SELF 2>/dev/null; then
 	echo "man-cmdtab: cannot read the known-bad page; not reporting a pass" >&2
 	rm -f $SELF
 	exit 1
 fi
-got=`gaps os/inferno/port/devcons.c $SELF | tr ' ' '\n' | grep -c .`
-rm -f $SELF
+if ! git show b2dad56f5~1:os/inferno/port/devcons.c > $SELFC 2>/dev/null; then
+	echo "man-cmdtab: cannot read the known-bad devcons.c; not reporting a pass" >&2
+	rm -f $SELF $SELFC
+	exit 1
+fi
+got=`gaps $SELFC $SELF | tr ' ' '\n' | grep -c .`
+rm -f $SELF $SELFC
 if [ "$got" -ne 8 ]; then
 	echo "man-cmdtab: SELF-TEST FAILED -- found $got gaps in the known-bad" >&2
 	echo "  page, expected 8 (bflag console ilock panic procdump rdb sched" >&2
