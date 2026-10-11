@@ -16251,11 +16251,41 @@ on open with
 clearing it \(em so an fd is outliving the process that held it. A
 reference cycle in usbd's own
 .CW "Hub / Port"
-structures was the first guess and
-.B "is not verified;"
-it is written here as the symptom only. It matters beyond tidiness: it
-makes usbd unrestartable without a reboot, which is what turned a
-read\-only measurement into a power cycle.
+structures was the first guess and is
+.B "RULED OUT:"
+.CW Port.hub
+is the hub
+.I behind
+that port \(em a
+.I child
+\(em so a hub holding ports that point at CHILD hubs is a tree, and
+reference counting frees it. I had written the cycle into this document
+as the cause before reading the two adt declarations, which took one
+grep.
+.PP
+.B "What IS verified, by measurement:"
+.CW busy
+in
+.CW /dev/usb/ctl
+is exactly
+.CW ep->inuse
+(devusb.c:336), which
+.CW usbopen
+sets on open and
+.CW usbclose
+clears on close. With both usbd processes killed and
+.B zero
+.CW Usbd
+processes in
+.CW ps ,
+.B "seven endpoints still report"
+.CW busy
+and none reports
+.CW idle .
+So an open fd is outliving the process that held it, and the cause is
+not in usbd's data structures. It matters beyond tidiness: it makes
+usbd unrestartable without a reboot, which is what turned a read\-only
+measurement into a power cycle.
 .NH 2
 The patched qemu for the Pi configurations
 .PP
