@@ -339,8 +339,18 @@ if [ -n "$A_DRWIN" ]; then
 	O=`dec \`val VMHELD-DROVL\``
 	G=`dec \`val VMHELD-DRGC\``
 	H=`dec \`val VMHELD-DRHIT\``
+	#
+	# "gc SUPPRESSED", not "gc ran".  dis.c compares gchalted across the
+	# window, and libinterp/gc.c increments gchalted when rungc() is
+	# entered with gchalt SET and RETURNS IMMEDIATELY -- so a change
+	# means a collection was attempted and BLOCKED during the window,
+	# which costs nothing.  Labelled "gc-during-window" first, and that
+	# reading ("collections do land inside the window") was written into
+	# the plan as support for the window being widened by a collection.
+	# It is the opposite.
+	#
 	echo "vmheld: delprog close windows $W, of them OVERLAPPING $O;" \
-		"gc-during-window $G, /prog touched a closing pid $H"
+		"gc-SUPPRESSED-in-window $G, /prog touched a closing pid $H"
 	#
 	# The hit count is a FLOOR and the line says so, because disracepid is
 	# one slot: an overlapping delprog overwrites the pid being watched and

@@ -17193,3 +17193,105 @@ by difference across an
 run that
 .I does
 produce holds. One boot covers all three.
+.NH 2
+The delprog race REPRODUCES ON DEMAND, and that refutes the hypothesis above
+.LP
+Three
+.CW efs-fault
+repeats with a concurrent
+.CW ps
+loop, on the JTAG-booted single-processor kernel:
+.P1
+                 windows  overlaps  gc-suppressed  /prog-HIT  holds
+before              3573      74          8            0        3
+after 3 repeats    11368     269          8            2        3
+.P2
+.P1
+devprog: progpid touched pid 3650 live inside its own delprog close window
+devprog: progpid touched pid 3650 live inside its own delprog close window
+.P2
+.B "So the race is reproducible, and it needs no long GC hold at all."
+.CW "long VM holds"
+is 3 before and 3 after \(em all three from boot. The hypothesis in the
+section above said a collection inside the close window widens it by its
+own duration and that is what makes the window hittable.
+.B "Refuted:"
+two hits with zero holds.
+.PP
+.B "AND THE SUPPORT FOR THAT HYPOTHESIS WAS A MISREAD COUNTER."
+It rested on
+.CW "gc-during-window 8" ,
+read as "collections do land inside the window".
+.CW dis.c
+compares
+.CW gchalted
+across the window and
+.CW libinterp/gc.c
+increments
+.CW gchalted
+when
+.CW rungc()
+is entered with
+.CW gchalt
+.B set
+and
+.B "returns immediately"
+\(em so a change means a collection was attempted and
+.I blocked ,
+which costs nothing and cannot widen anything. The counter is relabelled
+.CW gc-SUPPRESSED-in-window
+in
+.CW vmheld .
+It read 8 before and 8 after this run, so no collection was even
+attempted inside a window during the arm that produced the hits.
+.PP
+.B "What the window's length actually depends on, which is the real mechanism:"
+how much the exiting process has to close.
+.CW delprog
+does
+.CW release() ,
+then
+.CW closepgrp ,
+.CW closefgrp ,
+.CW closeegrp ,
+.CW closesigs ,
+then
+.CW acquire() .
+The earlier arm that produced zero hits in 100997
+.CW /prog
+reads exited 200 processes that had
+.I nothing
+to close; this one exits processes with real file and environment
+groups. Same window, different duration, and that is why one arm hit and
+the other did not.
+.PP
+.B "And the competing explanation for the missing holds is now excluded."
+H4 recorded holds with 44 to 45 Dis processes; this run peaked at
+.B 46
+(sampled every two seconds through the run) and produced none, across
+three repeats rather than one. So "a short single run has too few
+processes" does not account for it, and the single-processor reading of
+the absent holds survives its main alternative. The idle count matches
+H4's exactly, 36 on both.
+.PP
+.B "Where that leaves the item:"
+the race is real, reproducible on one processor in about ten minutes,
+and
+.B "independent of H4's holds"
+\(em so it is its own item and bounding the holds would not fix it. The
+fix is to make
+.CW /prog
+not hand out a
+.CW Prog
+whose close window is open, or to close the groups without releasing the
+interpreter token. Both are changes to
+.CW os/inferno/port/dis.c
+and
+.CW devprog.c
+and neither is written.
+.PP
+.B "The detector's blindness is now measurable rather than argued:"
+269 overlaps in 11368 windows, 2.4%, with a single-slot
+.CW disracepid
+\(em so the 2 hits are a floor and the true count is of that order, not
+orders larger.
