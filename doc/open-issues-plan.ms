@@ -18478,3 +18478,35 @@ source on this disk, and the qemu model is not an implementation of
 splits to compare against. The options are a copy of a working driver to
 read, or split support in the qemu model \(em which would make the path
 testable in CI for the first time and is a project in its own right.
+.NH 2
+The plan for finishing it is doc/usb-split-plan.ms
+.LP
+Seven hypothesis\-led attempts and seven reverts is enough evidence that
+an eighth would go the same way, so the next step is written up
+separately as
+.CW doc/usb-split-plan.ms .
+Its argument in one paragraph:
+.PP
+.B "The attempts did not fail on their reasoning."
+They failed because three things were missing and every one of them
+needed all three \(em
+.B "no oracle"
+(nothing says what this core expects software to write, in what order,
+in a checkable form),
+.B "no way to see a sequence"
+(every judgement rested on a rate\-limited print into a ring that wraps,
+and two such prints confounded themselves), and
+.B "no reproducible environment"
+(the qemu model stores the split registers and never acts on them).
+.PP
+So the phases are: fetch a known\-good implementation and write the
+state\-machine table from it; add a binary trace array read over JTAG so
+one failing transaction can be seen end to end; implement splits in the
+qemu model, gated on its reproducing two known silicon failures and one
+known success before it is trusted; then fix, then a boardsuite
+configuration that can actually fail when splits break.
+.PP
+.B "Phase 1 is the one to start with"
+if the sources cannot be fetched: it needs only the board, it is the
+instrument whose absence confounded two diagnostics already, and it may
+make the rest unnecessary.
