@@ -17929,3 +17929,146 @@ delete
 .CW "continue-on-error: true"
 from
 .CW quick-smoke.yml .
+.NH 1
+STATE AFTER THE CARD INSTALL (11 October 2026, build 1791738405)
+.LP
+.B "ON THE CARD AND VERIFIED ON FOUR CORES."
+.CW kinstall
+staged, backed up to
+.CW kernel8.bak ,
+wrote and re\-verified; the board boots it from the card and answers its
+poller.
+.P1
+SCHED-MACHS nmach 4
+port 1: high ep2.0 vid 0424      the LAN9514 hub
+port 1: high ep3.0 vid 0424      its ethernet
+port 2: full ep4.0 vid 1a86      a CH343 USB-serial adapter
+port 4: low  ep5.0 vid 04b3      an IBM three-button boot mouse
+port 5: high ep6.0 vid 058f      a flash drive
+STALL 0   moved-NOTHING 0   giving up 0   mouse gone 0
+.P2
+.PP
+.B "Full and low speed behind the transaction translator both work,"
+which nothing on this board had ever done, and the four\-core run closes
+the concurrency gap the
+.CW Pclosing
+and accumulator fixes were carrying: their locked writes to state shared
+with the interrupt handler have now run against a real interrupt handler
+on another core.
+.NH 2
+What is still not done, precisely
+.IP \(bu
+.B "The pointer does not move."
+.CW usbd
+attaches the boot\-mouse driver
+.CW ( "boot mouse on ep5.1" )
+and
+.CW mousereader
+blocks in
+.CW read(ep5.1/data)
+with its fd open. The transfer reaches the wire and the
+.I device
+answers NAK to every complete\-split, even while the mouse is being
+moved:
+.P1
+ep5.1 INTR-IN NAK 1: hcint 00000012 COMPLETE-split hctsiz 00100008 iters 1
+... NAK 6 ... iters 6
+.P2
+\(em
+.CW Chhltd|Nak ,
+and the phase is the
+.I complete
+split, so the split state machine is doing its job. The device is simply
+not producing reports.
+.IP \(bu
+Ruled out already:
+.CW SET_IDLE
+and
+.CW SET_PROTOCOL
+are both sent
+.CW ( hidstart ,
+duration 0 and boot protocol) and neither reports an error, so the
+device is configured as a boot mouse.
+.IP \(bu
+.B "The remaining candidate is periodic-split SCHEDULING."
+A complete\-split has to be issued in the microframes that follow its
+start\-split; this driver sleeps
+.CW ep->pollival
+between attempts and re\-issues from the beginning, so the translator may
+never hold data at the moment it is asked. That is a real piece of work
+in
+.CW chanio 's
+split path and is not started.
+.NH 2
+A no-op reverted, and the diagnostic that caused it
+.LP
+.CW splitcontinue()
+was changed to promote a periodic start\-split without requiring an
+.CW Ack ,
+on the strength of
+.CW "hcsplt 8000c104"
+\(em
+.CW Compsplt
+clear on every NAK \(em and USB 2.0 20.2.
+.B "The diagnostic was lying."
+It read
+.CW hc->hcsplt
+after
+.CW Result: ,
+which is after the loop clears
+.CW Compsplt ,
+so it reported a start\-split for every event whatever the phase was
+\(em the identical defect this document records for the STALL line
+earlier the same night, reintroduced in a new probe and then reasoned
+from.
+.PP
+Printing the captured phase says
+.B COMPLETE-split ,
+and an A/B with the honest probe gives
+.B COMPLETE-split
+with the change in and with it out. So it was a
+.B "no-op and is reverted."
+A prescribed change that cannot be shown to be needed does not ship.
+.NH 2
+Two fd leaks in the boot checks, fixed
+.LP
+.CW mousecheck
+and
+.CW kbdcheck
+each spawn a reader that blocks for ever, and
+.B "spawn shares the fd group"
+\(em so the check's read fd stayed in the group almost everything
+inherits. Measured: three
+.CW usbd
+processes each showed
+.CW "6 r /dev/pointer"
+beside
+.CW usbd 's
+own
+.CW "25 w" .
+.CW /dev/pointer
+allows one reader, so
+.B "no later consumer could ever open it,"
+.CW wm
+included: a mouse that enumerated and reported correctly would still
+move no pointer.
+.CW sys->pctl(Sys->FORKFD,
+.CW nil)
+in each check plus a kill by pid. Verified: no read fd on
+.CW /dev/pointer
+after boot, only
+.CW usbd 's
+writer.
+.PP
+The keyboard half is sharper than a taken slot.
+.CW devcons.c
+counts open keyboard readers in
+.CW kbd.kbdr
+and routes input to the
+.I graphics
+queue while any exist (devcons.c:1084), so console input was being
+diverted into a queue nobody reads.
+.B "Not claimed"
+as the explanation for this desk's deaf console \(em that has a
+documented cause of its own \(em but it is a second mechanism with the
+same symptom and it was live on every boot.
