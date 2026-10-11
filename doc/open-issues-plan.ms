@@ -18279,3 +18279,83 @@ and the first two also dump
 .CW hptxsts
 and
 .CW hcchar .
+.NH 2
+THE PERIODIC COMPLETE-SPLIT GOES OUT IN THE SAME MICROFRAME, measured
+.LP
+The thing the previous section said needed measuring, measured. Frame
+numbers logged where the start\-split is armed and again where the
+complete\-split is armed:
+.P1
+ch0 periodic CSPLIT armed: frm 0b2821c4 -> 09de21c4 (uframe 4 -> 4, slip 0)
+ch0 periodic CSPLIT armed: frm 0d622224 -> 0c482224 (uframe 4 -> 4, slip 0)
+ch0 periodic CSPLIT armed: frm 08ca2289 -> 071a2289 (uframe 1 -> 1, slip 0)
+ch0 periodic CSPLIT armed: frm 158a22d5 -> 145822d5 (uframe 5 -> 5, slip 0)
+.P2
+.PP
+.B "Slip zero, every time."
+USB 2.0 wants the complete\-split in the microframes
+.I following
+its start\-split, because the translator needs the intervening one to
+run the low\-speed transaction on the downstream bus.
+.CW splitcontinue()
+runs in the interrupt handler and re\-enables the channel the instant
+the start\-split finishes, so the result is asked for before the work is
+done.
+.B "That is a genuine protocol violation and it is still in the driver."
+.NH 2
+Deferring it to the next SOF: tried, corrected the slip, did NOT fix the mouse
+.LP
+The channel was noted instead of enabled, the SOF interrupt armed, and
+the handler enabled it on the next start\-of\-frame. That moved the first
+complete\-split to
+.CW "uframe 5 -> 7, slip 2"
+\(em so the mechanism works \(em and the mouse still NAK'd and still
+reported
+.CW USB-MOUSE-NONE .
+.PP
+.B "Reverted,"
+for the same reason as the five before it: it does not move the symptom,
+and it changes interrupt\-handler behaviour for every periodic split
+channel on a board where everything else works. It is recorded here
+rather than committed because it
+.I is
+the right change and belongs in a focused session with the second half
+below, not alone at the end of a long one.
+.PP
+.B "The diagnostic confounded itself and that is worth knowing:"
+the SOF handler updated
+.CW armfrm
+when it enabled the complete\-split, so after the first transfer the
+printed slip compared the complete\-split against
+.I itself
+rather than against its start\-split, and read 0 again. Whoever picks
+this up should keep two fields, or print the start\-split's frame from a
+value nothing else writes.
+.NH 2
+The second half, which the same session should fix
+.LP
+A NAK on a periodic complete\-split goes to the main loop, which clears
+.CW Compsplt
+and restarts the whole transaction after
+.CW ep->pollival .
+.B "That is wrong for a periodic transfer."
+The translator may legitimately need several microframes to finish a
+low\-speed transaction \(em at 1.5 Mbit/s a five\-byte report plus
+overhead is a sizeable fraction of a 125 us microframe \(em so the host
+is meant to repeat the
+.B complete\-split
+in the following microframes, not to start again.
+.CW splitcontinue()
+already retries on
+.CW Nyet
+(three times); the device here answers
+.CW Nak ,
+which is not retried at all.
+.PP
+.B "So the two halves are one fix:"
+issue the complete\-split a microframe later than its start\-split, and
+retry
+.I that
+for a few microframes on NAK or NYET before giving up and restarting.
+Neither half alone was enough \(em the deferral was tried on its own and
+the mouse did not move.
