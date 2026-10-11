@@ -17686,7 +17686,7 @@ and
 .CW pinboard
 and
 .CW tkclient
-.CW .dis / .sbl
+.CW ".dis / .sbl"
 at the
 .I repository root,
 plus
@@ -17716,6 +17716,7 @@ so it is not reproducible by an ordinary
 and being in the repository is the point.
 .PP
 Files were left on disk in every case
-.CW ( "git rm --cached" ),
+with
+.CW "git rm --cached" ,
 so nothing breaks even if something did reach for one. 110 inert matches
 down to 103, all of them now deliberate.
