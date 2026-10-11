@@ -16362,3 +16362,153 @@ by finding its new strings in the image rather than by assuming
 picked the
 .CW .dis
 up.
+.NH 2
+MEASURED on silicon: the stalls are COMPLETE-splits, and the split path works
+.PP
+Booted over JTAG \(em no card swap \(em and read with
+.CW kmesg :
+.IP
+.EX
+24 STALL SETUP stage, COMPLETE-split (the DEVICE answered)
+.EE
+.PP
+.B "Every one of them, and not a start-split anywhere."
+The
+.B "START-split"
+label in every earlier capture was an artifact of this driver: the
+diagnostic read
+.CW "hc->hcsplt & Compsplt"
+at
+.CW Result: ,
+and the clear two statements above it runs first on every normal path,
+so the bit was always zero by the time it was printed. Only the
+.CW "goto Result"
+\(em which jumps over that clear \(em could ever have reported a
+complete\-split.
+.PP
+That label carried the argument that the controller could not be
+reporting a handshake off the wire, since USB 2.0 lets a hub answer a
+start\-split only ACK, NAK or NYET. The argument is withdrawn.
+.B "The device is genuinely stalling."
+.PP
+.B "And the split path demonstrably works."
+Each of the six attach attempts logs
+.IP
+.EX
+splits ok 2 (1 with data) -> 4 (2) -> 6 (3) -> ... -> 12 (6)
+.EE
+.PP
+\(em exactly two successful split transfers per attempt, one with data.
+That pair is SET_ADDRESS: its 8\-byte SETUP and its zero\-length status
+stage. So the device completes SET_ADDRESS through the transaction
+translator every time, and stalls the device descriptor's SETUP. The
+failing transfer's programming is textbook:
+.CW hcchar
+DevAddr 4, MC 1, Control, OUT, not low\-speed, Mps 64;
+.CW hcsplt
+.CW Spltena ,
+POS_ALL, hub 2 port 2;
+.CW hctsiz
+.CW "pktcnt 1 xfersize 8 pid SETUP" .
+.NH 2
+REFUTED: the SET_ADDRESS recovery interval
+.PP
+USB 2.0 9.2.6.3 gives a device 2 ms to begin answering at its new
+address, and
+.CW usbd
+went straight from
+.CW "devctl address"
+to reading the descriptor. It fit the symptom exactly \(em the transfer
+that fails is the first one at the new address \(em so
+.CW Addressdelay
+(20 ms) went in and the board was re\-booted:
+.B "24 stalls, 6 attempts,"
+.CW "splits ok 12 (6 with data)" ,
+identical in every figure.
+.PP
+The delay
+.B stays,
+labelled as required by the spec and
+.B "NOT the fix,"
+the same treatment as the
+.CW chanalloc
+accumulator clear.
+.NH 2
+CORRECTION: the per-port table is a snapshot, not a census
+.PP
+It was presented here as the port\-by\-port control that would settle the
+port\-2 confound. Checked against what later enumerated in the same boot:
+.IP
+.EX
+hub-add table        what attached afterwards
+port 3 (empty)       -
+port 4 (empty)       high ep4.0 vid 16c0 did 0483  (Teensy)
+port 5 (empty)       high ep5.0 vid 058f did 6387  (flash drive)
+.EE
+.PP
+The table is read straight after
+.CW Fportpower
+and
+.CW pwrms ,
+before the hub has finished detecting. So
+.B present
+is evidence a device is attached and
+.B empty
+is
+.B "NOT"
+evidence that none is. Now said in the code and in
+.IR hubports (8).
+.PP
+.B "So the port-2 confound is NOT settled."
+What is established is that a device is on port 2, is full speed,
+completes SET_ADDRESS and stalls GET_DESCRIPTOR \(em and that ports 4
+and 5, which read empty at the same instant, went on to carry
+high\-speed devices without trouble.
+.B "The discriminator is still physical:"
+a full\-speed device in a jack other than 2.
+.NH 2
+boot.sh: the ring wraps, so a banner cannot confirm a boot
+.PP
+.CW boot.sh
+greped the ring for
+.CW "conf raspi3b (stamp)"
+on the premise that a freshly loaded kernel's ring holds only this boot's
+output.
+.B "True about WHOSE output and false about HOW MUCH:"
+the ring is 16K and this kernel prints its whole FAT/EFS/USB suite at
+boot, so the conf line is gone before the first read. The tell is the
+ring's first line starting mid\-word \(em
+.CW "COUNTS runs"
+for
+.CW GC-COUNTS .
+Four attempts declared failures while
+.CW samekernel
+said
+.CW SAME
+immediately afterwards, twice in one session, about ten minutes each.
+.PP
+It now asks
+.CW alive ,
+which reads no ring at all:
+.CW samekernel
+proves it is our build and
+.CW m->ticks
+advancing proves it is executing. And it compares tick
+.I counts
+rather than a yes/no, because re\-booting the SAME build \(em the common
+case, and what
+.CW kinstall 's
+pre\-flight does \(em is already "yes" before the load. A fresh boot
+zeroes
+.CW m->ticks ,
+so a count going DOWN distinguishes a new instance from the old one with
+no knowledge of HZ:
+.IP
+.EX
+boot: build 1791682112 is running (attempt 1, ticks 2523 against 0 before)
+.EE
+.PP
+.B "A banner is the wrong instrument twice over:"
+it is a print, so it competes for a fixed ring with everything else the
+kernel says; and the question is not whether the kernel said hello but
+whether it is running now.
