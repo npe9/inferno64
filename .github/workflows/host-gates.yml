@@ -1,0 +1,112 @@
+#
+# T0 + T1: build the toolchain and every kernel, then run tests/toolchain.
+#
+# See tools/ci/README -- this file lives there rather than in
+# .github/workflows because pushing it needs a token with `workflow'
+# scope.  IT HAS NEVER RUN; the steps are transcribed from
+# docker/build-and-run, which has.
+#
+name: Host gates (toolchain + all kernels)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  host-gates:
+    runs-on: ubuntu-latest
+    # NO continue-on-error.  A job that cannot fail is a permanent green,
+    # which is what quick-smoke.yml has been.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential
+
+      - name: Point mkconfig at this checkout
+        # mkconfig carries an absolute ROOT, SYSHOST=MacOSX and -- the one
+        # docker/build-and-run does not have to touch -- OBJTYPE=arm64,
+        # because the container runs linux/arm64.  A GitHub runner is
+        # x86_64, so OBJTYPE must become amd64 or every object is built
+        # for the wrong architecture and $SYSHOST/$OBJTYPE/bin is empty.
+        #
+        # A fresh clone, so rewriting mkconfig here is correct; in a
+        # working tree it is a load-bearing local edit and must not be
+        # committed.
+        run: |
+          set -e
+          case "`uname -m`" in
+          x86_64|amd64)  objtype=amd64;;
+          aarch64|arm64) objtype=arm64;;
+          *) echo "ci: unknown machine `uname -m`; add it here" >&2; exit 1;;
+          esac
+          sed -i -e "s|^ROOT=.*|ROOT=$GITHUB_WORKSPACE|" \
+                 -e 's|^SYSHOST=MacOSX|SYSHOST=Linux|' \
+                 -e "s|^OBJTYPE=.*|OBJTYPE=$objtype|" mkconfig
+          grep -E '^(ROOT|SYSHOST|SYSTARG|OBJTYPE)=' mkconfig
+          # Export for the later steps rather than hardcoding a path that
+          # was copied from the arm64 container and would be wrong here.
+          echo "INFERNO_BIN=$GITHUB_WORKSPACE/Linux/$objtype/bin" >> "$GITHUB_ENV"
+
+      - name: Build mk
+        run: sh makemk.sh
+
+      - name: Build the libraries and the compilers
+        run: |
+          set -e
+          export PATH="$INFERNO_BIN:$PATH"
+          mk mkdirs || true
+          for d in Inferno/*/; do mkdir -p "$d/bin" "$d/lib"; done
+          for d in lib9 libbio utils/libregexp libmath libmp libsec; do
+            ( cd "$d" && mk install )
+          done
+          ( cd utils && mk install )
+          ( cd limbo && mk install )
+
+      - name: Build the Limbo userland
+        run: |
+          set -e
+          export PATH="$INFERNO_BIN:$PATH"
+          for d in lib cmd; do ( cd "appl/$d" && mk install ); done
+
+      - name: Build every kernel
+        # The matrix of boards matters more than any one of them: the
+        # defect this tree keeps hitting is shared code under
+        # os/inferno/port that compiles for the board in front of you and
+        # not for another.  All eight built on 11 October 2026, riscv and
+        # 32-bit included.
+        run: |
+          set -e
+          export PATH="$INFERNO_BIN:$PATH"
+          rc=0
+          for b in raspi3b raspi4 virtarm64 sifiveu virt virts virt32 virt32s; do
+            echo "=== $b ==="
+            if ( cd "os/inferno/$b" && mk install ); then
+              echo "  built $b"
+            else
+              echo "  FAILED $b"; rc=1
+            fi
+          done
+          exit $rc
+
+      - name: tests/toolchain
+        # Exit status, not output.  0 clean, 2 defect, anything else means
+        # a test could not reach its subject -- which is a silent coverage
+        # hole and is failed here deliberately rather than warned about.
+        run: |
+          set -e
+          export PATH="$INFERNO_BIN:$PATH"
+          sh tests/toolchain
+
+      - name: Keep the build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-gates-logs
+          path: |
+            build.log
+            /tmp/kbuild.*.log
+          if-no-files-found: ignore

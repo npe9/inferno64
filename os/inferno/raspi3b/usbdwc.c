@@ -1311,13 +1311,47 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 				 * for ever was retried for ever with nothing
 				 * said.  Bound the others and report.
 				 */
-				if(ep->ttype != Tbulk || dir != Epin)
-					if(++naks > Maxnak){
-						print("usbdwc: ep%d.%d type %d dir %s: %d NAKs, giving up\n",
-							ep->dev->nb, ep->nb, ep->ttype,
-							dir == Epin? "in": "out", naks);
-						error(Eio);
-					}
+				/*
+				 * AND AN INTERRUPT IN IS NOT BOUNDED EITHER,
+				 * for exactly the reason a bulk IN is not.
+				 *
+				 * The bound above was written for a CONTROL
+				 * transfer NAK'd for ever, which wedged
+				 * enumeration, and Tbulk|Epin was excluded as
+				 * "a read of whatever arrives whenever it
+				 * arrives".  An interrupt IN is that same
+				 * thing: a device with nothing to report NAKs,
+				 * and for a mouse nobody is touching that is
+				 * its ENTIRE RESTING STATE.
+				 *
+				 * Measured, with an IBM three-button mouse on
+				 * hub port 4 -- the first low-speed device
+				 * ever to enumerate on this board:
+				 *
+				 *   usbd: ep5.0: boot mouse on ep5.1
+				 *   usbdwc: ep5.1 type 4 dir in: 2001 NAKs,
+				 *     giving up
+				 *   usbd: ep5.0: mouse gone: i/o error
+				 *
+				 * At one tsleep of ep->pollival per NAK that
+				 * is about twenty seconds of an idle mouse,
+				 * after which the driver threw the device away
+				 * and usbd reported it gone.  Nothing was
+				 * wrong with the mouse or the split path.
+				 *
+				 * naks is counted for every type now, not
+				 * only the bounded ones, so the timing trace
+				 * above reports a real number for a bulk or
+				 * interrupt IN instead of 0.
+				 */
+				naks++;
+				if(((ep->ttype != Tbulk && ep->ttype != Tintr)
+				    || dir != Epin) && naks > Maxnak){
+					print("usbdwc: ep%d.%d type %d dir %s: %d NAKs, giving up\n",
+						ep->dev->nb, ep->nb, ep->ttype,
+						dir == Epin? "in": "out", naks);
+					error(Eio);
+				}
 				/*
 				 * A tick, as the donor does.
 				 *
