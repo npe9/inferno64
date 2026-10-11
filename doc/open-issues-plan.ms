@@ -18430,3 +18430,51 @@ scheduled relative to the frame, what the core does with
 and what the host is supposed to do on each of ACK, NAK, NYET and ERR at
 each phase \(em rather than another hypothesis tested on the board. The
 instrumentation to support that reading is committed and bounded.
+.NH 2
+THE QEMU GATE CANNOT CATCH A SPLIT DEFECT, and it demonstrably did not
+.LP
+.CW hw/usb/hcd-dwc2.c
+in the patched qemu is 1506 lines and mentions
+.CW HCSPLT
+exactly once \(em inside a table of register
+.I names .
+The model stores the split registers and never acts on them.
+.PP
+.CW devusb.c
+sets
+.CW d->tthub
+for any device behind a high\-speed hub, under qemu as much as on
+silicon, so
+.CW chansetup()
+sets
+.CW Spltena
+and the driver runs its whole split path. The
+.I model
+then completes the transfer whatever those registers say.
+.PP
+.B "So the raspi3b-usb gate EXECUTES the split code and cannot detect a"
+.B "split-protocol defect."
+That is not a theory: the stale\-accumulator bug fixed earlier today
+broke every split transfer on real hardware \(em no full\- or low\-speed
+device could enumerate behind the hub at all \(em and
+.CW raspi3b-usb
+reported its full 52 markers green throughout.
+.PP
+.B "What that means for reading this file:"
+every split claim here \(em the accumulator fix,
+.CW Pclosing ,
+the unbounded interrupt IN, all seven reverted attempts \(em rests on
+silicon measurements alone. A green
+.CW raspi3b-usb
+says the enumeration logic above the controller is sound and says
+nothing whatever about the wire protocol below it.
+.PP
+.B "And it is why the periodic-split work cannot be finished from here."
+Reading the state machine against a known\-good implementation is the
+next step, and neither half of that is available locally: there is no
+Linux
+.CW dwc2
+source on this disk, and the qemu model is not an implementation of
+splits to compare against. The options are a copy of a working driver to
+read, or split support in the qemu model \(em which would make the path
+testable in CI for the first time and is a project in its own right.
