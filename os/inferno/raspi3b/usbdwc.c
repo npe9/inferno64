@@ -76,6 +76,19 @@ enum
 	 * to be worth trying while the link still matters.
 	 */
 	Reinitarms	= 8,
+	/*
+	 * A complete-split answered NYET means "the device has not finished
+	 * yet"; three re-issues is the donor's number and is kept.
+	 */
+	Splitretries	= 3,
+	/*
+	 * The hcint bits that make a halt an ERROR rather than a stage of
+	 * a split transaction.  Named because splitcontinue() has to tell
+	 * "the hub took the start-split" from "the transaction failed", and
+	 * it used to do that by comparing hcint against an exact value --
+	 * which the core does not produce.
+	 */
+	Splterr		= Stall|Xacterr|Bblerr|Datatglerr|Ahberr|Frmovrun,
 };
 
 typedef struct Ctlr Ctlr;
@@ -88,7 +101,14 @@ struct Ctlr {
 	uint	chanbusy;		/* bitmap of in-use channels */
 	Lock	chanlock;		/* serialise access to chanbusy */
 	QLock	split;			/* serialise split transactions */
-	int	splitretry;		/* count retries of Nyet */
+	/*
+	 * PER CHANNEL, not per controller.  This was a single int reset
+	 * only on Ack, so one channel's NYETs spent another channel's
+	 * retry budget -- and with ctlr->split serialising split transfers
+	 * that is still two different endpoints sharing one counter across
+	 * transfers.
+	 */
+	int	splitretry[Maxchans];	/* complete-split NYET retries */
 	uint	sofchan;		/* bitmap of channels waiting for sof */
 	Rendez	*chanintr;		/* per-channel wait, sleep till interrupt */
 	uint	hcintr[Maxchans];	/* hcint the handler read-and-cleared, per channel */
@@ -117,7 +137,11 @@ struct Ctlr {
 	 * and the difference is not otherwise visible.
 	 */
 	ulong	splitok;		/* split transfers that completed */
-	ulong	splitokdata;		/* ... of those, ones with len > 0 */
+	ulong	splitokdata;		/* ... that actually MOVED bytes */
+	ulong	splitbytes;		/* ... how many, in total */
+	ulong	splitempty;		/* asked for bytes and moved none */
+	ulong	splitpromote;		/* start-split ACKs promoted to complete-split */
+	ulong	splitterm;		/* start-split events taken as TERMINAL */
 };
 
 struct Epio {
@@ -664,14 +688,72 @@ chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 static int
 splitcontinue(Ctlr *ctlr, Hostchan *hc, int v, int n)
 {
-	if(v == (Chhltd|Ack)){
-		hc->hcsplt |= Compsplt;
-		ctlr->splitretry = 0;
-	}else if(v == (Chhltd|Nyet)){
-		if(++ctlr->splitretry >= 3)
+	/*
+	 * THE PHASE DECIDES, NOT AN EXACT BIT PATTERN, and the exact
+	 * pattern is why no full- or low-speed device has ever enumerated
+	 * behind this board's hub.
+	 *
+	 * This read
+	 *
+	 *	if(v == (Chhltd|Ack))		-- promote to complete-split
+	 *	else if(v == (Chhltd|Nyet))	-- retry
+	 *	else return 0			-- terminal
+	 *
+	 * and the core reports a start-split's ACK as
+	 *
+	 *	hcint 00000023 = Xfercomp|Chhltd|Ack
+	 *
+	 * which equals NEITHER constant.  So the function returned 0, the
+	 * ACK that means "the hub took it, now go and collect it" was taken
+	 * as the end of the transfer, and THE COMPLETE-SPLIT WAS NEVER
+	 * ISSUED.
+	 *
+	 * Measured, 20 times out of 20 on a GET_DESCRIPTOR data stage:
+	 *
+	 *	IN split moved NOTHING of 8 asked: hcint 00000023
+	 *	hctsiz 40080040 -> 40080040 (pktcnt 1 -> 1, xfersize
+	 *	64 -> 64) hcdma c41e57c0 -> c41e57c0
+	 *
+	 * Pktcnt, XferSize and the DMA pointer all unmoved, with the core
+	 * saying Xfercomp -- because for an IN the start-split carries no
+	 * data at all; the data arrives in the complete-split that never
+	 * ran.
+	 *
+	 * An OUT fails the same way and HIDES IT: the start-split does
+	 * carry the bytes, so hcdma advances, the transfer is counted as
+	 * having moved data and looks like a success -- while the device's
+	 * handshake is never collected.  That is why SET_ADDRESS appeared
+	 * to complete on all six attach attempts and the device then
+	 * stalled every SETUP at its new address.  One defect, two
+	 * symptoms, and the OUT symptom is the one that looked fine.
+	 *
+	 * So: in the START-split phase an ACK means proceed, whatever else
+	 * the core has latched alongside it.  In the COMPLETE-split phase
+	 * the event is the device's own answer and is terminal, except for
+	 * NYET ("not yet"), which is what a retry is for.  Testing the
+	 * phase rather than the pattern is also what keeps the promotion
+	 * from firing a second time on the complete-split's own ACK, which
+	 * the exact-equality test happened to prevent by accident.
+	 */
+	if((v & (Chhltd|Splterr)) != Chhltd){
+		if((hc->hcsplt & Compsplt) == 0)
+			ctlr->splitterm++;
+		return 0;			/* halted with an error: terminal */
+	}
+	if((hc->hcsplt & Compsplt) == 0){
+		if((v & Ack) == 0){
+			ctlr->splitterm++;
 			return 0;
-	}else
-		return 0;
+		}
+		hc->hcsplt |= Compsplt;
+		ctlr->splitretry[n] = 0;
+		ctlr->splitpromote++;
+	}else{
+		if((v & Nyet) == 0)
+			return 0;		/* the device's answer */
+		if(++ctlr->splitretry[n] >= Splitretries)
+			return 0;
+	}
 	if(hc->hcchar & Chen){
 		hc->hcchar |= Chen | Chdis;
 		while(hc->hcchar&Chen)
@@ -753,6 +835,53 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 	iters = 0;
 	i = 0;
 	chan = hc - r->hchan;
+	/*
+	 * CLEAR THE ACCUMULATOR FOR *THIS TRANSFER*, and this is the fix
+	 * the chanalloc() version of it only half made.
+	 *
+	 * The interrupt handler ORs into ctlr->hcintr[chan] and the bits
+	 * are sticky.  The loop below reads and clears the accumulator as
+	 * its first act -- deliberately, to catch a late event from the
+	 * PREVIOUS ATTEMPT of this same transfer -- but on the FIRST
+	 * iteration there is no previous attempt and whatever is there
+	 * belongs to somebody else.  It then satisfies
+	 *
+	 *   if(split && (i & ~(Chhltd|Nak|Ack|Nyet)) != 0
+	 *            && (i & Chhltd)) goto Result;
+	 *
+	 * for any leftover carrying Chhltd plus a bit outside that mask --
+	 * Xfercomp will do, not just Stall -- and jumps to Result BEFORE
+	 * THE CHANNEL HAS BEEN ENABLED EVEN ONCE.  Result computes
+	 * n = hc->hcdma - hcdma = 0 and the transfer is reported as having
+	 * completed and moved nothing.
+	 *
+	 * I put this clear in chanalloc() and measured no change, and
+	 * concluded the hazard was "latent rather than the live bug".  THAT
+	 * CONCLUSION WAS WRONG AND THE REASON IS THE SCOPE: chanalloc runs
+	 * ONCE PER CONTROL TRANSFER, while a control transfer is three
+	 * stages sharing one channel.  Clearing on alloc protects the SETUP
+	 * stage and leaves the data and status stages inheriting the stage
+	 * before them.
+	 *
+	 * Measured, 20 of 20 on a GET_DESCRIPTOR data stage:
+	 *
+	 *	IN split moved NOTHING of 8 asked: hcint 00000023
+	 *	hctsiz 40080040 -> 40080040 (pktcnt 1 -> 1, xfersize
+	 *	64 -> 64) hcdma c427bac0 -> c427bac0, iters 1 nyets 0,
+	 *	was a START-split, promoted 10 terminal 0
+	 *
+	 * iters 1 -- first iteration -- with Pktcnt, XferSize and the DMA
+	 * pointer all unmoved and hcint 0x23 inherited from the SETUP stage
+	 * that preceded it.  The 0x23 is a REAL completion, of the previous
+	 * stage.
+	 *
+	 * Why the zero-length status stages hid it: a stage that is
+	 * supposed to move no bytes looks correct when it moves no bytes.
+	 * Only the IN data stage had something to lose.
+	 */
+	ilock(ctlr);
+	ctlr->hcintr[chan] = 0;
+	iunlock(ctlr);
 	/*
 	 * hcdma and hctsiz are NOT pre-set to zero any more, and 7c is
 	 * what proves that is safe: with the baseline read moved above the
@@ -925,6 +1054,39 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 	started:
 		rearm0 = ctlr->rearm[chan];
 		i = chanwait(ep, ctlr, hc, imask);
+		/*
+		 * CONSUME THE EVENT chanwait JUST REPORTED.
+		 *
+		 * chanwait returns ctlr->hcintr[chan] without clearing it, so
+		 * the value stayed in the accumulator and the NEXT iteration's
+		 * read-and-clear at the top of this loop picked up THIS
+		 * attempt's completion as though it were a late event from a
+		 * previous one -- and with Chhltd set and Xfercomp outside the
+		 * goto's mask, that iteration jumped straight to Result and
+		 * reported a transfer that moved nothing.
+		 *
+		 * That is what a multi-packet split IN looked like after the
+		 * per-transfer clear above fixed the cross-STAGE case: the
+		 * first packet of an 18-byte descriptor moved its 8 bytes and
+		 * the second iteration reported
+		 *
+		 *	IN split moved NOTHING of 18 asked: hcint 00000023
+		 *	hctsiz 00100010 -> 00100010 (pktcnt 2 -> 2, xfersize
+		 *	16 -> 16) ... iters 2
+		 *
+		 * -- 16 bytes and 2 packets still outstanding, nothing
+		 * attempted for them.  Same stale-accumulator defect, one
+		 * level in: between the STAGES of a transfer, and between the
+		 * ATTEMPTS of a stage.
+		 *
+		 * The top-of-loop read stays as it is: with this clear, what
+		 * it finds really is only what arrived AFTER chanwait
+		 * returned, which is the late-completion case it was written
+		 * for.
+		 */
+		ilock(ctlr);
+		ctlr->hcintr[chan] = 0;
+		iunlock(ctlr);
 		hc->hcintmsk = 0;
 		/*
 		 * The channel was re-armed and moved nothing.  Count the run
@@ -1070,7 +1232,8 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 						" (%s) pktcnt %d xfersize %d"
 						" pid %d maxpkt %d speed %d"
 						" splits ok %lud (%lud with"
-						" data) hcchar %8.8ux hcsplt"
+						" data, %lud bytes, %lud empty)"
+						" hcchar %8.8ux hcsplt"
 						" %8.8ux hctsiz %8.8ux\n",
 						ep->dev->nb, ep->nb,
 						(hc->hcchar>>ODevaddr) & 0x7f,
@@ -1093,6 +1256,8 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 						maxpkt, ep->dev->speed,
 						ctlr->splitok,
 						ctlr->splitokdata,
+						ctlr->splitbytes,
+						ctlr->splitempty,
 						hc->hcchar, hc->hcsplt,
 						hc->hctsiz);
 				/*
@@ -1221,6 +1386,51 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 			 * alone would loop forever and re-enable the channel
 			 * against a device whose address has since moved.
 			 */
+			/*
+			 * AND SAY SO WHEN BYTES WERE ASKED FOR, because this
+			 * is where the Pi 3B's full-speed enumeration dies
+			 * and it died SILENTLY.
+			 *
+			 * Measured: of 72 completed split transfers, 20 asked
+			 * for data and moved none -- every one of them the IN
+			 * data stage of a GET_DESCRIPTOR at address 0.  The
+			 * transfer "completes", chanio returns 0, ctltrans
+			 * memmoves nothing, ctldata hands back an empty
+			 * Block, usbin() sees a zero-length read and retries
+			 * four times, and usbd finally reports "endpoint
+			 * stalled" from a STALE errstr.  Nothing anywhere in
+			 * that chain names the actual event.
+			 *
+			 * So: hcint, hctsiz before and after, and the DMA
+			 * pointer, for the first few only -- the ring is this
+			 * board's only post-mortem channel.
+			 */
+			if(split && len > 0){
+				static int nempty;
+
+				if(nempty++ < 12)
+					print("usbdwc: ep%d.%d %s split moved"
+						" NOTHING of %d asked: hcint"
+						" %8.8ux hctsiz %8.8ux ->"
+						" %8.8ux (pktcnt %d -> %d,"
+						" xfersize %d -> %d) hcdma"
+						" %8.8ux -> %8.8ux, iters %d"
+						" nyets %d, %s, promoted %lud"
+						" terminal %lud\n",
+						ep->dev->nb, ep->nb,
+						dir == Epin? "IN": "OUT", len,
+						i, hctsiz, hc->hctsiz,
+						(hctsiz & Pktcnt)>>OPktcnt,
+						(hc->hctsiz & Pktcnt)>>OPktcnt,
+						hctsiz & Xfersize,
+						hc->hctsiz & Xfersize,
+						hcdma, hc->hcdma,
+						iters, nyets,
+						cmpl? "was a COMPLETE-split":
+						  "was a START-split",
+						ctlr->splitpromote,
+						ctlr->splitterm);
+			}
 			if((i & Xfercomp) || (hc->hctsiz & Pktcnt) != (hctsiz & Pktcnt))
 				break;
 			else
@@ -1272,8 +1482,23 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 	 */
 	if(split){
 		ctlr->splitok++;
-		if(len > 0)
+		/*
+		 * BYTES MOVED, NOT BYTES ASKED FOR, and the difference is the
+		 * whole finding.
+		 *
+		 * This counted `len > 0' -- the REQUESTED length -- so it
+		 * reported "46 with data" for a run in which the IN data
+		 * stages delivered nothing: chanio returns len - nleft, and a
+		 * stage that completes with Xfercomp having moved zero bytes
+		 * is counted by the old test and not by this one.  That is
+		 * exactly the fault being chased, so the counter was blind to
+		 * it in the way that mattered.
+		 */
+		if(len - nleft > 0){
 			ctlr->splitokdata++;
+			ctlr->splitbytes += len - nleft;
+		}else if(len > 0)
+			ctlr->splitempty++;
 	}
 	return len - nleft;
 }

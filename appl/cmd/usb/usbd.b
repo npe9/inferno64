@@ -315,6 +315,57 @@ portattach(h: ref Hub, p: int): ref Dev
 	nd.isusb3 = d.isusb3;
 	if(opendevdata(nd) < 0)
 		return portfail(h, p, nd, "open data");
+	#
+	# ON A RETRY ONLY, ASK FOR THE DESCRIPTOR AT ADDRESS 0 FIRST.
+	#
+	# This is a measurement, not a fix, and it exists because exactly
+	# one thing distinguishes the transfer that works from the one that
+	# fails on the Pi 3B's full-speed port-2 device.  Both are 8-byte
+	# SETUPs through the same hub's transaction translator, with
+	# identical hcsplt, hctsiz and maxpkt; chansetup() forces the
+	# channel's device address to 0 while the device is in Dconfig or
+	# Dreset, so SET_ADDRESS goes to address 0 and SUCCEEDS (measured:
+	# 2 split transfers, 1 with data, on all six attempts), and the
+	# device descriptor then goes to address 4 and STALLS.
+	#
+	# Reading the device descriptor at address 0 in the Default state is
+	# allowed by USB 2.0 and is what most stacks do before addressing,
+	# so this asks the one question that separates "the device will not
+	# answer GET_DESCRIPTOR at all" from "the device will not answer at
+	# its new address".
+	#
+	# GATED ON nfail > 0 SO IT CANNOT BREAK WHAT WORKS.  A stall can
+	# leave a control endpoint halted, and the devices that enumerate
+	# correctly on this board must not be made to run an extra transfer
+	# to satisfy a diagnostic.  The first attempt is therefore
+	# untouched; only a port that has already failed is probed, and the
+	# result is reported and then ignored.
+	#
+	if(pp.nfail > 0 && !nd.isusb3){
+		(r0, dd0) := usbin(nd, Rd2h|Rstd|Rdev, Rgetdesc, Ddev<<8, 0, 8);
+		if(r0 >= 8)
+			sys->print("usbd: %s: port %d: PROBE descriptor AT "
+				+ "ADDRESS 0 succeeded: maxpkt %d class %d "
+				+ "(so the device answers; the stall is "
+				+ "about the ADDRESS)\n",
+				h.dev.name, p, int dd0[7], int dd0[4]);
+		else
+			#
+			# NO "%r" HERE.  The kernel's ctltrans swallows
+			# Estalled and returns 0, so usbin() sees a SHORT
+			# WRITE rather than a failed system call and errstr is
+			# whatever some earlier call left behind -- this
+			# printed "file does not exist" for five probes and I
+			# nearly read it as a result.  The honest report is
+			# the byte count, and the kernel's own stall lines say
+			# whether the wire stalled.
+			#
+			sys->print("usbd: %s: port %d: PROBE descriptor at "
+				+ "address 0 returned %d bytes (no errstr is "
+				+ "meaningful here; see usbdwc's stall and "
+				+ "split counters)\n",
+				h.dev.name, p, r0);
+	}
 	step(h, p, "set address");
 	if(usbcmd(nd, Rh2d|Rstd|Rdev, Rsetaddress, nd.id, 0, nil, 0) < 0)
 		return portfail(h, p, nd, "set address");
