@@ -414,6 +414,16 @@ delprog(Prog *p, char *msg)
 					p->pid, disracepid, disraceoverlaps);
 		}
 		disracepid = p->pid;
+		/*
+		 * AND MARK THE Prog ITSELF, which is what devprog tests.
+		 *
+		 * disracepid is ONE SLOT: an overlapping delprog overwrites
+		 * it and whichever finishes first clears it, so with 269
+		 * overlaps in 11368 windows measured on the raspi3b it cannot
+		 * be the thing a guard relies on.  The flag is per-Prog, set
+		 * under the token, and never cleared.
+		 */
+		p->flags |= Pclosing;
 		release();
 		closepgrp(o->pgrp);
 		closefgrp(o->fgrp);

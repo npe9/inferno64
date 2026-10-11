@@ -42,6 +42,19 @@ enum
 	Prestrict = 1<<2,	/* enforce memory limits */
 	Prestricted = 1<<3,
 	Pkilled = 1<<4,
+	/*
+	 * delprog() has RELEASED the interpreter token to close this
+	 * Prog's pgrp, fgrp, egrp and sigs, and anything that finds the
+	 * Prog during that window is looking at groups being freed.  Set
+	 * under the token and never cleared -- the Prog is on its way to
+	 * being freed, so there is no state to go back to.
+	 *
+	 * A reader that holds the token and sees this CLEAR is safe for as
+	 * long as it holds the token, because delprog cannot open the
+	 * window without acquiring it first.  That is what makes a plain
+	 * flag test sufficient here rather than a lock.
+	 */
+	Pclosing = 1<<5,
 	Pprivatemem = 1<<5	/* keep heap and stack private */
 };
 

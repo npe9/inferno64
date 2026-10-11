@@ -97,6 +97,14 @@ A_DRWIN=`sym disracewindows`
 A_DROVL=`sym disraceoverlaps`
 A_DRGC=`sym disracehits`
 A_DRHIT=`sym dishitcount`
+#
+# The GUARD's own counter.  dishitcount counts DETECTIONS (a reader
+# found a Prog whose close window was open); disraceblocked counts
+# REFUSALS (proglive() then handed back nil instead of it).  They should
+# track each other, and a guard that has never been seen to fire is a
+# guard and not evidence.
+#
+A_DRBLK=`sym disraceblocked`
 A_NHELD=`sym nvmheld`
 A_GCSW=`sym gcsweeps`
 A_GCBRK=`sym gcbroken`
@@ -178,6 +186,7 @@ trap 'rm -f "$TMP"' 0 1 2 15
 	-c "echo \"VMHELD-DROVL\"; mdw ${A_DROVL:-0} 1" \
 	-c "echo \"VMHELD-DRGC\"; mdw ${A_DRGC:-0} 1" \
 	-c "echo \"VMHELD-DRHIT\"; mdw ${A_DRHIT:-0} 1" \
+	-c "echo \"VMHELD-DRBLK\"; mdw ${A_DRBLK:-0} 1" \
 	-c "echo \"VMHELD-NHELD\"; mdw ${A_NHELD:-0} 1" \
 	-c "echo \"VMHELD-GCSW\"; mdw ${A_GCSW:-0} 1" \
 	-c "echo \"VMHELD-GCBRK\"; mdw ${A_GCBRK:-0} 1" \
@@ -349,8 +358,10 @@ if [ -n "$A_DRWIN" ]; then
 	# the plan as support for the window being widened by a collection.
 	# It is the opposite.
 	#
+	B=`dec \`val VMHELD-DRBLK\``
 	echo "vmheld: delprog close windows $W, of them OVERLAPPING $O;" \
-		"gc-SUPPRESSED-in-window $G, /prog touched a closing pid $H"
+		"gc-SUPPRESSED-in-window $G, /prog touched a closing pid $H," \
+		"REFUSED by the guard $B"
 	#
 	# The hit count is a FLOOR and the line says so, because disracepid is
 	# one slot: an overlapping delprog overwrites the pid being watched and

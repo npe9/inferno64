@@ -410,6 +410,20 @@ delprog(Prog *p, char *msg)
 	tellsomeone(p, msg);	/* call before being removed from prog list */
 
 	o = p->osenv;
+	/*
+	 * MARK THE Prog BEFORE RELEASING THE TOKEN.  Everything between
+	 * here and the acquire() below runs with the token dropped, so
+	 * /prog can find this Prog and dereference the groups being freed
+	 * -- devprog.c's `progpid touched pid N live inside its own delprog
+	 * close window'.  Reproduced on a raspi3b (see that tree's
+	 * doc/open-issues-plan.ms); the window is the same here.
+	 *
+	 * Set under the token and never cleared: the Prog is on its way to
+	 * being freed.  A reader holding the token that sees this clear is
+	 * safe while it holds the token, because this function cannot open
+	 * the window without acquiring it.
+	 */
+	p->flags |= Pclosing;
 	release();
 	closepgrp(o->pgrp);
 	closefgrp(o->fgrp);

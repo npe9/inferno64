@@ -150,6 +150,39 @@ extern	Type	*Twrchan;
 extern	Module*	modules;
 static  char 	Emisalign[] = "misaligned address";
 
+
+/*
+ * progpid() for /prog's OWN readers: nil for a Prog whose close window is
+ * open.
+ *
+ * delprog() sets Pclosing under the interpreter token and then RELEASES it to
+ * free pgrp, fgrp, egrp and sigs, and every reader below dereferences what is
+ * being freed -- o->pgrp->progmode and o->user among them.  The window is the
+ * same here as in the native kernel, where it was reproduced on a raspi3b:
+ * three tests/efs-fault repeats with a concurrent ps loop, two hits on one
+ * pid.  Nothing has been seen to hit it under emu, which is a statement about
+ * what has been run and not about the window.
+ *
+ * Treating such a Prog as gone is correct rather than a workaround: it IS
+ * gone, a moment early, and keeping the token across four close*() calls that
+ * can sleep is what the release() exists to avoid.
+ *
+ * The flag test needs no lock.  A reader holds the token while it tests, and
+ * delprog cannot open the window without acquiring it, so "clear" stays true
+ * for as long as the reader holds it; Pclosing is never cleared, so there is
+ * no ABA.
+ */
+static Prog*
+proglive(int pid)
+{
+	Prog *p;
+
+	p = progpid(pid);
+	if(p != nil && (p->flags & Pclosing))
+		return nil;
+	return p;
+}
+
 static int
 proggen(Chan *c, char *name, Dirtab *tab, int ntab, int s, Dir *dp)
 {
@@ -174,7 +207,7 @@ proggen(Chan *c, char *name, Dirtab *tab, int ntab, int s, Dir *dp)
 			if(pid == 0 || *e != '\0')
 				return -1;
 			acquire();
-			p = progpid(pid);
+			p = proglive(pid);
 			if(p == nil){
 				release();
 				return -1;
@@ -206,7 +239,7 @@ proggen(Chan *c, char *name, Dirtab *tab, int ntab, int s, Dir *dp)
 	path = PATH(c->qid);
 
 	acquire();
-	p = progpid(PID(c->qid));
+	p = proglive(PID(c->qid));
 	if(p == nil) {
 		release();
 		return -1;
@@ -259,7 +292,7 @@ progopen(Chan *c, int omode)
 		release();
 		nexterror();
 	}
-	p = progpid(PID(c->qid));
+	p = proglive(PID(c->qid));
 	if(p == nil)
 		error(Ethread);
 	o = p->osenv;
@@ -337,7 +370,7 @@ progwstat(Chan *c, uchar *db, int n)
 	if(c->qid.type&QTDIR)
 		error(Eperm);
 	acquire();
-	p = progpid(PID(c->qid));
+	p = proglive(PID(c->qid));
 	if(p == nil) {
 		release();
 		error(Ethread);
@@ -863,7 +896,7 @@ progread(Chan *c, void *va, long n, vlong offset)
 		return qread(ctl->q, va, n);
 	case Qstatus:
 		acquire();
-		p = progpid(PID(c->qid));
+		p = proglive(PID(c->qid));
 		if(p == nil || p->state == Pexiting || p->reg.M == H) {
 			release();
 			snprint(up->genbuf, sizeof(up->genbuf), "%8lud %8d %10s %s %10s %5dK %s",
@@ -896,7 +929,7 @@ progread(Chan *c, void *va, long n, vlong offset)
 			release();
 			nexterror();
 		}
-		p = progpid(PID(c->qid));
+		p = proglive(PID(c->qid));
 		if(p == nil)
 			error(Ethread);
 		mw = c->aux;
@@ -927,7 +960,7 @@ progread(Chan *c, void *va, long n, vlong offset)
 		return i;
 	case Qnsgrp:
 		acquire();
-		p = progpid(PID(c->qid));
+		p = proglive(PID(c->qid));
 		if(p == nil) {
 			release();
 			error(Ethread);
@@ -937,7 +970,7 @@ progread(Chan *c, void *va, long n, vlong offset)
 		return readnum(offset, va, n, grpid, NUMSIZE);
 	case Qpgrp:
 		acquire();
-		p = progpid(PID(c->qid));
+		p = proglive(PID(c->qid));
 		if(p == nil) {
 			release();
 			error(Ethread);
@@ -947,7 +980,7 @@ progread(Chan *c, void *va, long n, vlong offset)
 		return readnum(offset, va, n, grpid, NUMSIZE);
 	case Qstack:
 		acquire();
-		p = progpid(PID(c->qid));
+		p = proglive(PID(c->qid));
 		if(p == nil || p->state == Pexiting) {
 			release();
 			error(Ethread);
@@ -977,7 +1010,7 @@ progread(Chan *c, void *va, long n, vlong offset)
 			release();
 			nexterror();
 		}
-		p = progpid(PID(c->qid));
+		p = proglive(PID(c->qid));
 		if(p == nil)
 			error(Ethread);
 		o = p->osenv;
@@ -987,7 +1020,7 @@ progread(Chan *c, void *va, long n, vlong offset)
 		return n;
 	case Qexception:
 		acquire();
-		p = progpid(PID(c->qid));
+		p = proglive(PID(c->qid));
 		if(p == nil) {
 			release();
 			error(Ethread);
@@ -1062,7 +1095,7 @@ progwrite(Chan *c, void *va, long n, vlong offset)
 		release();
 		nexterror();
 	}
-	p = progpid(PID(c->qid));
+	p = proglive(PID(c->qid));
 	if(p == nil)
 		error(Ethread);
 

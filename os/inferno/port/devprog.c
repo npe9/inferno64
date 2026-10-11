@@ -23,7 +23,8 @@ int	SECURE = 0;
  */
 extern int disracepid;
 static int dishitcount;
-int disreachcount;		/* not static: read over JTAG at a wedge */
+int disreachcount;
+int disraceblocked;		/* readers refused a Prog in its close window */		/* not static: read over JTAG at a wedge */
 static int disreachsaid;
 
 /*
@@ -61,6 +62,44 @@ disracecheck(Prog *p, char *where)
 		print("devprog: %s touched pid %d live inside its own delprog close window\n",
 			where, p->pid);
 	}
+}
+
+/*
+ * progpid() for /prog's OWN readers: nil for a Prog whose close window is
+ * open, and the detector folded in so there is one place rather than twelve.
+ *
+ * delprog() sets Pclosing under the interpreter token and then RELEASES it
+ * to free pgrp, fgrp, egrp and sigs.  Every reader below then dereferences
+ * what is being freed -- o->pgrp->progmode and o->user among them -- which
+ * is the `progpid touched pid N live inside its own delprog close window'
+ * report.  Reproduced on a raspi3b: three tests/efs-fault repeats with a
+ * concurrent ps loop, two hits on pid 3650.
+ *
+ * Treating such a Prog as gone is correct rather than a workaround: it IS
+ * gone, a moment early, and the alternative -- keeping the token across four
+ * close*() calls that can sleep -- is why the release() is there.
+ *
+ * The flag test needs no lock of its own.  A reader holds the token while it
+ * tests, and delprog cannot open the window without acquiring it, so "clear"
+ * stays true for as long as the reader holds it.  Pclosing is never cleared,
+ * so there is no ABA either.
+ *
+ * NOT disracepid, which is one slot: an overlapping delprog overwrites it and
+ * whichever finishes first clears it.  269 of 11368 windows overlapped on the
+ * board, so a single-slot test would miss about one in forty.
+ */
+static Prog*
+proglive(int pid)
+{
+	Prog *p;
+
+	p = progpid(pid);
+	disracecheck(p, "progpid");
+	if(p != nil && (p->flags & Pclosing)){
+		disraceblocked++;
+		return nil;
+	}
+	return p;
 }
 
 
@@ -225,7 +264,7 @@ proggen(Chan *c, char *name, Dirtab *tab, int, int s, Dir *dp)
 			if(pid == 0 || *e != '\0')
 				return -1;
 			acquire();
-			p = progpid(pid);
+			p = proglive(pid);
 			if(p == nil){
 				release();
 				return -1;
@@ -257,8 +296,7 @@ proggen(Chan *c, char *name, Dirtab *tab, int, int s, Dir *dp)
 	path = PATH(c->qid);
 
 	acquire();
-	p = progpid(PID(c->qid));
-	disracecheck(p, "progpid");
+	p = proglive(PID(c->qid));
 	if(p == nil) {
 		release();
 		return -1;
@@ -311,8 +349,7 @@ progopen(Chan *c, u32 omode)
 		release();
 		nexterror();
 	}
-	p = progpid(PID(c->qid));
-	disracecheck(p, "progpid");
+	p = proglive(PID(c->qid));
 	if(p == nil)
 		error(Ethread);
 
@@ -391,8 +428,7 @@ progwstat(Chan *c, uchar *db, s32 n)
 	if(c->qid.type&QTDIR)
 		error(Eperm);
 	acquire();
-	p = progpid(PID(c->qid));
-	disracecheck(p, "progpid");
+	p = proglive(PID(c->qid));
 	if(p == nil) {
 		release();
 		error(Ethread);
@@ -956,8 +992,7 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 			release();
 			nexterror();
 		}
-		p = progpid(PID(c->qid));
-		disracecheck(p, "progpid");
+		p = proglive(PID(c->qid));
 		if(p == nil || p->state == Pexiting || p->reg.M == H) {
 			poperror();
 			release();
@@ -987,8 +1022,7 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 			release();
 			nexterror();
 		}
-		p = progpid(PID(c->qid));
-		disracecheck(p, "progpid");
+		p = proglive(PID(c->qid));
 		if(p == nil)
 			error(Ethread);
 		mw = c->aux;
@@ -1019,8 +1053,7 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 		return i;
 	case Qnsgrp:
 		acquire();
-		p = progpid(PID(c->qid));
-		disracecheck(p, "progpid");
+		p = proglive(PID(c->qid));
 		if(p == nil) {
 			release();
 			error(Ethread);
@@ -1030,8 +1063,7 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 		return readnum(offset, va, n, grpid, NUMSIZE);
 	case Qpgrp:
 		acquire();
-		p = progpid(PID(c->qid));
-		disracecheck(p, "progpid");
+		p = proglive(PID(c->qid));
 		if(p == nil) {
 			release();
 			error(Ethread);
@@ -1041,8 +1073,7 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 		return readnum(offset, va, n, grpid, NUMSIZE);
 	case Qstack:
 		acquire();
-		p = progpid(PID(c->qid));
-		disracecheck(p, "progpid");
+		p = proglive(PID(c->qid));
 		if(p == nil || p->state == Pexiting) {
 			release();
 			error(Ethread);
@@ -1072,8 +1103,7 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 			release();
 			nexterror();
 		}
-		p = progpid(PID(c->qid));
-		disracecheck(p, "progpid");
+		p = proglive(PID(c->qid));
 		if(p == nil)
 			error(Ethread);
 		o = p->osenv;
@@ -1083,8 +1113,7 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 		return n;
 	case Qexception:
 		acquire();
-		p = progpid(PID(c->qid));
-		disracecheck(p, "progpid");
+		p = proglive(PID(c->qid));
 		if(p == nil) {
 			release();
 			error(Ethread);
@@ -1159,8 +1188,7 @@ progwrite(Chan *c, void *va, s32 n, s64 offset)
 		release();
 		nexterror();
 	}
-	p = progpid(PID(c->qid));
-	disracecheck(p, "progpid");
+	p = proglive(PID(c->qid));
 	if(p == nil)
 		error(Ethread);
 
