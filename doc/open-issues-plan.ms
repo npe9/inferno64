@@ -16759,3 +16759,31 @@ process in
 .B "The fix is in RAM only."
 It reached the board by JTAG boot and does not survive a power cycle;
 the card still holds a kernel without it.
+.NH 2
+raspi4 carried the same defects, including the panic
+.PP
+.CW os/inferno/raspi4/usbdwc.c
+is a copy of the raspi3b driver from before this work and had every one
+of its defects \(em the
+.CW cacheinval
+panic (baseline read below the
+.CW "goto Result" ),
+the stale accumulator at both scopes, and
+.CW splitcontinue 's
+exact\-value comparison. All four are ported.
+.PP
+.B "NOT VERIFIED ON A PI 4."
+There is no Pi 4 on this desk, and
+.B "QEMU's dwc2 model does no split transactions at all"
+\(em so the path these changes fix is exactly the path the gates cannot
+exercise. The three raspi4 gates (34, 38 and 37 markers) show only that
+nothing else broke. The panic fix is the one whose correctness does not
+depend on a split: it is a length handed to an unsigned
+.CW cacheinval ,
+and the reasoning is the same arithmetic that was measured on the 3B.
+.PP
+The diagnostic counters and prints are deliberately
+.I not
+ported. They earned their place on the 3B by being the instruments that
+found this; carrying them to a board nobody can read them on is
+divergence for nothing.
