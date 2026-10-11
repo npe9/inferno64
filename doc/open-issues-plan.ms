@@ -16512,3 +16512,92 @@ boot: build 1791682112 is running (attempt 1, ticks 2523 against 0 before)
 it is a print, so it competes for a fixed ring with everything else the
 kernel says; and the question is not whether the kernel said hello but
 whether it is running now.
+.NH 2
+The request is textbook; two NYET handlers are not
+.PP
+.B "The eight bytes the device refuses are exactly right."
+Printed from
+.CW chanio 's
+own
+.CW a
+argument, which
+.I is
+.CW ctltrans 's
+.CW req[]
+for the setup stage:
+.IP
+.EX
+req 80 06 00 01 00 00 08 00
+.EE
+.PP
+\(em
+.CW bmRequestType
+0x80 (device\-to\-host, standard, device),
+.CW bRequest
+0x06 GET_DESCRIPTOR,
+.CW wValue
+0x0100 (DEVICE, index 0),
+.CW wIndex
+0,
+.CW wLength
+8. A legal request, and the one intended. So the request bytes are ruled
+out: the device is refusing something correct.
+.PP
+.B "And the retry counts point at the NYET path:"
+.IP
+.EX
+  2  iters 1  nyets 0
+  1  iters 2  nyets 0
+ 12  iters 2  nyets 1
+  9  iters 3  nyets 1
+.EE
+.PP
+.B "21 of 24 stall after exactly one trip through the main loop's NYET"
+.B "arm, and NYET is handled in TWO places for the same event:"
+.IP \(bu
+.CW splitcontinue ,
+in interrupt context, retries a NYET'd complete\-split up to three times
+with
+.CW Compsplt
+left set \(em which is right;
+.IP \(bu
+and when it gives up, the NYET becomes the terminal event and reaches
+the main loop's
+.CW "if(i & (Nyet|Frmovrun)){ nyets++; continue; }" ,
+which goes back to the top of the loop \(em
+.B "where Compsplt has already been cleared."
+So the next attempt issues a fresh
+.B start\-split
+for the same SETUP while the hub's transaction translator may still hold
+the buffered transaction.
+.PP
+.B "NOT CLAIMED AS THE CAUSE,"
+for one reason visible in the same table: two stalls have
+.CW "iters 1 nyets 0"
+\(em a clean stall on the first complete\-split with no retry of any kind
+\(em so the NYET path cannot be necessary for the stall. Either there
+are two faults or this is not it.
+.PP
+A second defect is in that code whatever the answer:
+.CW ctlr->splitretry
+is
+.B "per-controller, not per-channel,"
+and is reset only on
+.CW Ack ,
+so one channel's NYETs spend another channel's retry budget.
+.PP
+.B "What the data no longer supports:"
+"port 2 is electrically bad". A marginal jack \(em bad contact, VBOS sag,
+a broken cable \(em loses transactions: it gives
+.CW Xacterr ,
+timeouts, a flapping
+.CW PSpresent .
+It does not deliver a clean
+.CW Chhltd|Stall
+handshake through the translator 24 times out of 24 after the port
+resets, enables, accepts
+.CW newdev
+and completes SET_ADDRESS over that same split path. That is an argument
+from the shape of the failure and
+.B "not a resolution of the confound,"
+which still needs a full\-speed device in another jack.

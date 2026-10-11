@@ -1095,6 +1095,39 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 						ctlr->splitokdata,
 						hc->hcchar, hc->hcsplt,
 						hc->hctsiz);
+				/*
+				 * AND THE REQUEST ITSELF, on a SETUP stage.
+				 *
+				 * chanio's `a' IS ctltrans's req[] for the
+				 * setup stage -- chanio(ep, hc, Epout, SETUP,
+				 * req, Rsetuplen) -- so the eight bytes the
+				 * device is refusing need no plumbing to
+				 * reach here.  A device may not STALL a SETUP
+				 * token at all (USB 2.0 8.5.3), so either the
+				 * bytes are not what this driver believes it
+				 * sent, or the device is in a state no legal
+				 * request will get it out of.  Those are
+				 * different faults and eight bytes tell them
+				 * apart.
+				 *
+				 * iters/nyets/naks go with it because a SETUP
+				 * with Pktcnt 1 should be one start-split and
+				 * one complete-split: a stall on the FIRST
+				 * complete-split and a stall on the third
+				 * after two NYETs are different stories, and
+				 * the line could not distinguish them.
+				 */
+				if(nstall <= 40 && pid == SETUP && a != nil){
+					uchar *rq = a;
+
+					print("usbdwc:   req %2.2ux %2.2ux "
+						"%2.2ux %2.2ux %2.2ux %2.2ux "
+						"%2.2ux %2.2ux, iters %d nyets "
+						"%d naks %d\n",
+						rq[0], rq[1], rq[2], rq[3],
+						rq[4], rq[5], rq[6], rq[7],
+						iters, nyets, naks);
+				}
 				error(Estalled);
 			}
 			if(i & (Nyet|Frmovrun)){
