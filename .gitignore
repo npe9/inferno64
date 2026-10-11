@@ -549,7 +549,17 @@ os/inferno/raspi3b/board.out
 # so they sit inside emu/<platform>/ rather than in a build directory and
 # were tracked: every rebuild by any session then showed three modified
 # Mach-O binaries in "git status", which is noise nobody edited and a
-# diff nobody can read.  o.emu-g is tracked too and is the same thing.
+# diff nobody can read.
+#
+# AND THE RULE ALONE DID NOTHING, which is the half this records: a
+# .gitignore entry does not apply to a file git is ALREADY TRACKING, and
+# o.emu-cocoa and o.emu-g both were.  So the pattern sat here while every
+# rebuild still showed them modified, and the last commit to touch them was
+# "emu: rebuild the tracked binaries against the merged tree" -- committing
+# the noise the pattern was added to stop.  They are untracked now
+# (git rm --cached, the files left on disk), which is what makes the
+# pattern take effect.  o.emu-cpu was never tracked and so was always
+# correctly ignored, which is why the gap was invisible.
 emu/*/o.emu-*
 
 #
