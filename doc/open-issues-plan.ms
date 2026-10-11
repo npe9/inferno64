@@ -18359,3 +18359,74 @@ retry
 for a few microframes on NAK or NYET before giving up and restarting.
 Neither half alone was enough \(em the deferral was tried on its own and
 the mouse did not move.
+.NH 2
+Both halves together: tried as prescribed, and it REGRESSED
+.LP
+The section above said the two halves were one fix and should be done
+together. They were, and the result is worth more than the prescription
+was:
+.IP \(bu
+the periodic complete\-split deferred to the next SOF (the channel
+noted, the SOF interrupt armed, the handler enabling it at the next
+start\-of\-frame);
+.IP \(bu
+and that complete\-split retried on
+.CW Nak
+as well as
+.CW Nyet ,
+up to
+.CW Csplitretries
+= 8 microframes, instead of falling through to the main loop and
+restarting the transaction a poll interval later.
+.PP
+.B "The mouse still reported nothing, AND the device was lost:"
+.CW "mouse gone"
+appeared for the first time \(em 0 in the two preceding boots, 1 in this
+one. So the retry budget running out now propagates as an i/o error and
+.CW usbd
+discards the device, which is strictly worse than the NAK loop it
+replaced.
+.PP
+.B "So the prescription in this file was wrong,"
+and that is the finding. Deferring and retrying is not merely
+incomplete; in this shape it breaks the endpoint. Whatever the periodic
+split path needs, it is not "the same loop, one microframe later, a few
+more times".
+.PP
+Reverted.
+.CW tmp
+copies of both attempts are not kept \(em the shape is described here
+instead, because what is worth carrying forward is that it was tried and
+what it did.
+.NH 2
+Seven attempts, and what the next session should NOT repeat
+.LP
+.P1
+1  pktcnt 1 for control splits      dropped before building (3/30)
+2  periodic promote without Ack     built, no-op, proven by A/B
+3  pktcnt 1 for periodic splits     built, took effect, no change
+4  PHY clock select, after reset    built, no change
+5  PHY clock select + re-reset      built, no change; and right from
+                                      power-on also NAKs
+6  defer CSPLIT to the next SOF     built, slip 0 -> 2, no change
+7  defer + retry CSPLIT on NAK      built, NO CHANGE AND A REGRESSION
+                                      (`mouse gone')
+.P2
+.PP
+Every one reverted; the driver is at the state the gates and the card
+know. Three came from reading USB 2.0, two from a measured register
+disagreement, two from a measured protocol violation \(em and the two
+measured defects are
+.I real
+(the clock select did disagree, the slip was zero) and neither is the
+cause.
+.PP
+.B "What that pattern says about the next attempt:"
+the remaining work is not another single-register or single-condition
+change. It wants the DWC periodic split state machine read against a
+known-good implementation end to end \(em when the start-split is
+scheduled relative to the frame, what the core does with
+.CW Oddfrm ,
+and what the host is supposed to do on each of ACK, NAK, NYET and ERR at
+each phase \(em rather than another hypothesis tested on the board. The
+instrumentation to support that reading is committed and bounded.
