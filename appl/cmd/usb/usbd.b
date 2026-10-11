@@ -344,10 +344,21 @@ portattach(h: ref Hub, p: int): ref Dev
 	if(pp.nfail > 0 && !nd.isusb3){
 		(r0, dd0) := usbin(nd, Rd2h|Rstd|Rdev, Rgetdesc, Ddev<<8, 0, 8);
 		if(r0 >= 8)
-			sys->print("usbd: %s: port %d: PROBE descriptor AT "
-				+ "ADDRESS 0 succeeded: maxpkt %d class %d "
-				+ "(so the device answers; the stall is "
-				+ "about the ADDRESS)\n",
+			#
+			# NO VERDICT IN THE MESSAGE.  This said "so the
+			# device answers; the stall is about the ADDRESS",
+			# which was a guess and was WRONG: the fault was a
+			# stale interrupt accumulator in usbdwc, and the
+			# address had nothing to do with it.  A diagnostic
+			# that prints a conclusion outlives the reasoning
+			# that produced it -- the facts are maxpkt and class,
+			# and what they are for is that ep0's packet size is
+			# NOT knowable before this read (devusb guesses 64
+			# for anything that is not low or super speed, and
+			# this device wants 8).
+			#
+			sys->print("usbd: %s: port %d: descriptor at address "
+				+ "0: maxpkt %d class %d\n",
 				h.dev.name, p, int dd0[7], int dd0[4]);
 		else
 			#

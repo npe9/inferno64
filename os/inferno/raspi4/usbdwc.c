@@ -55,6 +55,19 @@ enum
 	 */
 	USBIRQ		= IrqDwc2,
 	Busalias	= 0xC0000000,		/* bus-master view of ARM RAM */
+	/*
+	 * A complete-split answered NYET means "the device has not finished
+	 * yet"; three re-issues is the donor's number.
+	 */
+	Splitretries	= 3,
+	/*
+	 * The hcint bits that make a halt an ERROR rather than a stage of a
+	 * split transaction.  splitcontinue() has to tell "the hub took the
+	 * start-split" from "the transaction failed", and it used to do
+	 * that by comparing hcint against an exact value the core does not
+	 * produce.
+	 */
+	Splterr		= Stall|Xacterr|Bblerr|Datatglerr|Ahberr|Frmovrun,
 	Cachelinesz	= 64,			/* Cortex-A53 D-cache line */
 	PowerUsb	= 3,			/* mailbox power-domain id */
 
@@ -83,7 +96,11 @@ struct Ctlr {
 	uint	chanbusy;		/* bitmap of in-use channels */
 	Lock	chanlock;		/* serialise access to chanbusy */
 	QLock	split;			/* serialise split transactions */
-	int	splitretry;		/* count retries of Nyet */
+	/*
+	 * PER CHANNEL, not per controller: this was one int reset only on
+	 * Ack, so one channel's NYETs spent another channel's budget.
+	 */
+	int	splitretry[Maxchans];	/* complete-split NYET retries */
 	uint	sofchan;		/* bitmap of channels waiting for sof */
 	Rendez	*chanintr;		/* per-channel wait, sleep till interrupt */
 	uint	hcintr[Maxchans];	/* hcint the handler read-and-cleared, per channel */
@@ -299,14 +316,43 @@ chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 static int
 splitcontinue(Ctlr *ctlr, Hostchan *hc, int v, int n)
 {
-	if(v == (Chhltd|Ack)){
-		hc->hcsplt |= Compsplt;
-		ctlr->splitretry = 0;
-	}else if(v == (Chhltd|Nyet)){
-		if(++ctlr->splitretry >= 3)
+	/*
+	 * THE PHASE DECIDES, NOT AN EXACT BIT PATTERN.  Ported from raspi3b
+	 * (03d0ea1e0).
+	 *
+	 * This compared hcint against exact values, and the core reports a
+	 * start-split's ACK as
+	 *
+	 *	hcint 00000023 = Xfercomp|Chhltd|Ack
+	 *
+	 * which equals NEITHER constant -- so the function returned 0, the
+	 * ACK that means "the hub took it, now collect it" was taken as the
+	 * end of the transfer, and THE COMPLETE-SPLIT WAS NEVER ISSUED.  An
+	 * IN then moves nothing (its data arrives only in the
+	 * complete-split); an OUT hides it, because the start-split does
+	 * carry the bytes, so the transfer looks like a success while the
+	 * device's handshake is never collected.
+	 *
+	 * In the START-split phase an ACK means proceed, whatever else is
+	 * latched alongside it.  In the COMPLETE-split phase the event is
+	 * the device's own answer and is terminal, except for NYET.
+	 * Testing the phase is also what keeps the promotion from firing a
+	 * second time on the complete-split's own ACK -- which the exact
+	 * equality prevented by accident.
+	 */
+	if((v & (Chhltd|Splterr)) != Chhltd)
+		return 0;			/* halted with an error: terminal */
+	if((hc->hcsplt & Compsplt) == 0){
+		if((v & Ack) == 0)
 			return 0;
-	}else
-		return 0;
+		hc->hcsplt |= Compsplt;
+		ctlr->splitretry[n] = 0;
+	}else{
+		if((v & Nyet) == 0)
+			return 0;		/* the device's answer */
+		if(++ctlr->splitretry[n] >= Splitretries)
+			return 0;
+	}
 	if(hc->hcchar & Chen){
 		hc->hcchar |= Chen | Chdis;
 		while(hc->hcchar&Chen)
@@ -363,7 +409,25 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 
 	nleft = len;
 	chan = hc - r->hchan;
-	hcdma = hctsiz = 0;
+	/*
+	 * CLEAR THE ACCUMULATOR FOR THIS TRANSFER.  Ported from raspi3b
+	 * (03d0ea1e0), where it is what made full- and low-speed devices
+	 * enumerate behind a hub at all; the evidence is in that commit and
+	 * in doc/open-issues-plan.ms.
+	 *
+	 * ctlr->hcintr[chan] is ORed into by the interrupt handler and is
+	 * sticky.  The loop reads and clears it as its first act, to catch
+	 * a late completion from the previous ATTEMPT of this transfer --
+	 * but on the first iteration there is no previous attempt and what
+	 * is there belongs to the stage before.  Any leftover with Chhltd
+	 * plus a bit outside (Chhltd|Nak|Ack|Nyet) -- Xfercomp will do --
+	 * then satisfies the goto below and jumps to Result BEFORE THE
+	 * CHANNEL IS ENABLED, where n = hc->hcdma - hcdma is 0 and the
+	 * transfer is reported complete having moved nothing.
+	 */
+	ilock(ctlr);
+	ctlr->hcintr[chan] = 0;
+	iunlock(ctlr);
 	for(;;){
 		/*
 		 * Emulator gap.  QEMU keeps retrying a NAK'd bulk packet
@@ -380,10 +444,33 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		i = ctlr->hcintr[chan];
 		ctlr->hcintr[chan] = 0;
 		iunlock(ctlr);
-		if(split && (i & ~(Chhltd|Nak|Ack|Nyet)) != 0 && (i & Chhltd))
-			goto Result;
+		/*
+		 * THE BASELINE IS READ BEFORE THE goto, AND THAT IS A KERNEL
+		 * PANIC FIX.  Ported from raspi3b (90832447b).
+		 *
+		 * `n = hc->hcdma - hcdma' below measures the transfer by how
+		 * far the DMA pointer moved, so the saved hcdma is the
+		 * baseline.  These reads sat AFTER the goto, and `Result:' is
+		 * inside this loop ABOVE that subtraction, so the split-error
+		 * path jumped over the save and reached the subtraction with
+		 * hcdma still 0.  n then became the raw DMA BUS ADDRESS,
+		 * which carries the 0xC0000000 alias and is NEGATIVE as an
+		 * int; the clamp `if(n > nleft)' does not catch a negative,
+		 * and ctltrans handed the result to cacheinval(void*, usize)
+		 * -- UNSIGNED -- which walked dcivac across unmapped memory
+		 * until the MMU stopped it:
+		 *
+		 *	panic: trap
+		 *	vectrap <- dcivac <- cacheinval <- ctltrans
+		 *
+		 * The WRITE stays below the goto on purpose: clearing Dopng
+		 * has a side effect on the channel and the error path
+		 * deliberately does not do it.
+		 */
 		hcdma = hc->hcdma;
 		hctsiz = hc->hctsiz;
+		if(split && (i & ~(Chhltd|Nak|Ack|Nyet)) != 0 && (i & Chhltd))
+			goto Result;
 		hc->hctsiz = hctsiz & ~Dopng;
 		if(hc->hcchar&Chen){
 			hc->hcchar |= Chen | Chdis;
@@ -448,6 +535,27 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		iunlock(ctlr);
 
 		i = chanwait(ep, ctlr, hc, imask);
+		/*
+		 * CONSUME THE EVENT chanwait JUST REPORTED.  Ported from
+		 * raspi3b (03d0ea1e0).
+		 *
+		 * chanwait returns ctlr->hcintr[chan] without clearing it, so
+		 * the value stayed in the accumulator and the NEXT
+		 * iteration's read-and-clear picked up THIS attempt's
+		 * completion as a late event -- and with Chhltd set and
+		 * Xfercomp outside the goto's mask, that iteration jumped
+		 * straight to Result and reported a transfer that moved
+		 * nothing.  A multi-packet split IN moved its first packet
+		 * and then nothing, with the remaining packets never
+		 * attempted.
+		 *
+		 * With this clear, what the top-of-loop read finds really is
+		 * only what arrived AFTER chanwait returned, which is the
+		 * late-completion case it was written for.
+		 */
+		ilock(ctlr);
+		ctlr->hcintr[chan] = 0;
+		iunlock(ctlr);
 		hc->hcintmsk = 0;
 		/* hc->hcint was already read-and-cleared by the interrupt handler */
 
