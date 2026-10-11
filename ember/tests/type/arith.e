@@ -1,0 +1,29 @@
+module Arith
+
+func add(a int, b int) int {
+	return a + b
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+func sumto(n int) int {
+	total := 0
+	for i := 0; i < n; i++ {
+		total += i
+	}
+	return total
+}
+
+func early(n int) int {
+	for i := 0; i < n; i++ {
+		if i == 3 {
+			break
+		}
+	}
+	return n
+}

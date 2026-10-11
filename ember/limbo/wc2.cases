@@ -1,0 +1,8 @@
+/ember/limbo/data/words.txt
+-l /ember/limbo/data/words.txt /ember/limbo/data/a.txt
+-lwcbe /ember/limbo/data/utf.txt
+-c /ember/limbo/data/utf.txt
+/ember/tests/type/hello.e /ember/limbo/wc.e /nonexistent
+-b -- /ember/limbo/data/nums.txt
+-x /ember/limbo/data/nums.txt
+-- /ember/limbo/data/nums.txt

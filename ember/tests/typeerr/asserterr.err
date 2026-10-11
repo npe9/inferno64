@@ -1,0 +1,3 @@
+tests/typeerr/asserterr.e:20: type assertion needs an interface value, not ref Rect
+tests/typeerr/asserterr.e:22: type assertion needs a reference type, not int
+tests/typeerr/asserterr.e:23: type assertion needs a concrete type, not an interface

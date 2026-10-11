@@ -1,0 +1,11 @@
+len(ys)=2 ys0=20 ys1=30
+len(zs)=2 zs0=10 zs1=20
+len(ws)=2 ws0=40 ws1=50
+len(all)=5
+xs1 after ys0 write=999
+sub=hello
+cs0=2 cs1=3
+b len=2 b0=20 b1=30
+ds after double-slice write: ds2=777
+poison=0
+xs[1]=999

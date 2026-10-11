@@ -1,0 +1,7 @@
+/ember/tests/type/hello.e /ember/tests/type/hello.e
+/ember/tests/type/hello.e /ember/tests/type/calc.e
+-l /ember/tests/type/nilvar.e /ember/tests/type/typearg.e
+-L /ember/tests/type/hello.e /ember/tests/type/raise.e
+-s /ember/tests/type/hello.e /ember/tests/type/raise.e
+/ember/tests/type/hello.e /ember/tests/type/hello.e 3 5
+/ember/tests/type/hello.e

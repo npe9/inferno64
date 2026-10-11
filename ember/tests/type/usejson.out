@@ -1,0 +1,7 @@
+{"a":1,"b":[true,null,"x"],"c":{"d":2.5}}
+a=1
+b0=true b2="x" missing=1
+{
+  "d": 2.5
+}
+error: unexpected end of input

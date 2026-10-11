@@ -1,0 +1,6 @@
+hello world
+-n no newline here
+-- -n is printed
+-n
+
+one

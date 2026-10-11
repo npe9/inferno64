@@ -1,0 +1,10 @@
+module Replline
+
+// the module emberepl compiles each line into: the declarations of
+// the session, then an init running its statements
+
+import draw "draw"
+
+const PATH = "/tmp/emberepl.dis"
+
+func init(ctxt ref draw.Context, args list string)

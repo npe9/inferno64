@@ -1,0 +1,33 @@
+module Regex
+
+// Ember interface for /dis/lib/regex.dis (module/regex.m).  Re is
+// "type ref Arena" in Limbo; here a compiled expression is simply a
+// ref Arena.  The adts are laid out exactly as regex.m declares them,
+// since the function signatures are computed over their fields.
+
+const PATH = "/dis/lib/regex.dis"
+
+type Set struct {	// character class
+	neg int	// 0 or 1
+	ascii []int	// ascii members, bit array
+	unicode list (int, int)	// non-ascii char ranges
+}
+
+type Rex struct {	// node in parse of regex, or state of fsm
+	kind int	// kind of node: char or ALT, CAT, etc
+	left int	// left descendant
+	right int	// right descendant, or next state
+	set ref Set	// character class
+	pno int
+}
+
+type Arena struct {	// free store from which nodes are allocated
+	rex []Rex
+	ptr int	// next available space
+	start int	// root of parse, or start of fsm
+	pno int
+}
+
+func compile(s string, flag int) (ref Arena, string)
+func execute(re ref Arena, s string) [](int, int)
+func executese(re ref Arena, s string, se (int, int), bol int, eol int) [](int, int)

@@ -1,0 +1,73 @@
+module Draw
+
+// Data-field subset of Draw, sized so ref Context signs the same as
+// Limbo's Draw->Context (methods omitted: they are not in type sigs).
+
+const PATH = "$Draw"
+
+// Structurally identical to Sys->FD; used by Wmcontext.connfd.
+type FD struct {
+	fd	int
+}
+
+type Chans struct {
+	desc	int
+}
+
+type Point struct {
+	x	int
+	y	int
+}
+
+type Rect struct {
+	min	Point
+	max	Point
+}
+
+type Image struct {
+	r	Rect
+	clipr	Rect
+	depth	int
+	chans	Chans
+	repl	int
+	display	ref Display
+	screen	ref Screen
+	iname	string
+}
+
+type Display struct {
+	image		ref Image
+	white		ref Image
+	black		ref Image
+	opaque		ref Image
+	transparent	ref Image
+}
+
+type Screen struct {
+	id	int
+	image	ref Image
+	fill	ref Image
+	display	ref Display
+}
+
+type Pointer struct {
+	buttons	int
+	xy	Point
+	msec	int
+}
+
+type Wmcontext struct {
+	kbd	chan int
+	ptr	chan ref Pointer
+	ctl	chan string
+	wctl	chan string
+	images	chan ref Image
+	connfd	ref FD
+	ctxt	ref Context
+}
+
+type Context struct {
+	display	ref Display
+	screen	ref Screen
+	wm	chan (string, chan (string, ref Wmcontext))
+}

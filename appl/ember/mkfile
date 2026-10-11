@@ -1,0 +1,33 @@
+<../../mkconfig
+
+# ember libraries and commands, built with the C bootstrap compiler
+# and installed under $ROOT/dis/ember.
+
+EMBER=$ROOT/$OBJDIR/bin/ember
+IFLAGS=-I$ROOT/ember/module -I$ROOT/appl/cmd/ember -I.
+
+TARG=\
+	json.dis\
+	jsonfmt.dis\
+	emberepl.dis\
+	emberls.dis\
+
+all:V:	$TARG
+
+%.dis:	%.e
+	$EMBER $IFLAGS -o $target $stem.e || (rm -f $target; exit 1)
+
+COMPILER=$ROOT/appl/cmd/ember
+
+jsonfmt.dis:	json.ei
+emberepl.dis:	replline.ei $COMPILER/types.ei $COMPILER/parse.ei $COMPILER/check.ei $COMPILER/com.ei
+emberls.dis:	json.ei $COMPILER/types.ei $COMPILER/parse.ei $COMPILER/check.ei $COMPILER/xref.ei
+
+install:V:	all
+	mkdir -p $ROOT/dis/ember
+	for i in $TARG; do
+		cp $i $ROOT/dis/ember/$i
+	done
+
+clean:V:
+	rm -f *.dis

@@ -1,0 +1,31 @@
+module String
+
+// Ember interface for /dis/lib/string.dis (module/string.m): plain
+// functions only, many returning tuples.
+
+const PATH = "/dis/lib/string.dis"
+
+func splitl(s string, cl string) (string, string)
+func splitr(s string, cl string) (string, string)
+func drop(s string, cl string) string
+func take(s string, cl string) string
+func in(c int, cl string) int
+func containscl(s string, cl string) int
+func countcl(s string, cl string) int
+func splitstrl(s string, t string) (string, string)
+func splitstrr(s string, t string) (string, string)
+func replace(in string, s string, with string, max int) string
+func contains(in string, s string) int
+func prefix(pre string, s string) int
+func tolower(s string) string
+func toupper(s string) string
+func hasws(s string) int
+func toint(s string, base int) (int, string)
+func tobig(s string, base int) (big, string)
+func toreal(s string, base int) (real, string)
+func append(s string, l list string) list string
+func quoted(argv list string) string
+func quotedc(argv list string, cl string) string
+func unquoted(args string) list string
+func fields(s string) list string
+func qtokenize(s string) (list string, string)

@@ -1,0 +1,3 @@
+tests/typeerr/badconst.e:12: division by zero in constant expression
+tests/typeerr/badconst.e:12: constant expression required
+tests/typeerr/badconst.e:13: constant expression required

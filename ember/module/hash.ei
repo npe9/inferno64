@@ -1,0 +1,31 @@
+module Hash
+
+// Ember interface for /dis/lib/hash.dis (module/hash.m), a real
+// limbo-compiled library with adt methods: the first interface with
+// methods, checked against limbo's own link signatures at load time.
+
+const PATH = "/dis/lib/hash.dis"
+
+type HashVal struct {
+	i int
+	r real
+	s string
+}
+
+type HashNode struct {
+	key string
+	val ref HashVal
+}
+
+type HashTable struct {
+	a []list HashNode
+}
+
+func (h ref HashTable) find(key string) ref HashVal
+func (h ref HashTable) insert(key string, val HashVal)
+func (h ref HashTable) delete(key string)
+func (h ref HashTable) all() list HashNode
+
+func fun1(s string, n int) int
+func fun2(s string, n int) int
+func new(size int) ref HashTable

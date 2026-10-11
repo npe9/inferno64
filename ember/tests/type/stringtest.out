@@ -1,0 +1,13 @@
+head=key rest==value
+t0=a/b/ t1=c
+n=123 tail=abc
+hex=255
+upper=MIXED lower=mixed
+replace=a+b+c-d
+prefix=1 contains=1 in=1
+field 1=the
+field 2=quick
+field 3=brown
+field 4=fox
+quoted='a b' c
+poison=0

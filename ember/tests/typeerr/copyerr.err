@@ -1,0 +1,4 @@
+tests/typeerr/copyerr.e:6: copy needs two arguments
+tests/typeerr/copyerr.e:7: copy of array of string into array of int
+tests/typeerr/copyerr.e:8: copy of array of int into string
+tests/typeerr/copyerr.e:9: := of a void expression

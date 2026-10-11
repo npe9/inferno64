@@ -1,0 +1,6 @@
+libvars count=0 origin=(0,0) hidden=7
+count 0 name libvars
+count 2 after two bumps
+renamed count=40 origin=(3,5) hidden=9
+bump returns 41, then count 41
+copy (3,5)

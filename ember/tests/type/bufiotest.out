@@ -1,0 +1,9 @@
+l1=first line
+l2=second line
+peek=x
+a=x, b=y, z=z
+eof=1
+fd is nil: 1
+buffered ok
+fd is set: 1
+poison=0

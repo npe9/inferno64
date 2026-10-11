@@ -1,0 +1,159 @@
+module Strings
+
+// string utilities, header-only: every function is inline, copied
+// into the importing module, so there is no strings.dis.  strings
+// are sequences of runes; indices are rune indices.
+
+const PATH = "/dis/lib/strings.dis"
+
+func index(s string, t string) int {
+	n := len(s)
+	m := len(t)
+	for i := 0; i + m <= n; i++ {
+		j := 0
+		for j < m && s[i + j] == t[j] {
+			j++
+		}
+		if j == m {
+			return i
+		}
+	}
+	return -1
+}
+
+func contains(s string, t string) int {
+	return index(s, t) >= 0
+}
+
+func hasprefix(s string, p string) int {
+	if len(p) > len(s) {
+		return 0
+	}
+	return s[0:len(p)] == p
+}
+
+func hassuffix(s string, p string) int {
+	if len(p) > len(s) {
+		return 0
+	}
+	return s[len(s) - len(p):len(s)] == p
+}
+
+func isspace(c int) int {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
+}
+
+func trim(s string) string {
+	a := 0
+	b := len(s)
+	for a < b && isspace(s[a]) != 0 {
+		a++
+	}
+	for b > a && isspace(s[b - 1]) != 0 {
+		b--
+	}
+	return s[a:b]
+}
+
+func split(s string, sep string) list string {
+	var out list string
+	if len(sep) == 0 {
+		return s :: nil
+	}
+	start := 0
+	for {
+		rest := s[start:len(s)]
+		i := index(rest, sep)
+		if i < 0 {
+			out = rest :: out
+			break
+		}
+		out = rest[0:i] :: out
+		start += i + len(sep)
+	}
+	return reverse(out)
+}
+
+func fields(s string) list string {
+	var out list string
+	start := -1
+	for i := 0; i <= len(s); i++ {
+		if i < len(s) && isspace(s[i]) == 0 {
+			if start < 0 {
+				start = i
+			}
+		} else if start >= 0 {
+			out = s[start:i] :: out
+			start = -1
+		}
+	}
+	return reverse(out)
+}
+
+func reverse(l list string) list string {
+	var out list string
+	for ; l != nil; l = tl(l) {
+		out = hd(l) :: out
+	}
+	return out
+}
+
+func join(l list string, sep string) string {
+	s := ""
+	for ; l != nil; l = tl(l) {
+		s += hd(l)
+		if tl(l) != nil {
+			s += sep
+		}
+	}
+	return s
+}
+
+func tolower(s string) string {
+	b := ""
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		b[len(b)] = c
+	}
+	return b
+}
+
+func toupper(s string) string {
+	b := ""
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'a' && c <= 'z' {
+			c -= 'a' - 'A'
+		}
+		b[len(b)] = c
+	}
+	return b
+}
+
+func repeat(s string, n int) string {
+	r := ""
+	for ; n > 0; n-- {
+		r += s
+	}
+	return r
+}
+
+func atoi(s string) int {
+	n := 0
+	neg := 0
+	i := 0
+	if i < len(s) && s[i] == '-' {
+		neg = 1
+		i++
+	}
+	for ; i < len(s) && s[i] >= '0' && s[i] <= '9'; i++ {
+		n = n * 10 + (s[i] - '0')
+	}
+	if neg != 0 {
+		return -n
+	}
+	return n
+}

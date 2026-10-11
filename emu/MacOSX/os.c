@@ -18,6 +18,10 @@
 #include        <pthread.h>
 #include	<time.h>
 #include	<termios.h>
+/* _XOPEN_SOURCE from lib9.h can hide NSIG on modern macOS */
+#ifndef NSIG
+#define NSIG 32
+#endif
 #include	<signal.h>
 #include	<pwd.h>
 #include	<sys/resource.h>
@@ -51,6 +55,7 @@ struct Sem {
 	pthread_cond_t	c;
 	pthread_mutex_t	m;
 	int	v;
+	pthread_t	thread;	/* full pthread handle; Proc.sigid is only 32-bit */
 };
 
 static pthread_key_t  prdakey;
@@ -222,7 +227,19 @@ void *
 tramp(void *arg)
 {
 	Proc *p = arg;
-	p->sigid = (int)pthread_self();
+	Sem *sem;
+
+	/*
+	 * Record the real pthread_t.  Proc.sigid is a 32-bit int (portable
+	 * struct) and truncates an arm64 pthread_t pointer, so a handle
+	 * rebuilt from it is bogus and pthread_kill() silently fails with
+	 * ESRCH — swiproc()/oshostintr() then never delivers SIGUSR1,
+	 * leaving intwait set and osleave() spinning at 100% CPU.
+	 */
+	p->sigid = (int)(uintptr)pthread_self();
+	sem = p->os;
+	if(sem != nil)
+		sem->thread = pthread_self();
 	if(pthread_setspecific(prdakey, arg)) {
 		print("set specific data failed in tramp\n");
 		pthread_exit(0);
@@ -252,6 +269,7 @@ kproc(char *name, void (*func)(void*), void *arg, int flags)
 	pthread_cond_init(&sem->c, NULL);
 	pthread_mutex_init(&sem->m, NULL);
 	sem->v = 0;
+	sem->thread = 0;
 	p->os = sem;
 
 	if(flags & KPDUPPG) {
@@ -321,7 +339,11 @@ segflush(void *va, ulong len)
 void
 oshostintr(Proc *p)
 {
-	pthread_kill((pthread_t)p->sigid, SIGUSR1);
+	Sem *sem;
+
+	sem = p->os;
+	if(sem != nil && sem->thread != nil)
+		pthread_kill(sem->thread, SIGUSR1);
 }
 
 void
@@ -383,15 +405,20 @@ cleanexit(int x)
 {
 	USED(x);
 
-	if(up->intwait) {
+	/*
+	 * May be called from the AppKit main thread (window close / Quit),
+	 * where pthread-specific up is nil.  Do not touch up in that case.
+	 */
+	if(up != nil && up->intwait) {
 		up->intwait = 0;
 		return;
 	}
 
+	/* Restore tty even when quitting from AppKit (up == nil). */
 	if(dflag == 0)
 		termrestore();
 
-	exit(0);
+	_exit(x);
 }
 
 
@@ -446,10 +473,19 @@ libinit(char *imod)
 	if(pthread_setspecific(prdakey, p))
 		panic("set specific thread data failed\n");
 
+	/*
+	 * main() sets eve to "inferno".  Only switch to the host login
+	 * name when that account already exists under the Inferno root
+	 * (/usr/$user).  Otherwise keep "inferno" — there is no /usr/npe yet.
+	 */
 	pw = getpwuid(getuid());
-	if(pw != nil)
-		kstrdup(&eve, pw->pw_name);
-	else
+	if(pw != nil && pw->pw_name != nil){
+		char path[MAXROOT+64];
+
+		snprint(path, sizeof path, "%s/usr/%s", rootdir, pw->pw_name);
+		if(access(path, 0) == 0)
+			kstrdup(&eve, pw->pw_name);
+	}else
 		print("cannot getpwuid\n");
 
 	up->env->uid = getuid();

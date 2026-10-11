@@ -1,0 +1,11 @@
+slicelen=0
+unbox_int=42
+unbox_str=hi
+swap_first=one swap_second=1
+getx=7
+getval=99
+recvfrom=77
+apply_int=42
+apply_str=hi ember
+shout=5
+countargs=1,1

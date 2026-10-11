@@ -1,0 +1,21 @@
+s/o/0/g /ember/limbo/data/text.txt
+-n /fox/p /ember/limbo/data/para.txt
+-e s/a/A/ -e s/e/E/g < limbo/data/words.txt
+2,4d /ember/limbo/data/words.txt
+$d /ember/limbo/data/words.txt
+-n $= /ember/limbo/data/words.txt /ember/limbo/data/nums.txt
+-g s/i/I/ /ember/limbo/data/words.txt
+s/\(k\)\(i\)/\2\1/ /ember/limbo/data/words.txt
+s/[aeiou]/<&>/g /ember/limbo/data/words.txt
+/kiwi/,/fig/s/^/>/ /ember/limbo/data/words.txt
+-f /ember/limbo/data/sed1.sed /ember/limbo/data/words.txt
+-n -f /ember/limbo/data/sed2.sed /ember/limbo/data/words.txt
+-f /ember/limbo/data/sed3.sed /ember/limbo/data/words.txt
+-f /ember/limbo/data/sed4.sed /ember/limbo/data/text.txt
+-f /ember/limbo/data/sed5.sed /ember/limbo/data/words.txt
+-n -e /a/{p;p} /ember/limbo/data/words.txt
+s/x/ /ember/limbo/data/words.txt
+k /ember/limbo/data/words.txt
+-f /nonexistent /ember/limbo/data/words.txt
+s/a/b/ /nonexistent
+-x

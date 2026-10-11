@@ -1,0 +1,2 @@
+./tests/typeerr/geniface.ei:7: generic method get cannot be declared in an interface
+./tests/typeerr/geniface.ei:8: generic function ident in an interface needs its body: it is instantiated in each importer

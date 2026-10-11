@@ -1,0 +1,6 @@
+1 p
+2! s/a/b/
+3 b top
+4 :top
+5 q
+10! s/x/y/ x

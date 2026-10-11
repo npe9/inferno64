@@ -1,0 +1,274 @@
+module Gen
+
+// Dis instruction assembly, a port of ember/gen.c: the instruction
+// list, temporaries, operand addressing, branch folding, pc and
+// descriptor resolution, and the instruction-selection tables of
+// optab.c.  every importer must hand its types instance down with
+// usetypes() and its own com instance is the only user of the list.
+
+const PATH = "/dis/ember/gen.dis"
+
+import types "types"
+
+const INOP = 0
+const IALT = 1
+const INBALT = 2
+const IGOTO = 3
+const ICALL = 4
+const IFRAME = 5
+const ISPAWN = 6
+const IRUNT = 7
+const ILOAD = 8
+const IMCALL = 9
+const IMSPAWN = 10
+const IMFRAME = 11
+const IRET = 12
+const IJMP = 13
+const ICASE = 14
+const IEXIT = 15
+const INEW = 16
+const INEWA = 17
+const INEWCB = 18
+const INEWCW = 19
+const INEWCF = 20
+const INEWCP = 21
+const INEWCM = 22
+const INEWCMP = 23
+const ISEND = 24
+const IRECV = 25
+const ICONSB = 26
+const ICONSW = 27
+const ICONSP = 28
+const ICONSF = 29
+const ICONSM = 30
+const ICONSMP = 31
+const IHEADB = 32
+const IHEADW = 33
+const IHEADP = 34
+const IHEADF = 35
+const IHEADM = 36
+const IHEADMP = 37
+const ITAIL = 38
+const ILEA = 39
+const IINDX = 40
+const IMOVP = 41
+const IMOVM = 42
+const IMOVMP = 43
+const IMOVB = 44
+const IMOVW = 45
+const IMOVF = 46
+const ICVTBW = 47
+const ICVTWB = 48
+const ICVTFW = 49
+const ICVTWF = 50
+const ICVTCA = 51
+const ICVTAC = 52
+const ICVTWC = 53
+const ICVTCW = 54
+const ICVTFC = 55
+const ICVTCF = 56
+const IADDB = 57
+const IADDW = 58
+const IADDF = 59
+const ISUBB = 60
+const ISUBW = 61
+const ISUBF = 62
+const IMULB = 63
+const IMULW = 64
+const IMULF = 65
+const IDIVB = 66
+const IDIVW = 67
+const IDIVF = 68
+const IMODW = 69
+const IMODB = 70
+const IANDB = 71
+const IANDW = 72
+const IORB = 73
+const IORW = 74
+const IXORB = 75
+const IXORW = 76
+const ISHLB = 77
+const ISHLW = 78
+const ISHRB = 79
+const ISHRW = 80
+const IINSC = 81
+const IINDC = 82
+const IADDC = 83
+const ILENC = 84
+const ILENA = 85
+const ILENL = 86
+const IBEQB = 87
+const IBNEB = 88
+const IBLTB = 89
+const IBLEB = 90
+const IBGTB = 91
+const IBGEB = 92
+const IBEQW = 93
+const IBNEW = 94
+const IBLTW = 95
+const IBLEW = 96
+const IBGTW = 97
+const IBGEW = 98
+const IBEQF = 99
+const IBNEF = 100
+const IBLTF = 101
+const IBLEF = 102
+const IBGTF = 103
+const IBGEF = 104
+const IBEQC = 105
+const IBNEC = 106
+const IBLTC = 107
+const IBLEC = 108
+const IBGTC = 109
+const IBGEC = 110
+const ISLICEA = 111
+const ISLICELA = 112
+const ISLICEC = 113
+const IINDW = 114
+const IINDF = 115
+const IINDB = 116
+const INEGF = 117
+const IMOVL = 118
+const IADDL = 119
+const ISUBL = 120
+const IDIVL = 121
+const IMODL = 122
+const IMULL = 123
+const IANDL = 124
+const IORL = 125
+const IXORL = 126
+const ISHLL = 127
+const ISHRL = 128
+const IBNEL = 129
+const IBLTL = 130
+const IBLEL = 131
+const IBGTL = 132
+const IBGEL = 133
+const IBEQL = 134
+const ICVTLF = 135
+const ICVTFL = 136
+const ICVTLW = 137
+const ICVTWL = 138
+const ICVTLC = 139
+const ICVTCL = 140
+const IHEADL = 141
+const ICONSL = 142
+const INEWCL = 143
+const ICASEC = 144
+const IINDL = 145
+const IMOVPC = 146
+const ITCMP = 147
+const IMNEWZ = 148
+const ICVTRF = 149
+const ICVTFR = 150
+const ICVTWS = 151
+const ICVTSW = 152
+const ILSRW = 153
+const ILSRL = 154
+const IECLR = 155
+const INEWZ = 156
+const INEWAZ = 157
+const IRAISE = 158
+const ICASEL = 159
+const IMULX = 160
+const IDIVX = 161
+const ICVTXX = 162
+const IMULX0 = 163
+const IDIVX0 = 164
+const ICVTXX0 = 165
+const IMULX1 = 166
+const IDIVX1 = 167
+const ICVTXX1 = 168
+const ICVTFX = 169
+const ICVTXF = 170
+const IEXPW = 171
+const IEXPL = 172
+const IEXPF = 173
+const ISELF = 174
+const MAXDIS = 175
+const IEXC = 175
+const IEXC0 = 176
+const INOOP = 177
+
+const Rreg = 0
+const Rmreg = 1
+const Roff = 2
+const Rnoff = 3
+const Rdesc = 4
+const Rdescp = 5
+const Rconst = 6
+const Ralways = 7
+const Radr = 8
+const Rmadr = 9
+const Rcant = 10
+const Rpc = 11
+const Rmpc = 12
+const Rareg = 13
+const Ramreg = 14
+const Raadr = 15
+const Ramadr = 16
+const Rldt = 17
+const Rend = 18
+
+const Aimm = 0
+const Amp = 1
+const Ampind = 2
+const Afp = 3
+const Afpind = 4
+const Apc = 5
+const Adesc = 6
+const Aoff = 7
+const Anoff = 8
+const Aerr = 9
+const Anone = 10
+const Aldt = 11
+const Aend = 12
+
+const Mas = 0
+const Mcons = 1
+const Mhd = 2
+const Mtl = 3
+const Mend = 4
+
+const NREG = 5
+const REGRET = 4
+const STemp = 40
+const RTemp = 48
+const DTemp = 56
+const MaxReg = 65536
+
+func usetypes(t Types)
+func genstart()
+func firstinst() ref types.Inst
+func lastinst() ref types.Inst
+func setlastinst(in ref types.Inst)
+func setfirstinst(in ref types.Inst)
+func blocks() int
+func maxstack() int
+func setmaxstack(n int)
+func retalloc(n ref types.Node, nn ref types.Node) ref types.Node
+func resolveldts(d ref types.Decl) (ref types.Decl, ref types.Decl)
+func pushblock() int
+func popblock()
+func tinit()
+func tdecls() ref types.Decl
+func talloc(n ref types.Node, t ref types.Type, nok ref types.Node) ref types.Node
+func mktn(t ref types.Type) ref types.Node
+func tfree(n ref types.Node)
+func mkinst() ref types.Inst
+func nextinst() ref types.Inst
+func genrawop(line int, pos int, op int, s ref types.Node, m ref types.Node, d ref types.Node) ref types.Inst
+func genop(line int, pos int, op int, s ref types.Node, m ref types.Node, d ref types.Node) ref types.Inst
+func genbra(line int, pos int, op int, s ref types.Node, m ref types.Node) ref types.Inst
+func genchan(line int, pos int, sz ref types.Node, mt ref types.Type, d ref types.Node) ref types.Inst
+func genmove(line int, pos int, how int, mt ref types.Type, s ref types.Node, d ref types.Node) ref types.Inst
+func patch(b ref types.Inst, dst ref types.Inst)
+func getpc(i ref types.Inst) int
+func reach(in ref types.Inst)
+func foldbranch(in ref types.Inst)
+func genaddr(n ref types.Node) types.Addr
+func resolvedesc(mod ref types.Decl, length int, decls ref types.Decl) int
+func resolvepcs(inst ref types.Inst) int
+func addrmode(r int) int
+func isbyteinst(op int) int
+func disop(op int, kind int) int

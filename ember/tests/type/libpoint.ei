@@ -1,0 +1,60 @@
+module Libpoint
+
+// interface for tests/type/libpoint.e, an Ember-compiled library
+// loaded by tests/type/loadlib.e: a struct type declared here is
+// constructed on the caller's side ("libpoint.Point{...}") and passed
+// across the module boundary, so both compilations must agree on the
+// layout and on the link signature of every function.
+
+import rand "rand"
+
+const PATH = "/tmp/libpoint.dis"
+
+type Point struct {
+	x int
+	y int
+}
+
+type Shape pick {
+	Circle(c Point, r int)
+	Rect(min Point, max Point)
+}
+
+// methods on an exported type, and a pick: constructed and matched
+// on the client side as libpoint.Shape.Tag{...} / case
+// libpoint.Shape.Tag(...); the interface numbers tags in declaration
+// order, as the implementation does
+func (p ref Point) norm1r() int
+func (p Point) sum() int
+func area(s ref Shape) int
+func unit() ref Shape
+
+func add(a Point, b Point) Point
+func scale(p ref Point, k int)
+func norm1(p Point) int
+func origin() Point
+func name() string
+
+// a module-typed parameter: the client must sign Rand complete (the
+// import-side modrefable(), types.c narrowmods()), not narrowed
+func roll(r Rand, n int) int
+
+// a named type with methods: the interface declares the base type
+// and the methods on the name
+type Color int
+
+func (c Color) label() string
+func mkcolor(n int) Color
+
+// an interface and an implementation, asserted on both sides
+type Sized interface {
+	size() int
+}
+
+type Box struct {
+	n int
+}
+
+func (b ref Box) size() int
+func mkbox(n int) Sized
+func boxsize(s Sized) int

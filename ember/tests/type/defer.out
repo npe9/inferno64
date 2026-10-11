@@ -1,0 +1,19 @@
+body
+second deferred
+first deferred
+early's defer
+5
+not reached for n > 0
+early's defer
+3
+x is now 2
+x was 1
+loop done
+loop 2
+loop 1
+loop 0
+pair's defer
+7 seven
+10
+early's defer
+match init two

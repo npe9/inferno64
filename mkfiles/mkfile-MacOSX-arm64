@@ -1,48 +1,34 @@
 TARGMODEL=	Posix
 TARGSHTYPE=	sh
-CPUS=		arm
+CPUS=		arm64
 
 O=		o
 OS=		o
 
 AR=		ar
 ARFLAGS=	ruvs
-A=		a
 
-MACVER=	10.15
-
-
-AS=		cc -c -arch arm64
-ASFLAGS= -mmacosx-version-min=$MACVER
-
-ISYSROOT=	-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
+AS=		as
+ASFLAGS=
 
 CC=		cc -c
-COPTFLAGS=	-Os
-CDEBUGFLAGS=
-CTHREADFLAGS=
-CFLAGS= 	-arch arm64\
-		-mmacosx-version-min=$MACVER\
-		-Wno-deprecated-declarations -Wuninitialized -Wunused -Wreturn-type -Wimplicit -Wno-four-char-constants -Wno-unknown-pragmas\
-		-Wno-main-return-type \
-		-Wno-logical-op-parentheses \
-		-Wno-constant-conversion -Wno-bitwise-op-parentheses -Wno-unused-function \
-		-Wno-shift-op-parentheses -Wno-dangling-else \
-		-Wno-parentheses \
-		-Wno-switch \
-		-Wno-tautological-compare \
-		-Wno-string-plus-int \
-		-pipe\
+CFLAGS=		-g\
+		-O2\
 		-fno-strict-aliasing\
-		-no-cpp-precomp\
+		-Wno-error\
+		-Wno-implicit-function-declaration\
+		-Wno-implicit-int\
+		-Wno-incompatible-pointer-types\
+		-Wno-return-type\
+		-Wno-unused-variable\
+		-std=gnu11\
 		-I$ROOT/MacOSX/arm64/include\
 		-I$ROOT/include\
-		$COPTFLAGS $CDEBUGFLAGS\
+		-DMACOSX_ARM64
 
-LD=		cc -arch arm64
-LDFLAGS=\
-		-mmacosx-version-min=$MACVER\
-		-multiply_defined suppress
+ANSICPP=
+LD=		cc
+LDFLAGS=
 
 SYSLIBS=
 

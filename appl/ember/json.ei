@@ -1,0 +1,30 @@
+module Json
+
+// a JSON reader and writer: the value is a pick, errors are Result,
+// an object keeps its members in a map with the key order beside it
+
+const PATH = "/dis/ember/json.dis"
+
+type Value pick {
+	Null()
+	Bool(b bool)
+	Num(v real)
+	Str(s string)
+	Arr(a []ref Value)
+	Obj(keys []string, vals []ref Value)
+}
+
+// parse(s): the value s holds, or the reason it does not
+func parse(s string) ref Result[ref Value]
+
+// text(v): v as JSON on one line, members in the order they were read
+func text(v ref Value) string
+
+// pretty(v, indent): v as JSON over several lines
+func pretty(v ref Value, indent string) string
+
+// get(v, name): the member of an object, or nil
+func get(v ref Value, name string) ref Value
+
+// at(v, i): the element of an array, or nil
+func at(v ref Value, i int) ref Value

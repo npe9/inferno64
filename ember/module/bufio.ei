@@ -1,0 +1,56 @@
+module Bufio
+
+import sys "sys"
+
+// Ember interface for /dis/lib/bufio.dis (module/bufio.m): the first
+// interface that imports another (Iobuf's fd is a ref sys.FD) and the
+// first with methods on a type carrying real data fields -- every
+// field must match limbo's, in order, since the adt is signed with
+// them.  setfill (a module-typed parameter, BufioFill) is left out.
+
+const PATH = "/dis/lib/bufio.dis"
+
+const SEEKSTART = 0
+const SEEKRELA = 1
+const SEEKEND = 2
+
+const OREAD = 0
+const OWRITE = 1
+const ORDWR = 2
+
+const EOF = -1
+const ERROR = -2
+
+type Iobuf struct {
+	fd ref sys.FD
+	buffer []byte
+	index int
+	size int
+	dirty int
+	bufpos big
+	filpos big
+	lastop int
+	mode int
+}
+
+func (b ref Iobuf) seek(n big, where int) big
+func (b ref Iobuf) offset() big
+func (b ref Iobuf) read(a []byte, n int) int
+func (b ref Iobuf) write(a []byte, n int) int
+func (b ref Iobuf) getb() int
+func (b ref Iobuf) getc() int
+func (b ref Iobuf) gets(sep int) string
+func (b ref Iobuf) gett(sep string) string
+func (b ref Iobuf) ungetb() int
+func (b ref Iobuf) ungetc() int
+func (b ref Iobuf) putb(c byte) int
+func (b ref Iobuf) putc(c int) int
+func (b ref Iobuf) puts(s string) int
+func (b ref Iobuf) flush() int
+func (b ref Iobuf) close()
+
+func open(name string, mode int) ref Iobuf
+func create(name string, mode int, perm int) ref Iobuf
+func fopen(fd ref sys.FD, mode int) ref Iobuf
+func sopen(input string) ref Iobuf
+func aopen(input []byte) ref Iobuf

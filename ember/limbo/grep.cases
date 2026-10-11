@@ -1,0 +1,13 @@
+hello < limbo/data/text.txt
+-i hello < limbo/data/text.txt
+-n 'a.*e' /ember/limbo/data/text.txt /ember/limbo/data/para.txt
+-v ' ' /ember/limbo/data/para.txt
+-l fox /ember/limbo/data/para.txt /ember/limbo/data/text.txt /ember/limbo/data/words.txt
+-L fox /ember/limbo/data/para.txt /ember/limbo/data/text.txt /ember/limbo/data/words.txt
+-s fox /ember/limbo/data/para.txt /ember/limbo/data/words.txt
+-c fox /ember/limbo/data/para.txt
+'^[a-z]+$' /ember/limbo/data/words.txt
+'(' /ember/limbo/data/words.txt
+zzz /ember/limbo/data/words.txt
+fox /nonexistent /ember/limbo/data/para.txt
+

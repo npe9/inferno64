@@ -1,0 +1,56 @@
+<../mkconfig
+
+TARG=ember
+
+OFILES=	ast.$O\
+	check.$O\
+	com.$O\
+	disw.$O\
+	gen.$O\
+	iface.$O\
+	ifacegen.$O\
+	xref.$O\
+	fmt.$O\
+	lex.$O\
+	main.$O\
+	optab.$O\
+	parse.$O\
+	types.$O\
+	fltfmt.$O\
+
+HFILES=	ember.h\
+	$ROOT/include/isa.h\
+
+LIBS=	bio\
+	sec\
+	mp\
+	9\
+
+BIN=$ROOT/$OBJDIR/bin
+
+<$ROOT/mkfiles/mkone-$SHELLTYPE
+
+CFLAGS='-DINCPATH="'$ROOT/ember/module'"' $CFLAGS
+
+# lib9's float formatter (%e %f %g), which lib9's own build leaves out;
+# lexinit() installs it so diagnostics and -A can print reals
+fltfmt.$O:	$ROOT/lib9/fltfmt.c
+	$CC $CFLAGS -I$ROOT/lib9 -c -o fltfmt.$O $ROOT/lib9/fltfmt.c
+
+test:V:	$O.out
+	./tests/run.sh
+	./tests/runtime.sh
+	./tests/lexcmp.sh
+	./tests/astcmp.sh
+	./tests/chkcmp.sh
+	./tests/discmp.sh
+	./tests/bootstrap.sh
+	./tests/ifacegen.sh
+	./tests/unittest.sh
+	./tests/fmt.sh
+	./tests/selffmt.sh
+	./tests/selftools.sh
+	./tests/xref.sh
+	./tests/repl.sh
+	./tests/ls.sh
+	./tests/limbocmp.sh

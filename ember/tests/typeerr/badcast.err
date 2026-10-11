@@ -1,0 +1,10 @@
+tests/typeerr/badcast.e:18: cannot convert P to int
+tests/typeerr/badcast.e:19: cannot convert array of int to string
+tests/typeerr/badcast.e:20: cannot convert string to array of int
+tests/typeerr/badcast.e:21: cannot convert int to P
+tests/typeerr/badcast.e:22: conversion to int needs exactly one argument
+tests/typeerr/badcast.e:23: conversion to int needs exactly one argument
+tests/typeerr/badcast.e:24: cannot convert array of int to array of byte
+tests/typeerr/badcast.e:25: len of type error
+tests/typeerr/badcast.e:25: field selection on type error
+tests/typeerr/badcast.e:25: len of type error

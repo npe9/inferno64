@@ -1,0 +1,118 @@
+module Lex
+
+// the Ember lexer, in Ember: the first self-hosted piece of the
+// compiler.  a Lexer reads one source file and hands out tokens one
+// at a time; the token codes and names match ember/lex.c's, and
+// ember -T dumps the same stream from the C lexer for comparison
+// (ember/tests/lexcmp.sh).
+
+const PATH = "/dis/ember/lex.dis"
+
+const Beof = -1
+
+const Eid = 256
+const Econst = 257
+const Erconst = 258
+const Esconst = 259
+const Eandand = 260
+const Eoror = 261
+const Eeq = 262
+const Eneq = 263
+const Eleq = 264
+const Egeq = 265
+const Elsh = 266
+const Ersh = 267
+const Ecomm = 268
+const Edeclas = 269
+const Einc = 270
+const Edec = 271
+const Eaddeq = 272
+const Esubeq = 273
+const Emuleq = 274
+const Ediveq = 275
+const Emodeq = 276
+const Eandeq = 277
+const Eoreq = 278
+const Exoreq = 279
+const Elsheq = 280
+const Ersheq = 281
+const Edots = 282
+const Econs = 283
+const Kbreak = 284
+const Kcase = 285
+const Kchan = 286
+const Kconst = 287
+const Kcontinue = 288
+const Kdefault = 289
+const Kelse = 290
+const Kfor = 291
+const Kfunc = 292
+const Kif = 293
+const Kimport = 294
+const Kinterface = 295
+const Klist = 296
+const Kload = 297
+const Kmatch = 298
+const Kmodule = 299
+const Knil = 300
+const Kpick = 301
+const Kref = 302
+const Kreturn = 303
+const Kspawn = 304
+const Kstruct = 305
+const Ktype = 306
+const Kvar = 307
+const Kalt = 308
+const Kraise = 309
+const Ktry = 310
+const Kcatch = 311
+const Krange = 312
+const Kdefer = 313
+const Kmap = 314
+const Eqdot = 315
+const Eqq = 316
+
+type Tok struct {
+	t int
+	line int
+	pos int
+	sym string
+	ival big
+	rval real
+	text string
+	form int	// Econst: how it was written (Fchar, Fhex, ...), for the formatter
+}
+
+// Tok.form
+const Fdec = 0
+const Fchar = 1
+const Fhex = 2
+const Foct = 3
+const Fbin = 4
+const Foct0 = 5
+
+// comments the lexer saw, for the formatter (setkeep)
+type Comment struct {
+	text string
+	line int
+	pos int
+	block int
+}
+
+type Lexer struct {
+	file string
+	src string
+	at int
+	eof int
+	line int
+	pos int
+	lasttok int
+	errors int
+}
+
+func open(file string) ref Lexer
+func (lx ref Lexer) next() ref Tok
+func tokname(t int) string
+func setkeep(k int)
+func commentlist() []ref Comment
+func ncomment() int

@@ -1,0 +1,49 @@
+module Shapes
+
+// derived by ember -i; generic and inline declarations are not
+// derived, an interface must carry their bodies
+
+import sys "sys"
+import draw "draw"
+
+type Shape interface {
+	area() int
+	name() string
+}
+
+type Rect struct {
+	w int
+	h int
+}
+
+func (r ref Rect) area() int
+func (r ref Rect) name() string
+
+type Square struct {
+	side int
+}
+
+func (s ref Square) area() int
+func (s ref Square) name() string
+
+type Expr pick {
+	Num(v int)
+	Neg(e ref Expr)
+}
+
+func (e ref Expr) area() int
+func (e ref Expr) name() string
+
+type Greeter interface {
+	greet(who string)
+}
+
+type Loud struct {
+	n int
+}
+
+func (l ref Loud) greet(who string)
+
+func describe(s Shape) string
+func biggest(shapes []Shape) Shape
+func choose(n int) Shape

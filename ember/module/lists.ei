@@ -1,0 +1,124 @@
+module Lists
+
+// generic list and array utilities: a header-only library.  every
+// function here is a template, instantiated into the importing
+// module, so there is no lists.dis to load -- an importer that uses
+// only these never loads anything.  bodies use only their own
+// parameters and the builtins.
+
+const PATH = "/dis/lib/lists.dis"
+
+func length[T](l list T) int {
+	n := 0
+	for ; l != nil; l = tl(l) {
+		n++
+	}
+	return n
+}
+
+func reverse[T](l list T) list T {
+	var out list T
+	for ; l != nil; l = tl(l) {
+		out = hd(l) :: out
+	}
+	return out
+}
+
+func append[T](a list T, b list T) list T {
+	r := b
+	for a = reverse(a); a != nil; a = tl(a) {
+		r = hd(a) :: r
+	}
+	return r
+}
+
+func mapl[T, U](l list T, f func(T) U) list U {
+	var out list U
+	for ; l != nil; l = tl(l) {
+		out = f(hd(l)) :: out
+	}
+	return reverse(out)
+}
+
+func filter[T](l list T, keep func(T) int) list T {
+	var out list T
+	for ; l != nil; l = tl(l) {
+		if keep(hd(l)) != 0 {
+			out = hd(l) :: out
+		}
+	}
+	return reverse(out)
+}
+
+func foldl[T, A](l list T, acc A, f func(A, T) A) A {
+	for ; l != nil; l = tl(l) {
+		acc = f(acc, hd(l))
+	}
+	return acc
+}
+
+func nth[T](l list T, i int) T {
+	for ; i > 0; i-- {
+		l = tl(l)
+	}
+	return hd(l)
+}
+
+func toarray[T](l list T) []T {
+	xs := [length(l)]T
+	i := 0
+	for ; l != nil; l = tl(l) {
+		xs[i] = hd(l)
+		i++
+	}
+	return xs
+}
+
+func tolist[T](xs []T) list T {
+	var out list T
+	for i := len(xs) - 1; i >= 0; i-- {
+		out = xs[i] :: out
+	}
+	return out
+}
+
+func mapa[T, U](xs []T, f func(T) U) []U {
+	ys := [len(xs)]U
+	for i := 0; i < len(xs); i++ {
+		ys[i] = f(xs[i])
+	}
+	return ys
+}
+
+func folda[T, A](xs []T, acc A, f func(A, T) A) A {
+	for i := 0; i < len(xs); i++ {
+		acc = f(acc, xs[i])
+	}
+	return acc
+}
+
+func index[T](xs []T, eq func(T) int) int {
+	for i := 0; i < len(xs); i++ {
+		if eq(xs[i]) != 0 {
+			return i
+		}
+	}
+	return -1
+}
+
+func sorta[T](xs []T, less func(T, T) int) []T {
+	ys := [len(xs)]T
+	for i := 0; i < len(xs); i++ {
+		ys[i] = xs[i]
+	}
+	for i := 1; i < len(ys); i++ {
+		v := ys[i]
+		j := i - 1
+		for j >= 0 && less(v, ys[j]) != 0 {
+			ys[j + 1] = ys[j]
+			j--
+		}
+		ys[j + 1] = v
+	}
+	return ys
+}

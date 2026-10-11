@@ -1,0 +1,11 @@
+tests/typeerr/lvalueop.e:31: cannot assign to a field of a function call
+tests/typeerr/lvalueop.e:32: cannot assign to a function call
+tests/typeerr/lvalueop.e:33: cannot increment a constant
+tests/typeerr/lvalueop.e:34: cannot decrement a function call
+tests/typeerr/lvalueop.e:35: cannot increment an expression
+tests/typeerr/lvalueop.e:36: cannot assign to a constant
+tests/typeerr/lvalueop.e:37: cannot assign to a function call
+tests/typeerr/lvalueop.e:38: cannot assign to an expression
+tests/typeerr/lvalueop.e:39: cannot increment an element of a constant
+tests/typeerr/lvalueop.e:40: cannot assign to an element of a constant
+tests/typeerr/lvalueop.e:41: cannot increment nil

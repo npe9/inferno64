@@ -1,0 +1,9 @@
+7
+caught negative
+outer caught wrapped: negative
+total 206
+disfault: dereference of nil
+nil deref: dereference of nil
+inner handler inner
+outer handler from handler
+done

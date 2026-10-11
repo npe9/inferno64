@@ -1,0 +1,2 @@
+tests/typeerr/blankerr.e:11: _ is not declared
+tests/typeerr/blankerr.e:12: _ is not declared

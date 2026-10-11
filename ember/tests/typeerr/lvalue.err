@@ -1,0 +1,16 @@
+tests/typeerr/lvalue.e:35: cannot assign to a constant
+tests/typeerr/lvalue.e:36: cannot assign to a constant
+tests/typeerr/lvalue.e:37: cannot assign to nil
+tests/typeerr/lvalue.e:38: cannot assign to a function call
+tests/typeerr/lvalue.e:39: cannot assign to a function
+tests/typeerr/lvalue.e:40: cannot assign to a function
+tests/typeerr/lvalue.e:41: sys.print takes a variable number of arguments and cannot be used as a value
+tests/typeerr/lvalue.e:42: cannot assign to a type
+tests/typeerr/lvalue.e:43: cannot assign to a type
+tests/typeerr/lvalue.e:44: cannot assign to an expression
+tests/typeerr/lvalue.e:45: cannot assign to an expression
+tests/typeerr/lvalue.e:46: cannot assign to an expression
+tests/typeerr/lvalue.e:47: cannot assign to a slice
+tests/typeerr/lvalue.e:48: cannot assign to a tuple
+tests/typeerr/lvalue.e:49: cannot assign to a field of a function call
+tests/typeerr/lvalue.e:50: cannot assign to an element of a constant

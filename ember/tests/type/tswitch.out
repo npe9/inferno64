@@ -1,0 +1,6 @@
+rect 2x3 / 0 / polygon area 6
+circle 1 / 1 / not a polygon
+unknown / 0 / polygon area 10
+unknown
+first is a rect of area 6
+before the triangle: 2

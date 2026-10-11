@@ -1,0 +1,125 @@
+module Parse
+
+// the Ember parser, in Ember: a port of ember/parse.c.  parse() reads
+// a file through the self-hosted lexer and returns the module's tree
+// (nil if it could not be opened); parse.c's -A dump and astdump.dis
+// print such trees identically (ember/tests/astcmp.sh).
+
+import types "types"
+import lex "lex"
+
+const PATH = "/dis/ember/parse.dis"
+
+const NREAL = 1
+const NSTR = 2
+const NVARARG = 4
+
+const Onone = 0
+const Omodule = 1
+const Oimport = 2
+const Otypedecl = 3
+const Ovardecl = 4
+const Ocondecl = 5
+const Ofndecl = 6
+const Omethod = 7
+const Ofield = 8
+const Otag = 9
+const Otarray = 10
+const Otchan = 11
+const Otlist = 12
+const Otref = 13
+const Otfunc = 14
+const Ottuple = 15
+const Otinst = 16
+const Otstruct = 17
+const Otpick = 18
+const Oscope = 19
+const Oseq = 20
+const Oif = 21
+const Ofor = 22
+const Oforctl = 23
+const Omatch = 24
+const Oalt = 25
+const Ocase = 26
+const Opat = 27
+const Obreak = 28
+const Ocont = 29
+const Oret = 30
+const Ospawn = 31
+const Osnd = 32
+const Odas = 33
+const Oas = 34
+const Oaddas = 35
+const Osubas = 36
+const Omulas = 37
+const Odivas = 38
+const Omodas = 39
+const Oandas = 40
+const Ooras = 41
+const Oxoras = 42
+const Olshas = 43
+const Orshas = 44
+const Oinc = 45
+const Odec = 46
+const Oexpr = 47
+const Olabel = 48
+const Oraise = 49
+const Oname = 50
+const Oconst = 51
+const Onil = 52
+const Odot = 53
+const Omdot = 54
+const Ocall = 55
+const Oindex = 56
+const Oinds = 57
+const Oindx = 58
+const Oslice = 59
+const Ocomposite = 60
+const Oelem = 61
+const Ofunclit = 62
+const Otuple = 63
+const Ochk = 64
+const Orcv = 65
+const Oref = 66
+const Oload = 67
+const Olen = 68
+const Ohd = 69
+const Otl = 70
+const Ocons = 71
+const Ocast = 72
+const Oneg = 73
+const Onot = 74
+const Oinv = 75
+const Oadd = 76
+const Osub = 77
+const Omul = 78
+const Odiv = 79
+const Omod = 80
+const Oand = 81
+const Oor = 82
+const Oxor = 83
+const Olsh = 84
+const Orsh = 85
+const Oandand = 86
+const Ooror = 87
+const Oeq = 88
+const Oneq = 89
+const Olt = 90
+const Ogt = 91
+const Oleq = 92
+const Ogeq = 93
+const Oind = 94
+const Oadr = 95
+const Oused = 96
+const Onothing = 97
+const Ochan = 98
+const Oarray = 99
+const Oend = 100
+
+
+func parse(file string) ref types.Node
+func errors() int
+func opname(op int) string
+func setfmt()
+func comments() []ref lex.Comment
+func ncomments() int

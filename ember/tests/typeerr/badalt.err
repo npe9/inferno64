@@ -1,0 +1,5 @@
+tests/typeerr/badalt.e:13: alt case must be a send, a receive, or a receive into a variable
+tests/typeerr/badalt.e:15: alt case must be a send, a receive, or a receive into a variable
+tests/typeerr/badalt.e:17: send to non-channel string
+tests/typeerr/badalt.e:19: cannot assign int to string
+tests/typeerr/badalt.e:23: alt has more than one default

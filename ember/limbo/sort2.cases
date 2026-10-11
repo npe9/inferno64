@@ -1,0 +1,10 @@
+/ember/limbo/data/words.txt
+-r /ember/limbo/data/words.txt
+-n /ember/limbo/data/nums.txt
+-nr /ember/limbo/data/nums.txt
+/ember/limbo/data/nums.txt
+/ember/tests/type/hello.e
+/ember/limbo/sort.e
+
+/nonexistent/file
+-q /ember/limbo/data/nums.txt

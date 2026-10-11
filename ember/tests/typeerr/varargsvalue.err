@@ -1,0 +1,1 @@
+tests/typeerr/varargsvalue.e:9: sys.print takes a variable number of arguments and cannot be used as a value

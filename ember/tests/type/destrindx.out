@@ -1,0 +1,5 @@
+xs0=7 y=8
+xs1=2 xs2=3
+xs[1]=7 y=8 (xs0 unaffected)=7
+poison=0
+bs0.a=7 y=8

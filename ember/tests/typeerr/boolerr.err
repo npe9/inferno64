@@ -1,0 +1,4 @@
+tests/typeerr/boolerr.e:7: type mismatch: bool add int
+tests/typeerr/boolerr.e:8: cannot convert int to bool
+tests/typeerr/boolerr.e:9: andand needs bool operands, not string and bool
+tests/typeerr/boolerr.e:12: ! needs a bool operand, not string

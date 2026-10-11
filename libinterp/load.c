@@ -9,7 +9,8 @@
 #define	A(r)	*((Array**)(r))
 
 Module*	modules;
-int	dontcompile = 1; /* TODO compiler is broken on amd64 atleast */
+/* JIT selection is controlled by cflag (-c); individual modules may opt out. */
+int	dontcompile;
 
 static s32
 operand(uchar **p)
@@ -565,7 +566,8 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 			h->pc1 = operand(isp);
 			h->pc2 = operand(isp);
 			descid = operand(isp);
-			if(n != -1)
+			h->t = nil;
+			if(descid != -1)	/* was "n != -1", a stale count: -1 read m->type[-1] */
 				h->t = m->type[descid];
 			n = operand(isp); /* no of labels */
 			h->ne = n>>16;

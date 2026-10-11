@@ -1,0 +1,5 @@
+-c /ember/tests/type/hello.e
+-rx /ember/tests/type/calc.e
+-do /ember/tests/type/nilvar.e
+/nonexistent/file
+-q /ember/tests/type/hello.e

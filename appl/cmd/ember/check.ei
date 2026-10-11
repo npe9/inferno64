@@ -1,0 +1,34 @@
+module Check
+
+// the type checker, a port of ember/check.c: check() binds a parsed
+// module's declarations, checks every function body, rewrites the
+// tree into the shape code generation expects (field accesses to
+// address arithmetic, module members to mdot, calls through values,
+// constants folded), synthesizes the wrappers function values and
+// closures call through, and builds the module's export interface.
+
+const PATH = "/dis/ember/check.dis"
+
+import types "types"
+
+func addincpath(dir string)
+func usetypes(t Types)
+func check(tree ref types.Node, file string) int
+type Cuse struct {
+	line int
+	pos int
+	sym string
+	decl ref types.Decl
+}
+
+func fnlist() []ref types.Decl
+func nfnlist() int
+func constuses() []ref Cuse
+func nconstuses() int
+func moduledecl() ref types.Decl
+func entry() ref types.Decl
+func importlist() list ref types.Decl
+func moduledecllist() ref types.Decl
+func lookup(name string) ref types.Decl
+func nildeclare() ref types.Decl
+func declownedby(d ref types.Decl, fn ref types.Decl) int

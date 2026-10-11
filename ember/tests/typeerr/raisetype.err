@@ -1,0 +1,1 @@
+tests/typeerr/raisetype.e:4: raise requires a string, not int

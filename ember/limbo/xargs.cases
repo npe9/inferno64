@@ -1,0 +1,5 @@
+echo < limbo/data/words.txt
+echo -n < limbo/data/words.txt
+/dis/echo.dis prefix < limbo/data/order.txt
+nosuchcommand < limbo/data/words.txt
+

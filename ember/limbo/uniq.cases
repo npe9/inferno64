@@ -1,0 +1,8 @@
+/ember/limbo/data/dups.txt
+-u /ember/limbo/data/dups.txt
+-d /ember/limbo/data/dups.txt
+-ud /ember/limbo/data/words.txt
+
+/nonexistent/file
+-x /ember/limbo/data/dups.txt
+a b

@@ -1,0 +1,5 @@
+-p /ember/limbo/data/text.uu
+-p /ember/limbo/data/utf.uu /ember/limbo/data/text.uu
+-p < limbo/data/text.uu
+-p /ember/limbo/data/text.txt
+-p /nonexistent

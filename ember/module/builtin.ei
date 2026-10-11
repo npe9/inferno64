@@ -1,0 +1,361 @@
+module Builtin
+
+// the implicit module behind append, map[K]V and the map operations:
+// every program imports it as ".builtin" without saying so, and the
+// checker rewrites those forms into calls here.  every declaration is
+// a template or an inline function instantiated into the module
+// using it, so there is no builtin.dis.
+
+const PATH = "/dis/lib/builtin.dis"
+
+// append(a, x): a fresh array one longer.  Dis arrays have no spare
+// capacity, so each append copies; build long arrays some other way
+func append[T](a []T, x T) []T {
+	n := len(a)
+	b := [n + 1]T
+	copy(b, a)
+	b[n] = x
+	return b
+}
+
+// append(a, xs...)
+func appendall[T](a []T, xs []T) []T {
+	b := [len(a) + len(xs)]T
+	copy(b, a)
+	copy(b[len(a):], xs)
+	return b
+}
+
+type Entry[K, V] struct {
+	key K
+	val V
+	next ref Entry[K, V]
+}
+
+// map[K]V: a hash map whose key hash and equality the checker picks
+// by the key type (strhash/streq and so on, below)
+type Map[K, V] struct {
+	buckets []ref Entry[K, V]
+	n int
+	hash func(K) int
+	eq func(K, K) int
+}
+
+func newmap[K, V](hash func(K) int, eq func(K, K) int) ref Map[K, V] {
+	return ref Map[K, V]{buckets: [8]ref Entry[K, V], n: 0, hash: hash, eq: eq}
+}
+
+// map[K]V{k: v, ...}: newmap then one mput per element, nested
+func mput[K, V](m ref Map[K, V], k K, v V) ref Map[K, V] {
+	m.put(k, v)
+	return m
+}
+
+func (m ref Map[K, V]) bucket(k K) int {
+	h := m.hash(k) % len(m.buckets)
+	if h < 0 {
+		h = -h
+	}
+	return h
+}
+
+func (m ref Map[K, V]) find(k K) ref Entry[K, V] {
+	for e := m.buckets[m.bucket(k)]; e != nil; e = e.next {
+		if m.eq(e.key, k) != 0 {
+			return e
+		}
+	}
+	return nil
+}
+
+// m[k] = v
+func (m ref Map[K, V]) put(k K, v V) {
+	e := m.find(k)
+	if e != nil {
+		e.val = v
+		return
+	}
+	b := m.bucket(k)
+	m.buckets[b] = ref Entry[K, V]{key: k, val: v, next: m.buckets[b]}
+	m.n++
+	if m.n > 2 * len(m.buckets) {
+		m.grow()
+	}
+}
+
+func (m ref Map[K, V]) grow() {
+	old := m.buckets
+	m.buckets = [4 * len(old)]ref Entry[K, V]
+	for i := 0; i < len(old); i++ {
+		for e := old[i]; e != nil; e = e.next {
+			b := m.bucket(e.key)
+			m.buckets[b] = ref Entry[K, V]{key: e.key, val: e.val, next: m.buckets[b]}
+		}
+	}
+}
+
+// m[k]: the value, or V's zero when absent
+func (m ref Map[K, V]) get(k K) V {
+	e := m.find(k)
+	if e != nil {
+		return e.val
+	}
+	var z V
+	return z
+}
+
+// v, ok := m[k]
+func (m ref Map[K, V]) lookup(k K) (V, bool) {
+	e := m.find(k)
+	if e != nil {
+		return e.val, true
+	}
+	var z V
+	return z, false
+}
+
+// delete(m, k)
+func (m ref Map[K, V]) del(k K) int {
+	b := m.bucket(k)
+	var prev ref Entry[K, V]
+	for e := m.buckets[b]; e != nil; e = e.next {
+		if m.eq(e.key, k) != 0 {
+			if prev == nil {
+				m.buckets[b] = e.next
+			} else {
+				prev.next = e.next
+			}
+			m.n--
+			return 1
+		}
+		prev = e
+	}
+	return 0
+}
+
+// len(m)
+func (m ref Map[K, V]) size() int {
+	return m.n
+}
+
+// for k, v := range m: a snapshot of the entries, in bucket order
+func (m ref Map[K, V]) entries() []ref Entry[K, V] {
+	a := [m.n]ref Entry[K, V]
+	i := 0
+	for b := 0; b < len(m.buckets); b++ {
+		for e := m.buckets[b]; e != nil; e = e.next {
+			a[i] = e
+			i++
+		}
+	}
+	return a
+}
+
+func strhash(s string) int {
+	h := 0
+	for i := 0; i < len(s); i++ {
+		h = h * 31 + s[i]
+	}
+	return h
+}
+
+func streq(a string, b string) int {
+	return a == b
+}
+
+func inthash(x int) int {
+	return x * 40503
+}
+
+func inteq(a int, b int) int {
+	return a == b
+}
+
+func bighash(x big) int {
+	return int(x) ^ int(x >> 32)
+}
+
+func bigeq(a big, b big) int {
+	return a == b
+}
+
+func bytehash(x byte) int {
+	return int(x) * 40503
+}
+
+func byteeq(a byte, b byte) int {
+	return a == b
+}
+
+// expect(ok, msg): a test's assertion; a failure ends the test with
+// "expect: msg", which ember -t's driver reports
+func expect(ok bool, msg string) {
+	if !ok {
+		raise "expect: " + msg
+	}
+}
+
+// Result[T]: a value or an error, for functions that can fail; the ?
+// operator propagates the Err of one out of the enclosing function
+type Result[T] pick {
+	Ok(v T)
+	Err(e string)
+}
+
+// Builder: a string built a piece at a time.  "s += x" in a loop
+// copies the whole string each time; a Builder appends into a byte
+// buffer that doubles, so building is linear
+type Builder struct {
+	b []byte
+	n int
+}
+
+func (bd ref Builder) grow(need int) {
+	if bd.n + need <= len(bd.b) {
+		return
+	}
+	size := 2 * len(bd.b)
+	if size < bd.n + need {
+		size = bd.n + need
+	}
+	if size < 32 {
+		size = 32
+	}
+	nb := [size]byte
+	copy(nb, bd.b[0:bd.n])
+	bd.b = nb
+}
+
+// append a string
+func (bd ref Builder) puts(s string) {
+	x := []byte(s)
+	bd.grow(len(x))
+	copy(bd.b[bd.n:], x)
+	bd.n += len(x)
+}
+
+// append one character
+func (bd ref Builder) putc(c int) {
+	s := ""
+	s[0] = c
+	bd.puts(s)
+}
+
+// the bytes written so far
+func (bd ref Builder) len() int {
+	return bd.n
+}
+
+func (bd ref Builder) reset() {
+	bd.n = 0
+}
+
+// everything written, as a string
+func (bd ref Builder) string() string {
+	return string(bd.b[0:bd.n])
+}
+
+// sort(a, cmp): the array in place, a stable bottom-up merge sort,
+// so equal elements keep their order; cmp is negative, zero or
+// positive as a orders before, with or after b
+func sort[T](a []T, cmp func(T, T) int) {
+	n := len(a)
+	if n < 2 {
+		return
+	}
+	b := [n]T
+	for w := 1; w < n; w = 2 * w {
+		for lo := 0; lo < n; lo += 2 * w {
+			mid := lo + w
+			hi := lo + 2 * w
+			if mid > n {
+				mid = n
+			}
+			if hi > n {
+				hi = n
+			}
+			i := lo
+			j := mid
+			for k := lo; k < hi; k++ {
+				// the left run first on a tie: that is what makes it stable
+				if i < mid && (j >= hi || cmp(a[j], a[i]) >= 0) {
+					b[k] = a[i]
+					i++
+				} else {
+					b[k] = a[j]
+					j++
+				}
+			}
+		}
+		copy(a, b)
+	}
+}
+
+// []T(l): the elements of a list in an array, which the checker
+// rewrites a list-to-array conversion into
+func toarray[T](l list T) []T {
+	n := 0
+	for p := l; p != nil; p = tl(p) {
+		n++
+	}
+	a := [n]T
+	i := 0
+	for ; l != nil; l = tl(l) {
+		a[i] = hd(l)
+		i++
+	}
+	return a
+}
+
+// tolist(a): the elements of an array in a list, in order
+func tolist[T](a []T) list T {
+	var l list T
+	for i := len(a) - 1; i >= 0; i-- {
+		l = a[i] :: l
+	}
+	return l
+}
+
+// Vec[T]: an array that grows.  "append(a, x)" copies the whole
+// array each time, since a Dis array has no spare capacity, so
+// building one in a loop is quadratic; a Vec doubles instead
+type Vec[T] struct {
+	a []T
+	n int
+}
+
+func (v ref Vec[T]) push(x T) {
+	if v.n >= len(v.a) {
+		size := 2 * len(v.a)
+		if size < 8 {
+			size = 8
+		}
+		b := [size]T
+		copy(b, v.a)
+		v.a = b
+	}
+	v.a[v.n] = x
+	v.n++
+}
+
+// the number of elements pushed
+func (v ref Vec[T]) len() int {
+	return v.n
+}
+
+func (v ref Vec[T]) at(i int) T {
+	return v.a[i]
+}
+
+func (v ref Vec[T]) set(i int, x T) {
+	v.a[i] = x
+}
+
+// the elements, as an array of exactly the right length
+func (v ref Vec[T]) slice() []T {
+	return v.a[0:v.n]
+}
+
+func (v ref Vec[T]) reset() {
+	v.n = 0
+}

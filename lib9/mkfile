@@ -34,6 +34,7 @@ IMPORTFILES=\
 	dorfmt.$O\
 	errfmt.$O\
 	exits.$O\
+	fmax.$O\
 	fmt.$O\
 	fmtfd.$O\
 	fmtlock.$O\

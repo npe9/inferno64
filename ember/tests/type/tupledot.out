@@ -1,0 +1,5 @@
+t.t0=1 t.t1=hello
+c.id=1 c.p.t0=2 c.p.t1=two
+c1.p.t0=100 c1.p.t1=one c2.p.t0=200 c2.p.t1=two
+poison=0
+z.p.t0=70 z.p.t1=seven
