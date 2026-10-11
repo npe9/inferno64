@@ -3,6 +3,7 @@
 TARG=\
 	usbd.dis\
 	etherusb.dis\
+	hubports.dis\
 
 SYSMODULES=
 

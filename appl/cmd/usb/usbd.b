@@ -256,12 +256,35 @@ portattach(h: ref Hub, p: int): ref Dev
 			return portfail(h, p, nil, "reset");
 		sys->sleep(Resetdelay);
 		sts := portstatus(h, p);
+		#
+		# NO SetFeature(PORT_ENABLE) HERE.  USB 2.0 defines
+		# PORT_ENABLE for ClearFeature only; SetFeature of it is not a
+		# defined hub request, and a compliant hub STALLS it on every
+		# port.  This code sent it and then reported "%r", so the
+		# failure line below read "endpoint stalled" no matter what the
+		# port had actually done -- a stall manufactured by the
+		# diagnostic itself.  I then read that line as evidence that
+		# the hub was refusing to talk about port 2.
+		#
+		# What a port legitimately needs after a reset is
+		# reset-recovery time, so the retry is another read after
+		# another wait, which is also what makes the retry meaningful.
+		#
 		if(sts == -1 || (sts & PSenable) == 0){
-			portfeature(h, p, Fportenable, 1);
+			sys->sleep(Resetdelay);
 			sts = portstatus(h, p);
-			if(sts == -1 || (sts & PSenable) == 0)
-				return portfail(h, p, nil, "not enabled after reset");
 		}
+		if(sts == -1 || (sts & PSenable) == 0)
+			#
+			# THE STATUS WORD GOES IN THE MESSAGE.  Without it
+			# there is no distinguishing a port with nothing on it
+			# (sts 0) from one that reset and came back disabled
+			# (PSpresent set, PSenable clear) from a hub that will
+			# not answer about the port at all (sts -1), and those
+			# three have different causes.
+			#
+			return portfail(h, p, nil, sys->sprint(
+				"not enabled after reset (status %#ux)", sts));
 		sp = "full";
 		if(sts & PSslow)
 			sp = "low";
@@ -1379,10 +1402,21 @@ newhub(name: string, d: ref Dev): ref Hub
 		# was already attached when usbd started is found by the first
 		# scan seeing it present, so a hub that reports nothing present
 		# is the whole of the failure and worth showing.
-		if(debug)
-			for(i = 1; i <= h.nport; i++)
-				sys->print("usbd: %s: port %d status %#ux\n",
-					h.dev.name, i, portstatus(h, i));
+		#
+		# EVERY PORT IS REPORTED, not just the ones that fail, and not
+		# only under -d.  Twelve failures on one port read as twelve
+		# measurements until I counted the ports and found that the
+		# ports which worked had only ever carried high-speed devices.
+		# A line per port at hub-add is the control: it says which
+		# ports have something on them and at what speed, so a later
+		# failure can be attributed to the port or to the device
+		# instead of to whichever was being looked for.
+		#
+		for(i = 1; i <= h.nport; i++){
+			sts := portstatus(h, i);
+			sys->print("usbd: %s: port %d status %#ux%s\n",
+				h.dev.name, i, sts, portdecode(sts));
+		}
 	}
 	hubs = h :: hubs;
 	if(debug)
@@ -1451,6 +1485,31 @@ portfeature(h: ref Hub, port, f, on: int): int
 	if(on)
 		cmd = Rsetfeature;
 	return usbcmd(h.dev, Rh2d|Rclass|Rother, cmd, f, port, nil, 0);
+}
+
+# the bits that decide whether a port is worth attaching to, spelled out:
+# a bare hex word is hard to compare across a log by eye, and comparing
+# ports across a log is the whole point of printing them.
+portdecode(sts: int): string
+{
+	if(sts == -1)
+		return " (the hub would not answer)";
+	if((sts & PSpresent) == 0)
+		return " (empty)";
+	s := " present";
+	if(sts & PSenable)
+		s += " enabled";
+	else
+		s += " DISABLED";
+	if(sts & PSsuspend)
+		s += " suspended";
+	if(sts & PSslow)
+		s += " low-speed";
+	else if(sts & PShigh)
+		s += " high-speed";
+	else
+		s += " full-speed";
+	return " (" + s[1:] + ")";
 }
 
 portstatus(h: ref Hub, p: int): int
