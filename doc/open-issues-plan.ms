@@ -16030,3 +16030,57 @@ in
 .CW chansetup()
 and the initial channel enable rather than in the retry path, and
 neither needs another device to investigate.
+.NH 2
+RETRACTED: "the split path is broken for every TT device" rests on ONE port
+.PP
+.B "Every failure in this investigation is on hub port 2, and every"
+.B "success is high speed."
+Counted across five rings:
+.IP
+.EX
+port 1  high   10 successes   internal ethernet
+port 4  high    5 successes   Teensy 4.x
+port 5  high    5 successes   flash drive
+port 2         12 FAILURES    mouse, serial #1, serial #2
+.EE
+.PP
+So two explanations fit the data exactly as well:
+.IP \(bu
+the start\-split path is broken for all full/low\-speed devices, or
+.IP \(bu
+.B "hub port 2 is faulty"
+\(em in hardware or in the hub's own state \(em and every device tried
+on it would have failed whatever its speed.
+.PP
+.B "Nothing here distinguishes them,"
+because no full\- or low\-speed device was ever tried on another port and
+no high\-speed device was ever tried on port 2. The earlier section's
+conclusion \(em three devices, two speeds, one signature, therefore the
+driver \(em is withdrawn to "three devices on one port". The three\-device
+population rules out a broken DEVICE; it says nothing about the port.
+.PP
+.B "Corroborating evidence for the port, which was in the ring all along:"
+one boot reported
+.CW "usbd: ep2.0: port 2: not enabled after reset: endpoint stalled"
+with
+.CW "hcsplt 00000000"
+\(em a
+.I "non-split, high-speed"
+hub\-class request about port 2, stalled by the hub. The hub refusing to
+talk about port 2 is not a split problem at all.
+.PP
+.B "THE EXPERIMENT, and it is one physical swap:"
+exchange the full\-speed serial adapter with the flash drive, putting a
+full\-speed device on a port known to work and a high\-speed device on
+port 2.
+.IP
+.EX
+serial works on 5, flash FAILS on 2    -> PORT 2 is the fault
+serial FAILS on 5, flash works on 2    -> the split path is the fault
+both work                              -> the fault needs port 2 AND
+                                          a non-high-speed device
+both fail                              -> something else again
+.EE
+.PP
+Only the second outcome preserves the withdrawn conclusion, and it is
+the one I had assumed without testing.
