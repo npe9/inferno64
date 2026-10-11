@@ -16601,3 +16601,161 @@ and completes SET_ADDRESS over that same split path. That is an argument
 from the shape of the failure and
 .B "not a resolution of the confound,"
 which still needs a full\-speed device in another jack.
+.NH 2
+FIXED: a stale interrupt accumulator, and full-speed devices enumerate
+.PP
+.B "usbd: ep2.0: port 2: full ep4.0 vid 1a86 did 55d3 class 2"
+.PP
+A full\-speed CH343 USB\-serial adapter behind the Pi 3B's onboard LAN9514
+hub, enumerated on silicon. 24 stalls to 0, 20 empty split transfers to
+0. The first full\- or low\-speed device ever to enumerate on this board
+through the hub's transaction translator.
+.PP
+.B "ROOT CAUSE:"
+.CW ctlr->hcintr[chan]
+is ORed into by the interrupt handler and is sticky, and
+.CW chanio()
+consumed somebody else's event as its own. The same defect at two
+scopes:
+.IP \(bu
+.B "Between the STAGES of a transfer."
+.CW chanio 's
+first act is to read and clear the accumulator \(em deliberately, to
+catch a late completion from the previous
+.I attempt
+of this transfer \(em but on the first iteration there is no previous
+attempt and what is there belongs to the stage before. A leftover
+carrying
+.CW Chhltd
+plus any bit outside
+.CW (Chhltd|Nak|Ack|Nyet)
+satisfies the
+.CW "goto Result"
+guard \(em
+.CW Xfercomp
+will do, not only
+.CW Stall
+\(em and jumps to
+.CW Result
+.B "before the channel has been enabled even once,"
+where
+.CW "n = hc->hcdma - hcdma"
+is 0 and the transfer is reported complete having moved nothing.
+.IP \(bu
+.B "And between the ATTEMPTS of a stage."
+.CW chanwait()
+returns
+.CW ctlr->hcintr[chan]
+without clearing it, so the next iteration's read\-and\-clear picked up
+this attempt's completion. A multi\-packet split IN moved its first
+packet and then reported
+.CW "moved NOTHING of 18 asked"
+with 16 bytes and 2 packets still outstanding.
+.PP
+.B "I HAD THIS WRONG ONCE AND THE SCOPE IS WHY."
+The clear went into
+.CW chanalloc()
+earlier, measured no change in the stall count, and was written into
+this document as a hazard that was
+.B "latent rather than live."
+.CW chanalloc
+runs
+.B "once per control transfer"
+while a control transfer is three stages sharing one channel, so that
+clear protected the SETUP stage and left the data and status stages
+inheriting the stage before them. Right diagnosis, wrong scope, and the
+measurement that refuted it was watching the wrong symptom.
+.PP
+.B "Why it hid, and why every earlier theory fitted:"
+.IP \(bu
+a zero\-length status stage that moves no bytes
+.I looks
+correct, so only the IN data stage had anything to lose;
+.IP \(bu
+the OUT SETUP stage inherits the same way but its bytes reach the TT, so
+SET_ADDRESS appeared to succeed \(em which is exactly why the split
+counters read "2 ok, 1 with data" per attempt and that was read as proof
+the split path worked;
+.IP \(bu
+and usbd's one human\-visible message was
+.CW "endpoint stalled"
+from a
+.B "stale errstr,"
+because
+.CW ctltrans
+swallows
+.CW Estalled
+and returns 0, so
+.CW usbin()
+saw a short write rather than a failed call. The only message anyone ever
+saw named neither the stage nor the event.
+.PP
+Also fixed:
+.CW splitcontinue()
+compared
+.CW hcint
+against exact values
+.CW "(v == (Chhltd|Ack))"
+while the core reports a start\-split ACK as
+.CW "Xfercomp|Chhltd|Ack"
+= 0x23, so the complete\-split was never issued. It tests the
+.I phase
+now \(em
+.CW Compsplt
+clear means start\-split, set means complete\-split \(em which is also
+what keeps the promotion from firing twice on the complete\-split's own
+ACK, something the exact equality prevented by accident. And
+.CW ctlr->splitretry
+is per\-channel instead of one int shared by every channel and reset only
+on
+.CW Ack .
+.PP
+.B "Verified on silicon"
+.CW KERNDATE
+1791708661, JTAG boot: all five devices enumerate \(em hub, ethernet, the
+full\-speed serial adapter, a Teensy and a flash drive \(em with
+.CW DISK-READ-OK ,
+.CW "ETHER-DHCP-OK ip=192.168.8.105" ,
+.CW BCMFW-OK ,
+.CW EFS-OK ,
+no panic and no completion timeout. QEMU gates green:
+.CW raspi3b
+44 markers,
+.CW raspi3b-usb
+52. Ring kept in
+.CW rings/20261011-FIRST-FULLSPEED-ENUMERATION.out .
+.PP
+.B "AND THE PORT-2 CONFOUND IS RESOLVED THE OTHER WAY:"
+port 2 was never bad. Twelve failures on one port were twelve runs of one
+driver defect \(em and the physical experiment this document kept
+demanding would have exonerated the port and said nothing at all about
+the cause. The confound was real and worth retracting the conclusion
+over; the
+.I remedy
+for it was not where the answer lay.
+.NH 2
+Still open after the fix
+.IP \(bu
+.B "The device is enumerated, not driven."
+It is CDC class 2 and this tree has no CDC\-ACM driver, so
+.CW usbd
+leaves it configured and says so. A serial adapter is not the goal; a
+.B "mouse"
+is, and no HID device has been plugged into this board since the fix.
+.IP \(bu
+.CW Addressdelay
+(20 ms) stays as spec\-required and measured not to be the fix.
+.IP \(bu
+The
+.CW usbd
+fd leak \(em killing it leaves endpoints
+.CW inuse
+with no
+.CW Usbd
+process in
+.CW ps
+\(em is untouched and unexplained.
+.IP \(bu
+.B "The fix is in RAM only."
+It reached the board by JTAG boot and does not survive a power cycle;
+the card still holds a kernel without it.
