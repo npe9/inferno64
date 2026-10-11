@@ -17123,3 +17123,73 @@ and read
 by difference. If the hits track the long holds, then H4's latency
 problem and this race are one item and bounding the holds fixes both;
 if they do not, they are two.
+.NH 2
+The settling experiment RAN, and it could not settle it \(em single processor is why
+.LP
+.CW tests/efs-fault
+on the JTAG-booted kernel,
+.CW EFS-FAULT-OK ,
+counters by difference:
+.P1
+                windows  overlaps  gc-in-window  /prog-hit  holds  reads
+after churn       1031       5           8           0        3    56813
+after efs-fault   3560      74           8           0        3   100997
+.P2
+.B "Three things, and the third is the point."
+.IP \(bu
+.B "efs-fault drives OVERLAPS: +69,"
+where 200 sequential process exits drove none. So overlapping close
+windows come from
+.I concurrent
+teardown, which this suite does and a sequential loop cannot. The
+single-slot detector is now blind for about 2% of windows (74 of 3560),
+still small.
+.IP \(bu
+.B "It does NOT drive gc-in-window: +0,"
+so overlaps and collections-inside-the-window are independent. The
+earlier reading of 8 came from the churn arm, not from this one.
+.IP \(bu
+.B "AND IT PRODUCED NO LONG VM HOLDS AT ALL: 3 before, 3 after,"
+all three from boot. H4 measured 27 holds in 254 seconds of this same
+suite \(em one every nine seconds, up to 1.21s \(em
+.B "on a four-core CARD boot."
+On one processor the same load produced none.
+.PP
+.B "So the hypothesis is UNTESTED, not refuted."
+It said: a collection inside a close window widens the window by its own
+duration, and a window open for a second is one any
+.CW /prog
+scan will hit. Testing it requires the long holds, and the load that
+produces them on four cores produces none on one. The restriction stated
+at the top of this file bit exactly here.
+.PP
+.B "What IS established on one processor,"
+and it is a strong negative: 3560 close windows against 100997
+.CW /prog
+entry reads produced
+.B zero
+hits. The window really is short \(em
+.CW release() ,
+four
+.CW close*() s,
+.CW acquire()
+\(em and nothing in a GC-light workload makes it long enough to be hit.
+Two sightings in months, both under loads that also produced long holds,
+against zero in a hundred thousand reads without them, is consistent
+with the hypothesis and is not evidence for it.
+.PP
+.B "The card boot's shopping list, since it now has three items:"
+the USB fix under four-core concurrency (
+.CW "port 2: full ep4.0"
+present, 0
+.CW STALL ,
+0
+.CW "moved NOTHING" ),
+the USB bulk figure against the 555-572 KB/s single-processor baseline,
+and
+.CW dishitcount
+by difference across an
+.CW efs-fault
+run that
+.I does
+produce holds. One boot covers all three.
