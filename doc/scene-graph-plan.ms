@@ -1,3 +1,17 @@
+.\" .EX/.EE were USED in this document and never DEFINED, so troff filled
+.\" and justified every one of them: tables lost their columns and
+.\" multi-line output came out as one run-on sentence.  nroff exits 0
+.\" either way, so nothing said so.  Same definition bluetooth.ms uses.
+.de EX
+.br
+.in +4n
+.nf
+..
+.de EE
+.fi
+.in -4n
+.br
+..
 .TL
 What is left: the render node, two loaders, and the collector
 .AU

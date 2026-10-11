@@ -1,7 +1,7 @@
 #!/bin/sh
 #
-# troff-p1 - a document that USES .P1 must DEFINE it, or its displays render
-#	     as filled prose.
+# troff-p1 - a document that USES .P1 or .EX must DEFINE it, or its displays
+#	     render as filled prose.
 #
 #	sh tests/troff-p1.sh
 #
@@ -31,6 +31,30 @@
 #	..
 #
 # .DS L / .DE is standard -ms, so it is correct under Plan 9 troff too.
+#
+# AND .EX/.EE ARE THE SAME CLASS, which this test did not cover and so did not
+# catch: six of this tree's documents used .EX without defining it, including
+# doc/open-issues-plan.ms in 28 places.  Measured on doc/qpu-plan.ms --
+#
+#	.EX                            rendered as
+#	clock hz 250000000               clock hz 250000000 enabled 1
+#	enabled 1          accepted      accepted  ident V3D tried 3 read 3
+#	ident V3D tried 3 read 3 ...
+#	.EE
+#
+# -- a table of register reads coming out as a run-on sentence.  The
+# definition bluetooth.ms uses, and the one added to the others:
+#
+#	.de EX
+#	.br
+#	.in +4n
+#	.nf
+#	..
+#	.de EE
+#	.fi
+#	.in -4n
+#	.br
+#	..
 #
 # THE UPSTREAM INFERNO PAPERS ARE EXCLUDED and are not a finding: sh.ms, dis.ms,
 # mk.ms, install.ms, acidtut.ms, asm.ms and the rest use .P1 correctly for the
@@ -84,6 +108,18 @@ if [ "$bad" -eq 0 ] || [ "$baddef" -ne 0 ] || [ "$gooddef" -eq 0 ]; then
 	echo "  not reporting a pass." >&2
 	exit 1
 fi
+# and the same pair for .EX, so the second half of this check is live too
+printf '.LP\nx\n.EX\n a b\n.EE\n'                  > "$T/badex.ms"
+printf '.de EX\n.nf\n..\n.LP\nx\n.EX\n a b\n.EE\n' > "$T/goodex.ms"
+xbad=`grep -c '^\.EX$' "$T/badex.ms"`
+xbaddef=`grep -c '^\.de EX' "$T/badex.ms"`
+xgooddef=`grep -c '^\.de EX' "$T/goodex.ms"`
+if [ "$xbad" -eq 0 ] || [ "$xbaddef" -ne 0 ] || [ "$xgooddef" -eq 0 ]; then
+	echo "troff-p1: SELF-TEST FAILED -- the .EX fixtures do not have the" >&2
+	echo "  properties this check reads ($xbad uses, $xbaddef/$xgooddef" >&2
+	echo "  defs); not reporting a pass." >&2
+	exit 1
+fi
 
 rc=0
 n=0
@@ -100,6 +136,18 @@ for f in $files; do
 		rc=2
 	fi
 done
+for f in $files; do
+	uses=`grep -c '^\.EX$' "$f"`
+	[ "$uses" -eq 0 ] && continue
+	defs=`grep -c '^\.de EX' "$f"`
+	if [ "$defs" -eq 0 ]; then
+		echo "troff-p1: DEFECT -- $f uses .EX $uses time(s) and never"
+		echo "  defines it, so every one of those displays renders as"
+		echo "  FILLED PROSE under groff -ms.  Add the definition"
+		echo "  described at the top of this test."
+		rc=2
+	fi
+done
 echo "troff-p1: checked $n document(s) of ours"
-[ "$rc" = 0 ] && echo "troff-p1: ok -- every .P1 user defines it"
+[ "$rc" = 0 ] && echo "troff-p1: ok -- every .P1 and .EX user defines it"
 exit $rc
