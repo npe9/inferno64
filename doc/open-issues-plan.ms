@@ -50,7 +50,56 @@ comes before
 because it is about damage this session may already have done, and that
 outranks extending the fix to another architecture.
 .NH 1
-STATE OF THE BOARD, read before picking anything (9 October 2026)
+STATE OF THE BOARD, read before picking anything (11 October 2026)
+.LP
+.B "THE CARD IS IN THE PI AND THE PI BOOTS FROM IT."
+What the card holds is a kernel from before 10 October, so
+.B "none of this week's USB work is on it."
+The working kernel reaches the board by
+.CW tools/jtag/boot.sh ,
+which loads it into RAM and
+.B "does not survive a power cycle."
+.CW kinstall.sh
+with the card in a reader is what makes it permanent, and that needs a
+person.
+.PP
+.B "EVERY USB MEASUREMENT IN THIS FILE SINCE 10 OCTOBER IS SINGLE-PROCESSOR."
+.CW jtagrestart
+halts all four cores and resumes core 0 alone, so a JTAG-booted kernel
+runs with
+.CW "nmach 1"
+whatever the config says. That is a real restriction for the
+.CW usbdwc
+fix specifically, because what it changes is
+.B "state shared between the interrupt handler and a process:"
+.CW ctlr->hcintr[chan] ,
+written under
+.CW ilock
+in two new places and ORed into by
+.CW usbintr .
+The locking is right by construction and
+.B "the concurrency has never run."
+On four processors the handler can be on another core while
+.CW chanio
+clears the accumulator, which is exactly the interleaving the clear is
+about. A card boot is what tests it, and grade it on the USB lines:
+.CW "port 2: full ep4.0 vid 1a86"
+present, 0
+.CW STALL
+lines, 0
+.CW "moved NOTHING"
+lines.
+.PP
+.B "boot.sh's confirmation is fixed and its old failure mode is worth knowing:"
+it greped a 16K ring that WRAPS for a banner printed at boot, so it
+declared four failures on a running kernel twice in one session. It asks
+.CW alive
+now \(em kerndate for identity,
+.CW m->ticks
+advancing for liveness \(em and compares tick counts so that re-booting
+the same build is still detectable.
+.LP
+.B "The 9 October text follows and is kept for the verification it asks for."
 .LP
 .B "THE CARD IS BACK IN THE PI AND IT BOOTS."
 Confirmed 9 October 2026.  What follows was written while the card was out and
