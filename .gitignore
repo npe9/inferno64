@@ -636,3 +636,6 @@ os/9front/pc64/rebootcode.out
 os/9front/pc64/[0-9].apbootstrap
 os/9front/pc64/apbootstrap.i
 os/9front/pc64/apbootstrap.out
+
+# boardrun console captures: observations of one board, not source
+rings/

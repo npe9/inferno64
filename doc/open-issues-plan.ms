@@ -16084,3 +16084,175 @@ both fail                              -> something else again
 .PP
 Only the second outcome preserves the withdrawn conclusion, and it is
 the one I had assumed without testing.
+.NH 2
+The Pktcnt theory, raised and dropped without a build
+.PP
+.B "A split transaction carries one packet,"
+so
+.CW chanio
+programming
+.CW hctsiz
+from the whole transfer length \(em
+.CW "hc->hctsiz = n | npkt<<OPktcnt | pid"
+at line 706, with
+.CW split
+read on the line
+.I after
+\(em looked like the defect, and it fits the comment in the stall path
+exactly: a mouse completes SET_ADDRESS (8 bytes, one packet) and stalls
+GET_DESCRIPTOR.
+.PP
+.B "It cannot be the cause of what was measured."
+Of the thirty tallied stalls, 21 are SETUP (always 8 bytes, one packet)
+and 6 are zero-length status stages \(em 27 of 30 are
+.CW Pktcnt
+1 by construction, and the theory predicts they work. Only the three
+64-byte DATA1 stalls could even in principle have had
+.CW Pktcnt
+> 1, and for an 18-byte descriptor read with
+.CW maxpkt
+64 the ordinary reading is
+.CW ROUND(18,64)
+= 64 with
+.CW npkt
+1. A theory that explains 3 of 30 and contradicts the other 27 is not
+the fix.
+.PP
+Two further strikes. The loop
+.I does
+already run one start/complete pair per packet \(em
+.CW Compsplt
+is cleared each iteration and
+.CW hctsiz
+auto\-advances \(em so
+.CW npkt
+> 1 is not structurally impossible here. And
+.CW os/inferno/raspi4/usbdwc.c ,
+which is closer to the 9front donor, ships the identical programming;
+the "the DWC requires Pktcnt 1 for splits" claim was recalled from
+Linux's
+.CW dwc2
+and is not evidence about this core.
+.PP
+.B "No build was made and nothing was changed."
+Recorded because the appealing part was how well it fit the one case
+written up in the comment, and the thing that killed it was counting how
+much of the evidence it covered.
+.NH 2
+What the stall actually constrains, and the instrument that was missing
+.PP
+A device may not STALL a SETUP token, a hub may not STALL a start\-split,
+and
+.CW Stall
+is only ever
+.I read
+in this driver \(em never synthesised. So
+.CW "hcint 0000000a"
+on a start\-split SETUP is not a handshake off the wire; it is the core's
+own report, which puts the suspect in channel and controller programming
+state, and specifically in
+.B "this tree's delta from the donor in the split path:"
+the forced
+.CW Chen\(->0
+pre\-start halt before every enable, the
+.CW "hcintmsk / haintmsk"
+ordering,
+.CW splitcontinue 's
+.CW Chen
+toggle from interrupt context, and the
+.CW Dopng
+rewrite of
+.CW hctsiz
+each iteration. No donor tree is on this disk to diff against.
+.PP
+.B "THE INSTRUMENT WAS THE BINDING CONSTRAINT, not the hypothesis."
+The question "has a split transaction ever carried a data stage end to
+end?" could not be answered, for two separate reasons, both now fixed:
+.IP \(bu
+.CW boardrun
+printed its capture and
+.B "kept nothing."
+.CW board.out
+is a rolling
+.CW hardcopy
+snapshot, so the only copy of thirty decoded stall lines was one
+session's terminal scrollback, and a context compaction took it. Every
+run now writes
+.CW rings/<date>-<command>.out ,
+on the timeout path too, and says where it went.
+.IP \(bu
+.B "The driver counted failures and not successes."
+.CW Ctlr
+now carries
+.CW splitok
+and
+.CW splitokdata ,
+incremented only at
+.CW chanio 's
+normal return, and every stall line reports them. A stall reading
+.CW "splits ok 9 (3 with data)"
+and one reading
+.CW "splits ok 0 (0 with data)"
+are different faults, and that difference was not visible at all.
+.PP
+The stall line also now names the control STAGE (from the PID and the
+length, since a data stage and a status stage share
+.CW DATA1
+and differ only in length), the device address, and
+.CW "Pktcnt / Xfersize / Pid"
+decoded. The hex form was tallied by hand into a table whose most
+important column \(em which stage \(em was not in the data.
+.NH 2
+Board state, now
+.PP
+.B "USB hot-plug is dead until a power cycle."
+Reading a hub's port status needs the hub's control endpoint, and usbd
+holds a data fd open for every device it attaches, so
+.CW hubports
+got
+.CW "device or object already in use" .
+usbd was killed to free it \(em and
+.B "the endpoints stayed"
+.CW inuse
+.B "anyway,"
+so a fresh usbd cannot open them either. Why the fds outlive the process
+is not established and is a plan item below, not a diagnosis.
+.PP
+Consequences, as facts rather than a plan:
+.IP \(bu
+the new usbd and the new kernel both land only via
+.CW kinstall
+with the card, since
+.CW /dis
+is in the kernel's ROM root;
+.IP \(bu
+.B "the next USB measurement is a full-speed device in a DIFFERENT jack,"
+after that cycle \(em which is also the port\-2 experiment, so one boot
+settles both the port confound and the split\-tally question.
+.NH 2
+Open: killed usbd leaves its endpoints inuse
+.PP
+Killing both usbd processes left
+.CW ep2.0 ,
+.CW ep3.0 ,
+.CW ep4.0
+and
+.CW ep5.0
+reporting
+.CW busy
+in
+.CW /dev/usb/ctl ,
+and
+.CW usbopen
+sets
+.CW ep->inuse
+on open with
+.CW usbclose
+clearing it \(em so an fd is outliving the process that held it. A
+reference cycle in usbd's own
+.CW "Hub / Port"
+structures was the first guess and
+.B "is not verified;"
+it is written here as the symptom only. It matters beyond tidiness: it
+makes usbd unrestartable without a reboot, which is what turned a
+read\-only measurement into a power cycle.

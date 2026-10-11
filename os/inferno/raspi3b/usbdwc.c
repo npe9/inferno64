@@ -97,6 +97,27 @@ struct Ctlr {
 	vlong	woke_[Maxchans];	/* and the waiting process ran */
 	uint	rearm[Maxchans];	/* bulk IN channels restarted after a silent NAK */
 	uint	naksleep;		/* NAK retries that cost a tick; see the NAK path */
+	/*
+	 * HOW MANY SPLIT TRANSACTIONS HAVE EVER COMPLETED, which is the one
+	 * number this driver could not produce when it was needed.
+	 *
+	 * The question that stalled an investigation was "has the split path
+	 * ever carried a transaction end to end, or does it only ever fail?"
+	 * -- and it is not answerable from the failures, because the failures
+	 * are all this prints.  A comment in the stall path says a mouse
+	 * completed SET_ADDRESS (no data stage) and then stalled
+	 * GET_DESCRIPTOR (an IN data stage), which would make the data stage
+	 * the thing that breaks; but that was one reading of one boot, and
+	 * nothing counts it.
+	 *
+	 * So: every split chanio() that returns normally is counted, and
+	 * separately those that moved a data stage, and both numbers go out
+	 * with each stall.  A stall line reading `splits ok 9 (3 with data)'
+	 * and one reading `splits ok 0 (0 with data)' are different faults
+	 * and the difference is not otherwise visible.
+	 */
+	ulong	splitok;		/* split transfers that completed */
+	ulong	splitokdata;		/* ... of those, ones with len > 0 */
 };
 
 struct Epio {
@@ -988,17 +1009,61 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 				 */
 				static int nstall;
 
+				/*
+				 * DECODED, AND WITH THE STAGE AND THE RUNNING
+				 * SPLIT TALLY.
+				 *
+				 * The hex form cost a day.  Thirty of these
+				 * lines were tallied by hand into "21 SETUP,
+				 * 3 DATA1 64B, 6 DATA1 0B" and the tally was
+				 * then reasoned about -- but which CONTROL
+				 * STAGE a DATA1 belongs to is not in hctsiz
+				 * (the data stage and the status stage share
+				 * the PID and differ only in length), the
+				 * device address had to be dug out of bits
+				 * 22..28 of hcchar by eye, and whether any
+				 * split had EVER succeeded was not in the
+				 * line at all.  Every one of those is cheap
+				 * to print and expensive to reconstruct.
+				 *
+				 * The stage comes from the arguments rather
+				 * than from a register: ctltrans() issues
+				 * SETUP, then an optional data stage, then a
+				 * zero-length status stage, so the PID and
+				 * the length name the stage exactly and with
+				 * no new state to keep in step.
+				 */
 				if(nstall++ < 40)
-					print("usbdwc: ep%d.%d STALL hcint %8.8ux"
-						" hcchar %8.8ux hcsplt %8.8ux"
-						" hctsiz %8.8ux speed %d%s\n",
-						ep->dev->nb, ep->nb, i,
-						hc->hcchar, hc->hcsplt,
-						hc->hctsiz, ep->dev->speed,
-						(hc->hcsplt & Spltena) == 0? " (no split)":
+					print("usbdwc: ep%d.%d addr %d STALL"
+						" %s stage, %s, hcint %8.8ux"
+						" (%s) pktcnt %d xfersize %d"
+						" pid %d maxpkt %d speed %d"
+						" splits ok %lud (%lud with"
+						" data) hcchar %8.8ux hcsplt"
+						" %8.8ux hctsiz %8.8ux\n",
+						ep->dev->nb, ep->nb,
+						(hc->hcchar>>ODevaddr) & 0x7f,
+						pid == SETUP? "SETUP":
+						  len > 0? "DATA": "STATUS",
+						(hc->hcsplt & Spltena) == 0?
+						  "no split":
 						(hc->hcsplt & Compsplt)?
-						  " COMPLETE-split (the DEVICE answered)":
-						  " START-split (the HUB answered)");
+						  "COMPLETE-split (the DEVICE"
+						  " answered)":
+						  "START-split (the HUB"
+						  " answered)",
+						i,
+						i == (Chhltd|Stall)?
+						  "Chhltd|Stall, nothing else":
+						  "with other bits set",
+						(hc->hctsiz & Pktcnt)>>OPktcnt,
+						hc->hctsiz & Xfersize,
+						(hc->hctsiz & Pid)>>29,
+						maxpkt, ep->dev->speed,
+						ctlr->splitok,
+						ctlr->splitokdata,
+						hc->hcchar, hc->hcsplt,
+						hc->hctsiz);
 				error(Estalled);
 			}
 			if(i & (Nyet|Frmovrun)){
@@ -1135,6 +1200,17 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 			ctlr->woke_[chan] > ctlr->isr_[chan]?
 				(ctlr->woke_[chan] - ctlr->isr_[chan])/1000: -1LL,
 			iters, naks);
+	/*
+	 * Counted HERE and not at the break, because this is the only exit
+	 * that means the transfer worked: every error path above leaves
+	 * through error(), and a count taken at the break would include a
+	 * transfer that then raised.
+	 */
+	if(split){
+		ctlr->splitok++;
+		if(len > 0)
+			ctlr->splitokdata++;
+	}
 	return len - nleft;
 }
 

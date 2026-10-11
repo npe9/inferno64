@@ -257,12 +257,43 @@ fi
 #
 printf "%s%s; echo 'BR'^'-%s'\n" "$PRE" "$1" "${TOK#BR-}" > "$CMD"
 
+#
+# EVERY RUN'S OUTPUT IS KEPT, and that is not a convenience.
+#
+# board.out is a rolling `screen -X hardcopy' snapshot, so it holds only
+# what is on the console NOW; this script printed its capture to stdout
+# and kept nothing.  For one investigation that meant the only copy of
+# the evidence -- thirty decoded USB stall lines, hcint and hcsplt and
+# hctsiz per failure -- lived in the terminal scrollback of the session
+# that ran it.  When that session's context was compacted the lines went
+# with it, and the question they answered ("did any split transaction
+# ever carry a data stage?") had to be put back to the hardware, which
+# costs a power cycle and a card swap.  The measurement was not hard to
+# take; it was impossible to take AGAIN.
+#
+# So each run drops its capture under rings/, named by the time and the
+# command, and prints where it went.  The directory is gitignored: these
+# are observations of one board on one afternoon, not source.
+#
+RINGS=$ROOT/rings
+mkdir -p "$RINGS" 2>/dev/null || true
+# the command in the filename, reduced to something a filesystem will take
+SLUG=`printf '%s' "$1" | LC_ALL=C tr -c 'A-Za-z0-9' '-' | cut -c1-40`
+RING=$RINGS/`date +%Y%m%d-%H%M%S`-$SLUG.out
+
 n=0
 lim=`expr $WAIT / 10`
 while [ $n -le $lim ]; do
 	if LC_ALL=C tr -cd '\11\12\40-\176' < "$OUT" 2>/dev/null |
 	    grep -q "$TOK"; then
+		{
+			echo "# boardrun $TOK"
+			echo "# `date`"
+			echo "# command: $1"
+			LC_ALL=C tr -cd '\11\12\40-\176' < "$OUT"
+		} > "$RING"
 		LC_ALL=C tr -cd '\11\12\40-\176' < "$OUT" | grep -vE '^RCMD'
+		echo "boardrun: capture kept in $RING" >&2
 		exit 0
 	fi
 	sleep 10
@@ -278,5 +309,17 @@ done
 #
 echo "boardrun: $TOK did not appear within ${WAIT}s" >&2
 echo "boardrun: console tail follows; the board may be busy, slow or wedged" >&2
+#
+# THE TIMEOUT KEEPS ITS CAPTURE TOO, and it is the one that needs it most:
+# only twelve lines go to stderr, and a wedge is exactly the case where the
+# interesting print is further back than twelve lines.
+#
+{
+	echo "# boardrun $TOK TIMED OUT after ${WAIT}s"
+	echo "# `date`"
+	echo "# command: $1"
+	LC_ALL=C tr -cd '\11\12\40-\176' < "$OUT" 2>/dev/null
+} > "$RING"
 LC_ALL=C tr -cd '\11\12\40-\176' < "$OUT" 2>/dev/null | tail -12 >&2
+echo "boardrun: capture kept in $RING" >&2
 exit 1
