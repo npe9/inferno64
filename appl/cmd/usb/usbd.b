@@ -81,6 +81,14 @@ Ucdelay: con 50;	# control transfer retry
 Uctries: con 4;
 Enabledelay: con 100;
 Resetdelay: con 50;
+#
+# SET_ADDRESS recovery: USB 2.0 9.2.6.3 allows the device 2 ms to
+# begin answering at its new address.  20 ms rather than 2, because
+# this is paid ONCE per device at attach time and the two failures it
+# guards against are a stalled enumeration and a port usbd gives up
+# on -- both of which cost seconds, not milliseconds.
+#
+Addressdelay: con 20;
 Pollms: con 500;
 #
 # HOW MANY TIMES A PORT MAY FAIL TO ATTACH BEFORE IT IS DISABLED.
@@ -312,6 +320,28 @@ portattach(h: ref Hub, p: int): ref Dev
 		return portfail(h, p, nd, "set address");
 	if(devctl(nd, "address") < 0)
 		return portfail(h, p, nd, "address");
+	#
+	# THE SET_ADDRESS RECOVERY INTERVAL, which this code did not have.
+	#
+	# USB 2.0 9.2.6.3: after the status stage of SET_ADDRESS a device
+	# may take up to 2 ms to respond at its new address, and the host
+	# must not talk to it during that time.  usbd went straight from
+	# `devctl address' to reading the device descriptor, so the FIRST
+	# transaction at the new address was issued with no interval at all.
+	#
+	# Why it is suspected here: on the Pi 3B a full-speed device behind
+	# the onboard hub's transaction translator completes SET_ADDRESS and
+	# then stalls the device descriptor, measured 6 attach attempts
+	# running -- exactly 2 successful split transfers each (the SETUP
+	# and its zero-length status stage) and then 4 stalls on the next
+	# SETUP.  The thing that distinguishes the transfer that works from
+	# the one that fails is that it is the first one at the new address.
+	#
+	# The high-speed devices on the same hub survive the omission, which
+	# is consistent rather than contradictory: they are not behind the
+	# TT, so their turnaround is an order of magnitude shorter.
+	#
+	sys->sleep(Addressdelay);
 	# maxpkt of ep0 from the first 8 bytes of the device descriptor;
 	# this kernel only takes "maxpkt" while the data file is closed
 	mp := 512;
@@ -1418,10 +1448,22 @@ newhub(name: string, d: ref Dev): ref Hub
 				h.dev.name, i, sts, portdecode(sts));
 		}
 		#
-		# A hub reporting every port present at this point is what
-		# QEMU does, so the line above is a statement of the hub's
-		# claim and not of what is plugged in.  Said once, here,
-		# rather than per port.
+		# THIS TABLE IS A SNAPSHOT, NOT A CENSUS, and it is measured:
+		# on the Pi 3B ports 4 and 5 both printed "(empty)" here and
+		# then attached high-speed devices seconds later (a Teensy and
+		# a flash drive).  The reading is taken straight after
+		# Fportpower and pwrms, before the hub has finished detecting
+		# what is on each port, so
+		#
+		#	"present" here IS evidence a device is attached;
+		#	"empty" here is NOT evidence that none is.
+		#
+		# QEMU goes the other way and reports every port present and
+		# unreset.  Either way the line states the hub's claim at this
+		# instant and nothing more.  Said once, here, rather than per
+		# port -- and said at all because this table was presented as
+		# a port-by-port control before anyone checked it against what
+		# later enumerated.
 		#
 	}
 	hubs = h :: hubs;

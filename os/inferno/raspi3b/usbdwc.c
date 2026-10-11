@@ -694,6 +694,7 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 	int nyets, nrearm;
 	uint rearm0;
 	uint hcdma, hctsiz;
+	int cmpl;			/* Compsplt as the result arrived; see Result: */
 	vlong chaniot0;
 	Dwcregs *r;
 
@@ -839,6 +840,14 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		 */
 		hcdma = hc->hcdma;
 		hctsiz = hc->hctsiz;
+		/*
+		 * AND THE SPLIT PHASE IS CAPTURED HERE TOO, for the same
+		 * reason the baseline is: `Result:' is reached from two
+		 * places and the diagnostic there must not read a register
+		 * the code has since changed.  See the capture before the
+		 * Compsplt clear below.
+		 */
+		cmpl = hc->hcsplt & Compsplt;
 		if(split && (i & ~(Chhltd|Nak|Ack|Nyet)) != 0 && (i & Chhltd))
 			goto Result;
 		hc->hctsiz = hctsiz & ~Dopng;
@@ -952,7 +961,29 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 			nrearm = 0;
 		/* hc->hcint was already read-and-cleared by the interrupt handler */
 
+		/*
+		 * THE SPLIT PHASE MUST BE READ BEFORE IT IS CLEARED, and
+		 * getting this wrong invalidated a day of reasoning.
+		 *
+		 * The stall diagnostic at Result: used to read
+		 * `hc->hcsplt & Compsplt' to say whether the hub answered a
+		 * start-split or the device answered a complete-split -- but
+		 * the clear below runs FIRST on every normal path, so the bit
+		 * was always zero by then and every such stall was labelled
+		 * "START-split (the HUB answered)".  Only the `goto Result'
+		 * above, which jumps over this clear, could ever report a
+		 * complete-split.
+		 *
+		 * That label was load-bearing: USB 2.0 permits a hub to
+		 * answer a start-split only ACK, NAK or NYET -- never STALL
+		 * -- so "every stall is on a start-split" said the controller
+		 * could not be reporting a handshake off the wire, and sent
+		 * the investigation into channel and controller programming
+		 * state.  The bit it rested on was cleared by this driver two
+		 * statements earlier.
+		 */
 		if(split){
+			cmpl = hc->hcsplt & Compsplt;
 			hc->hcsplt &= ~Compsplt;
 			qunlock(&ctlr->split);
 			poperror();
@@ -1047,7 +1078,7 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 						  len > 0? "DATA": "STATUS",
 						(hc->hcsplt & Spltena) == 0?
 						  "no split":
-						(hc->hcsplt & Compsplt)?
+						cmpl?
 						  "COMPLETE-split (the DEVICE"
 						  " answered)":
 						  "START-split (the HUB"

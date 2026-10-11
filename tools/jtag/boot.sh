@@ -92,16 +92,28 @@ SESS=${SESS-`boardsess`}
 # so, not return a value.
 #
 #
-# No console?  Ask the kernel's own log ring over JTAG instead.
+# No console?  Ask the kernel whether it is RUNNING, over JTAG.
 #
 # The console dies far more often than the board -- the adapter wedges,
 # the session gets killed, another session takes it -- and refusing to
-# boot because of it is refusing to work.  kmesg reads the ring out of
-# RAM over the debugger.  A freshly loaded kernel zeroes its BSS, so the
+# boot because of it is refusing to work.
+#
+# This used to read the log ring and grep it for the build's conf line,
+# on the premise that "a freshly loaded kernel zeroes its BSS, so the
 # ring holds only THIS boot's output and the stamp appearing in it at all
-# is proof, with no before-and-after count needed.  That is a better test
-# than the console one it replaces, which had to count banners in a
-# scrollback full of previous boots.
+# is proof".  THAT PREMISE IS HALF TRUE AND THE HALF THAT FAILS IS
+# FATAL: the ring is 16K and it WRAPS.  This kernel prints its whole
+# FAT/EFS/USB check suite at boot, so by the first read the conf line
+# has already been pushed out -- the tell is the ring's first line
+# starting mid-word.  Four attempts were declared failures and
+# samekernel said SAME immediately afterwards, twice in one session.
+#
+# A banner is the wrong instrument twice over: it is a print, so it
+# competes for a fixed ring with everything else the kernel says; and
+# the question is not "did this kernel say hello" but "is this kernel
+# running now".  So `alive' answers it instead and reads no ring at all
+# -- samekernel compares the board's kerndate with the image's, and
+# m->ticks advancing proves it is executing.  See aliveticks() below.
 #
 VIA=console
 if [ -z "$SESS" ] || ! screen -S "$SESS" -X select . >/dev/null 2>&1; then
@@ -173,24 +185,61 @@ KMESG=`python3 "$ROOT/tools/jtag/ksyms" "$ELF" 2>/dev/null |
 # over.  The board was answering its poller with the new build's stamp
 # at the time.
 #
+#
+# The running kernel's tick count, or 0 if it is not this build and
+# running.  `alive' prints "alive <ticks> (was <ticks>)" on success and
+# "alive but OLD ..." when a maxticks bound is given and exceeded, so the
+# digit test after "alive" distinguishes them; anything else -- dead, a
+# different kernel, no adapter -- is 0.
+#
+# Why ticks and not a yes/no: a JTAG boot of the SAME build cannot be
+# detected by "is this build running", because it already was.  m->ticks
+# lives in BSS and a fresh boot zeroes it, so the count going DOWN is
+# the one signal that distinguishes a new instance from the old one, and
+# it needs no knowledge of HZ.
+#
+aliveticks() {
+	out=`ELF="$ELF" sh "$ROOT/tools/jtag/alive" 2>>"$S/boot.err"`
+	case $out in
+	"alive "[0-9]*)	echo "$out" | awk '{print $2}';;
+	*)		echo 0;;
+	esac
+}
+
 banners() {
 	if [ "$VIA" = kmesg ]; then
 		#
-		# The ring is this boot's only; 0 before, 1 after.  kmesg's
-		# OWN failure is reported rather than swallowed: it exits 1
-		# when the debugger hands back nothing and 2 when what it
-		# hands back reads as an empty ring, and both used to arrive
-		# here as "the board printed no banner", which is the same
-		# answer as a board that did not boot.  Four attempts were
-		# reported that way for a kernel that was running.
+		# THE RING IS 16K AND IT WRAPS, so the boot banner is NOT
+		# still in it, and this is the third way this function has
+		# reported a running kernel as dead.
 		#
-		sh "$ROOT/tools/jtag/kmesg" 400 >"$S/boot.txt" 2>>"$S/boot.err"
-		if [ $? -ne 0 ]; then
-			sed 's/^/boot: /' "$S/boot.err" >&2
-			echo 0
-			return
-		fi
-		LC_ALL=C grep -ac "conf raspi3b ($stamp)" "$S/boot.txt" 2>/dev/null | head -1
+		# The premise it was written on -- "a freshly loaded kernel
+		# zeroes its BSS, so the ring holds only THIS boot's output
+		# and the stamp appearing in it at all is proof" -- is true
+		# about WHOSE output it is and false about HOW MUCH.  This
+		# kernel prints its whole FAT/EFS/USB check suite at boot;
+		# by the first read at twenty seconds `conf raspi3b (stamp)'
+		# has already been pushed out, and the tell is that the ring's
+		# first line starts mid-word ("COUNTS runs" for "GC-COUNTS").
+		# So the count was 0 at every read, all four attempts were
+		# declared failures, and samekernel said SAME immediately
+		# afterwards -- twice in one session, ~10 minutes each.
+		#
+		# A BANNER IS THE WRONG INSTRUMENT.  It is a print, so it
+		# competes with every other print for a fixed ring; and what
+		# is wanted is not "did this kernel say hello" but "is this
+		# kernel running now".  alive answers exactly that and reads
+		# no ring at all: samekernel compares the board's kerndate
+		# with the image's (so it is OUR build), and m->ticks
+		# advancing proves it is EXECUTING -- a freshly loaded image
+		# has kerndate in its data segment whether or not it ever
+		# ran, and a zeroed BSS tick counter that moves cannot be
+		# anything but clockintr.
+		#
+		# It inherits this script's board lock (boardlock.sh), so it
+		# does not fight the adapter.
+		#
+		aliveticks
 		return
 	fi
 	screen -S "$SESS" -X hardcopy -h "$S/boot.txt" 2>/dev/null
@@ -237,11 +286,17 @@ while [ $try -le 4 ]; do
 	# is still a count that has to RISE.  The ring is cleared just
 	# below, so there any occurrence at all is this boot's.
 	#
-	if [ "$VIA" = kmesg ]; then
-		was=0
-	else
-		was=`banners`
-	fi
+	#
+	# The kmesg branch records the OLD instance's tick count here, and
+	# `was=0' is what it used to record -- which made the wait loop's
+	# test "is this build running at all", a question that is already
+	# YES whenever the same build is being re-booted (the common case:
+	# the board is wedged, or this is kinstall's pre-flight).  The load
+	# could then fail silently and the old instance would satisfy the
+	# test.  A tick count makes the test "is a DIFFERENT, YOUNGER
+	# instance running", which is what a boot actually is.
+	#
+	was=`banners`
 	timeout 180 openocd -f "$IFACE" -f "$ROOT/tools/jtag/raspi3b.cfg" \
 		-c init -c "jtagrestart $IMG" -c "mww $nat 0" -c "mdw $nat" \
 		-c resume -c shutdown \
@@ -349,8 +404,15 @@ while [ $try -le 4 ]; do
 		while [ $i -lt 6 ]; do
 			sleep 20
 			now=`banners`
-			if [ "$now" -gt "$was" ]; then
-				echo "boot: build $stamp is running (attempt $try)"
+			#
+			# Alive AND younger than whatever was running before.
+			# `was' is 0 when nothing of this build was running,
+			# in which case being alive at all is the boot.
+			#
+			if [ "$now" -gt 0 ] &&
+			   { [ "$was" -eq 0 ] || [ "$now" -lt "$was" ]; }; then
+				echo "boot: build $stamp is running (attempt $try," \
+					"ticks $now against $was before)"
 				exit 0
 			fi
 			i=`expr $i + 1`

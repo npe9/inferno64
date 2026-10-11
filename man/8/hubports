@@ -59,6 +59,22 @@ It is read-only on purpose.
 .B GET_STATUS
 changes no state, so it is safe to run against a live hub on a board
 whose only recovery is a power cycle.
+.SH "A SNAPSHOT, NOT A CENSUS"
+A hub's answer is what it believes at that instant, and that is not the
+same as what is plugged in. Measured on the Pi 3B:
+.IR usbd (8)
+printed
+.B (empty)
+for ports 4 and 5 at hub\-add and both attached high\-speed devices
+seconds later, because the reading is taken straight after the ports are
+powered and before the hub has finished detecting them. So
+.B present
+is evidence that a device is attached and
+.B empty
+is
+.I not
+evidence that none is. QEMU errs the other way and reports every port
+present and unreset.
 .SH "WHAT IS REAL AND WHAT IS NOT"
 .B "The tool works and has been run; its decoding has not been checked"
 .B "against a hub that reports a fault."
