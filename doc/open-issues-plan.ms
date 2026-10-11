@@ -16587,7 +16587,7 @@ and is reset only on
 so one channel's NYETs spend another channel's retry budget.
 .PP
 .B "What the data no longer supports:"
-"port 2 is electrically bad". A marginal jack \(em bad contact, VBOS sag,
+"port 2 is electrically bad". A marginal jack \(em bad contact, VBUS sag,
 a broken cable \(em loses transactions: it gives
 .CW Xacterr ,
 timeouts, a flapping
