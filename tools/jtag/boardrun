@@ -68,6 +68,33 @@ done
 [ $# -ge 1 ] || { echo "usage: boardrun [-t seconds] 'command line'" >&2; exit 2; }
 
 #
+# REFUSE A COMMAND THAT NAMES A PROGRAM /dis HAS NOT GOT, before the
+# board ever sees it.
+#
+# `ls /n/usb | head' wedged this board.  head is not in dis/, so the
+# pipeline's reader never started, sh waited for a process that never
+# existed, and THE POLLER IS ONE COMMAND DEEP: the ring shows
+# RCMD-BEGIN 4 with no RCMD-END 4 and no RCMD-BEGIN 5 ever after it.
+# Every later boardrun then timed out against a board that was alive and
+# answering JTAG, which reads as a dead board and is a typo.  Recovery is
+# a reboot, because the console on this desk is dead and the poller is
+# the only way in.
+#
+# This is checkable on the host for free: the PRE below binds
+# /n/remote/dis over /dis, so this tree's dis/ is exactly what the board
+# can run.  BOARDRUN_NOCHECK=1 skips it, for a command that names
+# something the check cannot see.
+#
+if [ "${BOARDRUN_NOCHECK:-0}" != 1 ]; then
+	if ! python3 "$HERE/cmdcheck" "$1"; then
+		echo "boardrun: refusing to send it -- a missing program on the" >&2
+		echo "boardrun: right of a '|' blocks the poller until a reboot." >&2
+		echo "boardrun: (BOARDRUN_NOCHECK=1 to override)" >&2
+		exit 2
+	fi
+fi
+
+#
 # ONLY RESET board.cmd IF IT IS STILL THIS RUN'S COMMAND.  The first version
 # reset it unconditionally, and that turned the shared channel into a way for
 # one run to break another: a boardrun killed at second 0 ran its trap at

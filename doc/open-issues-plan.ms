@@ -16905,3 +16905,125 @@ markers in
 remain
 .B "QEMU, root-port, non-split"
 \(em they have never meant anything about this path.
+.NH 2
+A pipeline to a missing program wedges the poller, and boardrun now refuses it
+.PP
+.CW "ls /n/usb | head"
+.B "cost a board cycle."
+.CW head
+is not in this tree's
+.CW dis/ ,
+so the pipeline's reader never started, sh waited for a process that
+never existed, and
+.B "the remote-command poller is ONE COMMAND DEEP."
+The ring shows
+.IP
+.EX
+RCMD-BEGIN 4 ... ls /n/usb | head ...
+(no RCMD-END 4, and no RCMD-BEGIN 5 ever after it)
+.EE
+.PP
+so every later
+.CW boardrun
+timed out against a board that was alive and answering JTAG \(em which
+reads as a dead board and was a typo. The console on this desk is dead,
+so the poller is the only way in and the recovery is a reboot.
+.PP
+.B "It is checkable on the host for free,"
+because
+.CW boardrun
+binds
+.CW /n/remote/dis
+over
+.CW /dis :
+this tree's
+.CW dis/
+is exactly what the board can run.
+.CW tools/jtag/cmdcheck
+takes the first word of each
+.CW ; -,
+.CW | -
+or newline\-separated segment and refuses the command if it names
+something
+.CW dis/
+has not got.
+.CW BOARDRUN_NOCHECK=1
+overrides.
+.PP
+.CW head
+and
+.CW awk
+are the two that catch people:
+.CW tail ,
+.CW wc ,
+.CW sort ,
+.CW grep
+and
+.CW sed
+are all present, so the habit mostly works and then does not.
+.PP
+.B "Two limits, both deliberate and both found by the self-test."
+.CW {
+and
+.CW }
+are
+.I not
+treated as command boundaries, because splitting on them made
+.CW "awk '{print}'"
+yield
+.CW print
+as a command word \(em a false refusal \(em and Inferno sh's quoting is
+too irregular to strip quoted spans first. So a missing program inside a
+.CW "time {...}"
+block is not caught; that is the right trade, since such a command
+merely FAILS while a missing program on the right of a
+.CW |
+blocks the poller for ever. The self\-test's sixteen cases include ten
+commands actually run against this board, as the control \(em a checker
+that resolved nothing would refuse all of them, and a checker that
+resolved everything would look exactly like a clean run, so it also
+asserts that a known\-present and a known\-absent program classify
+differently before grading.
+.PP
+.B "And it confirmed boot.sh's new tick test on the way:"
+recovering the board re\-booted the SAME build and
+.CW boot.sh
+reported
+.CW "attempt 1, ticks 2508 against 475482 before"
+\(em the count going DOWN is what identified the new instance, which the
+old yes/no test could not have seen at all.
+.NH 2
+USB bulk read: a post-fix baseline, and NO regression claim
+.PP
+760502 bytes from the USB flash drive through
+.CW chanio 's
+bulk IN path,
+.CW "dd -bs 8192" ,
+five repeats, real\-time column:
+.IP
+.EX
+1.33  1.35  1.37  seconds   (555-572 KB/s)
+.EE
+.PP
+.B "This is NOT a before-and-after."
+No pre\-fix single\-processor baseline exists, so it cannot say whether
+the two
+.CW ilock
+regions the fix added \(em one per transfer, one per
+.I packet
+\(em cost anything. It is recorded as the figure a later change can be
+compared against.
+.PP
+What can be said without a baseline: the control path is unchanged
+across the fix \(em
+.CW ETHERUSB-SETUP
+was 2430 ms before and 2370\-2390 ms after, over an identical 368
+control transfers \(em and the added lock is two uncontended
+.CW ilock s
+against a measured ~15 us per 512\-byte packet, so an effect would have
+to be orders of magnitude larger than an uncontended lock to be
+visible. That is an argument, not a measurement, and is labelled as one.
+.PP
+.B "Single processor, as everything since 10 October."
+A card boot is what measures this properly, and it would also exercise
+the concurrency the fix is about.

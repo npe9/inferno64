@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+#
+# cmdcheck -- refuse a board command that names a program /dis has not got
+#
+#	python3 tools/jtag/cmdcheck '<command line>'
+#	python3 tools/jtag/cmdcheck -t		# self-test
+#
+# exit 0 = every command word resolves; exit 1 = one does not (named on
+# stderr); exit 2 = usage.
+#
+# WHY THIS EXISTS, AND IT IS NOT TIDINESS.
+#
+# `ls /n/usb | head' wedged the board.  head is not in this tree's dis/,
+# so the pipeline's reader never started, sh waited for a process that
+# never existed, and the remote-command poller -- which is ONE COMMAND
+# DEEP -- never reached RCMD-END.  The ring shows
+#
+#	RCMD-BEGIN 4 ... ls /n/usb | head ...
+#	(no RCMD-END 4, and no RCMD-BEGIN 5 ever)
+#
+# so every later boardrun timed out against a board that was alive and
+# answering JTAG.  The console on this desk is dead, so the poller is the
+# only way to drive the board: a typo in a command name costs a reboot.
+#
+# The check is possible at all because boardrun binds /n/remote/dis over
+# /dis, so the HOST's dis/ is exactly what the board can run.
+#
+# head and awk are the two that catch people (tail, wc, sort, grep and
+# sed are all present, so the habit mostly works and then does not).
+#
+import os
+import re
+import sys
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+DIS = os.path.join(ROOT, "dis")
+
+#
+# sh builtins and keywords, which are not files in dis/.  `load' matters
+# most: `load std' is how every boardrun command starts.
+#
+BUILTIN = {
+    "load", "echo", "cd", "exit", "eval", "run", "builtin", "and", "or",
+    "apply", "raise", "rescue", "status", "whatis", "pctl", "if", "while",
+    "for", "fn", "no", "nl", "~", "!", "unload", "module", "bind", "mount",
+    "unmount", "getlines", "subfn",
+}
+
+#
+# Where a command word can begin: the start of the line, and after one of
+# these.  A word in the middle of a line is an argument and is not checked
+# -- the point is to catch the program NAME, and checking arguments would
+# refuse every filename.
+#
+# `{' AND `}' ARE DELIBERATELY NOT BOUNDARIES, and the self-test is what
+# forced that.  Splitting on them made `awk '{print}'' yield `print' as a
+# command word -- a false refusal -- and Inferno sh's quoting is too
+# irregular to strip quoted spans first (a quoted word there carries a
+# LEADING quote and often no closer, so there is nothing reliable to
+# match).  The cost is that a missing program inside a `time {...}' or
+# `and {...}' block is not caught; that is the right trade, because such
+# a command merely FAILS, while a missing program on the right of a `|'
+# leaves a pipeline with no reader and blocks the poller for ever.  The
+# pipe is the case this exists for.
+#
+SPLIT = re.compile(r"(?:^|[;|&]|\n)")
+
+
+def words(cmd):
+    out = []
+    for seg in SPLIT.split(cmd):
+        seg = seg.strip()
+        if not seg:
+            continue
+        tok = seg.split()[0]
+        #
+        # Strip a leading quote: `echo 'BR'^'-...' is written with a
+        # LEADING quote and no closer in Inferno sh, so a quoted word
+        # arrives here with one.
+        #
+        tok = tok.lstrip("'\"")
+        if not tok:
+            continue
+        out.append(tok)
+    return out
+
+
+def skip(tok):
+    if tok.startswith(("-", "$", "#", "/", ".")):
+        return True            # flag, variable, comment, path, redirect
+    if "=" in tok.split("/")[0]:
+        return True            # K=/n/remote/... assignment
+    if tok in BUILTIN:
+        return True
+    if re.fullmatch(r"[0-9]+", tok):
+        return True
+    return False
+
+
+def resolves(tok):
+    #
+    # usb/hubports -> dis/usb/hubports.dis, and a bare name may be either
+    # dis/<n>.dis or a directory of its own (dis/wm, dis/ip).
+    #
+    if os.path.exists(os.path.join(DIS, tok + ".dis")):
+        return True
+    if os.path.isdir(os.path.join(DIS, tok)):
+        return True
+    return False
+
+
+def check(cmd):
+    bad = [t for t in words(cmd) if not skip(t) and not resolves(t)]
+    return bad
+
+
+SELFTEST = [
+    # (command, expected-bad)  -- the PASSES are the control: every one of
+    # these is a command actually run against this board tonight.
+    ("load std; echo BR-IDLE-1", []),
+    ("ls /dev/usb; echo ---; cat /dev/usb/ctl", []),
+    ("usb/hubports ep2.0", []),
+    ("ps", []),
+    ("cat /dev/usb/ctl", []),
+    ("echo kill > /prog/197/ctl; sleep 1; usb/hubports ep2.0", []),
+    ("load std; K=/n/remote/os/inferno/raspi3b/kernel8.img; cmp $K $K", []),
+    ("load std; echo S0; cat /net.alt/ether/stats; echo STATS-END", []),
+    ("tail /dev/usb/ctl", []),
+    ("grep usb /dev/usb/ctl", []),
+    # and the one that wedged the board
+    ("ls /n/usb | head", ["head"]),
+    ("ls /n/usb | awk '{print}'", ["awk"]),
+    # a block's contents are NOT checked -- deliberate, see SPLIT
+    ("load std; time {dd -if /n/usb/x -of /dev/null}", []),
+    ("load std; time {notinhere -x}", []),
+    ("ls /n/usb; echo ---; ls /chan | grep usb", []),
+    ("notaprogram -x", ["notaprogram"]),
+]
+
+
+def selftest():
+    #
+    # LIVENESS FIRST: a checker that resolves nothing would report every
+    # command as bad, and a checker that resolves everything would report
+    # none -- and the second looks exactly like a clean run.  So require
+    # that dis/ was actually found and that a known-present and a
+    # known-absent program classify differently, before grading anything.
+    #
+    if not os.path.isdir(DIS):
+        print("cmdcheck: self-test CANNOT RUN: no %s" % DIS, file=sys.stderr)
+        return 2
+    if not resolves("ls"):
+        print("cmdcheck: self-test CANNOT RUN: dis/ls.dis not found, so "
+              "every command would be refused", file=sys.stderr)
+        return 2
+    if resolves("head"):
+        print("cmdcheck: self-test CANNOT RUN: dis/head.dis EXISTS, so the "
+              "negative case cannot be tested here", file=sys.stderr)
+        return 2
+
+    fail = 0
+    for cmd, want in SELFTEST:
+        got = check(cmd)
+        if got != want:
+            print("cmdcheck: FAIL %r: wanted %r got %r" % (cmd, want, got),
+                  file=sys.stderr)
+            fail += 1
+    if fail:
+        print("cmdcheck: self-test %d of %d FAILED"
+              % (fail, len(SELFTEST)), file=sys.stderr)
+        return 1
+    print("cmdcheck: self-test ok -- %d cases, dis/ at %s"
+          % (len(SELFTEST), DIS))
+    return 0
+
+
+def main():
+    if len(sys.argv) == 2 and sys.argv[1] == "-t":
+        return selftest()
+    if len(sys.argv) != 2:
+        print("usage: cmdcheck '<command line>'   (or -t)", file=sys.stderr)
+        return 2
+    bad = check(sys.argv[1])
+    if not bad:
+        return 0
+    for t in bad:
+        print("cmdcheck: %r is not in %s" % (t, DIS), file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
