@@ -17295,3 +17295,111 @@ and neither is written.
 .CW disracepid
 \(em so the 2 hits are a floor and the true count is of that order, not
 orders larger.
+.NH 2
+FIXED: /prog no longer hands out a Prog whose close window is open
+.LP
+.P1
+/prog touched a closing pid 5, REFUSED by the guard 5
+.P2
+Five detections, five refusals, equal \(em which is the check the
+counters were added to make. Each of those reads would otherwise have
+dereferenced
+.CW o->pgrp->progmode
+or
+.CW o->user
+on a
+.CW Prog
+whose
+.CW pgrp ,
+.CW fgrp ,
+.CW egrp
+and
+.CW sigs
+were being freed underneath it.
+.PP
+.B "The defect is upstream and is in emu too."
+.CW delprog()
+releases the interpreter token to call the four
+.CW close*()
+functions, and the
+.CW Prog
+stays in the pid hash and on the scheduler list until after that \(em so
+.CW /prog
+can find it mid\-teardown. The
+.CW release()
+is not the bug: those calls can sleep, which is why it is there.
+.PP
+.B "The fix"
+is a per\-Prog flag,
+.CW "Pclosing = 1<<5" ,
+set under the token immediately before
+.CW release()
+and never cleared, plus a devprog\-local
+.CW proglive()
+that returns nil for a
+.CW Prog
+carrying it.
+.PP
+.B "Why a plain flag test is sufficient and no lock is needed:"
+a reader holds the token while it tests, and
+.CW delprog
+cannot open the window without acquiring it, so "clear" stays true for as
+long as the reader holds the token. The flag is never cleared, so there
+is no ABA. And it is
+.I not
+.CW disracepid ,
+which is one slot: 539 of 21713 windows overlapped in the verifying run,
+so a single\-slot test would miss about one in forty.
+.PP
+.B "TWELVE READER SITES, NOT THREE."
+A first pass pattern\-matched four and an assertion caught it; the real
+count is eleven
+.CW progpid(PID(c->qid))
+sites plus a by\-name lookup in the directory
+.CW gen .
+Folding the detector into
+.CW proglive()
+puts the guard in one place rather than twelve.
+.CW closedbgctl 's
+raw
+.CW progpid()
+is left alone on purpose \(em it touches
+.CW o->debug ,
+which the window does not free, and nilling it for a live debugged
+.CW Prog
+would skip real cleanup.
+.PP
+.B "THE RUN BEFORE THE VERIFYING ONE PROVED NOTHING, and it is reported for that reason."
+Three repeats gave 8069 windows, 0 detections and
+.B "0 refusals"
+\(em which is not evidence the fix works, because a guard that has not
+been seen to fire is a guard and not evidence. It took five repeats and
+a one\-second scan interval to make it fire. The same arm on the
+unfixed kernel had produced 2 hits in 11368 windows, so the rate is
+roughly one in four thousand windows and a short arm is simply too
+short.
+.PP
+.B "Verified:"
+single\-processor JTAG boot, five
+.CW tests/efs-fault
+repeats with a concurrent
+.CW ps
+loop \(em 21713 windows, 539 overlaps, 5 detections, 5 refusals,
+.CW "EFS-FAULT-OK"
+five times, no panic. Gates green on three configurations, one of them a
+non\-Pi path through this shared file:
+.CW raspi3b
+44 markers,
+.CW raspi3b-usb
+52,
+.CW virtarm64
+45.
+.CW emu
+compiles with the same change.
+.PP
+.B "What is NOT claimed:"
+nothing has been seen to hit this window under
+.CW emu ,
+which is a statement about what has been run rather than about the
+window; and the whole verification is single\-processor, so the card boot
+still owes this item a four\-core run.
