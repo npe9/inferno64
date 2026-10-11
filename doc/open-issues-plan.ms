@@ -17403,3 +17403,121 @@ nothing has been seen to hit this window under
 which is a statement about what has been run rather than about the
 window; and the whole verification is single\-processor, so the card boot
 still owes this item a four\-core run.
+.NH 2
+AUDIT: the other release() sites, and why they are not the same defect
+.LP
+.CW delprog 's
+window was found by a diagnostic, not by looking \(em so the obvious
+question is whether the same shape (drop the interpreter token, leave a
+.CW Prog
+reachable, have somebody find it) exists elsewhere. Every
+.CW release()
+in
+.CW os/inferno/port/dis.c :
+.IP
+.EX
+427   delprog's close window        THE DEFECT, now guarded
+533   the user-rename walk          holds the token for the whole walk
+1151  consintrproc, no prog         error/empty paths
+1158  consintrproc, no group
+1173  consintrproc, done
+1192  killgrp
+1208  killgrp
+1313  cblock                        the standard block-and-release
+.EE
+.PP
+.B "533 is safe but for a reason worth stating:"
+it walks
+.CW isched.head
+and touches
+.CW o->user
+on every
+.CW Prog ,
+.I including
+one whose close window is open \(em because holding the token does not
+prevent that, a
+.CW delprog
+that has already released is inside its window while this runs. It is
+safe because
+.CW o->user
+is not one of the four things the window frees;
+.CW closepgrp ,
+.CW closefgrp ,
+.CW closeegrp
+and
+.CW closesigs
+take the groups, not the
+.CW Osenv
+and not the user string.
+.PP
+.B "consintrproc and killgrp DO re-look-up a Prog by pid and act on it,"
+which is the same shape:
+.P1
+pids[npid++] = f->pid;      /* take the pids first */
+...
+f = progpid(pids[i]);       /* then walk them */
+if(f != nil && f != currun())
+        killprog(f, "interrupted");
+.P2
+and
+.CW progpid()
+can hand back a
+.CW Pclosing
+.CW Prog .
+.B "Two things make it harmless today, and both are worth knowing because"
+.B "neither is a guard:"
+.IP \(bu
+.CW killprog()
+switches on
+.CW p->state
+and has
+.CW "case Pexiting: return 0" .
+The site at
+.CW dis.c:761
+sets
+.CW "p->state = Pexiting"
+on the line before
+.CW delprog() ,
+so a
+.CW Prog
+in its close window is in
+.CW Pexiting
+and
+.CW killprog
+declines it. Note what the
+.I default
+arm does \(em
+.CW "panic(\"killprog - bad state\")"
+\(em so this is load-bearing and not merely tidy.
+.IP \(bu
+the other
+.CW delprog
+call site,
+.CW dis.c:1698 ,
+is a
+.CW Prog
+handling its own exception, so it is the
+.I current
+one, and both loops skip
+.CW currun() .
+.PP
+.B "That second reason is per-CONTEXT and so it is npctx-dependent."
+With two executors,
+.CW currun()
+is one context's current
+.CW Prog
+and the other context's is not skipped \(em so the skip stops being a
+reason while the
+.CW Pexiting
+check still holds. That is the multicore branch's territory and the same
+file already records group\-list tearing measured there; it is recorded
+here as a dependency rather than fixed, because nothing on this board
+can exercise it
+.CW ( npctx
+is 1).
+.PP
+.B "So: one defect, now fixed, and no sibling instances that can be demonstrated."
+No speculative guard was added to
+.CW killprog
+or to the rename walk. A prescribed change that cannot be shown to be
+needed is the thing H3 in this file exists to refuse.
