@@ -16312,3 +16312,53 @@ Written down because
 .CW QEMU=
 has to be set by hand and the wrong one is the first match under
 .CW ~/src .
+.NH 2
+What the next boot answers, and with no device moved
+.PP
+.CW usbd 's
+per\-port table at hub\-add turns out to settle the port\-2 confound by
+itself. On real hardware it reports, for every port, whether a device is
+present and at what speed:
+.IP
+.EX
+usbd: ep2.0: port 2 status 0x10101 (present DISABLED
+  full-speed (needs split) change 0x1)
+usbd: ep2.0: port 6 status 0x100 (empty)
+.EE
+.IP \(bu
+port 2 reporting
+.B "present FULL-SPEED"
+with the serial adapter in it means the hub sees the device and the
+fault is
+.B "downstream of the hub;"
+.IP \(bu
+port 2 reporting
+.B empty
+with a device plugged in means
+.B "the port."
+.PP
+Either way the stall lines now carry
+.CW "splits ok N (M with data)" ,
+so the same boot also says whether the split path has ever carried a
+transaction end to end \(em which is the question that could not be
+answered from thirty captured failures.
+.PP
+.B "So one power cycle with the new card settles both,"
+and moving the device to another jack becomes a confirmation rather than
+the experiment.
+.PP
+.B "Built and gated:"
+.CW KERNDATE
+1791679499,
+.CW raspi3b
+44 markers and
+.CW raspi3b-usb
+52 markers, both green, with the new
+.CW usbd
+confirmed embedded in
+.CW iraspi3b
+by finding its new strings in the image rather than by assuming
+.CW kbuild
+picked the
+.CW .dis
+up.
