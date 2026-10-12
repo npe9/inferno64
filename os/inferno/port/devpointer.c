@@ -150,8 +150,22 @@ pointerwalk(Chan *c, Chan *nc, char **name, s32 nname)
 	Walkqid *wq;
 
 	wq = devwalk(c, nc, name, nname, pointertab, nelem(pointertab), devgen);
-	if(wq != nil && wq->clone != c && wq->clone != nil && (u64)c->qid.path == Qpointer)
-		incref(&mouse.ref);	/* can this happen? */
+	/*
+	 * NO incref HERE, and the comment that used to sit on it asked
+	 * "can this happen?" -- which nobody had answered.
+	 *
+	 * It can, and when it did the reference leaked, because nothing
+	 * could ever balance it: devclone() PANICS on a chan with COPEN
+	 * set, so a clone is always of an unopened chan, and
+	 * pointerclose() returns early on exactly that -- `if((c->flag &
+	 * COPEN) == 0) return'.  So the increment had no matching
+	 * decrement by construction.
+	 *
+	 * And it is not needed.  The single-reader reference belongs to
+	 * the OPEN, which is where it is taken and where it is put back.
+	 * A walk resolves a name; it grants nothing to release.
+	 */
+	USED(c);
 	return wq;
 }
 
@@ -177,6 +191,30 @@ pointeropen(Chan* c, u32 omode)
 		if(!canqlock(&mouse.q))
 			error(Einuse);
 		if(incref(&mouse.ref) != 1){
+			/*
+			 * PUT IT BACK.  This path used to increment and then
+			 * error without decrementing, so EVERY REFUSED OPEN
+			 * RAISED THE COUNT PERMANENTLY and the single reader
+			 * slot was poisoned for the life of the boot -- with
+			 * each further attempt making it worse, because each
+			 * one incremented again on its way to the
+			 * same refusal.
+			 *
+			 * Found on a Pi 3B: /dev/pointer answered `device or
+			 * object already in use' with NO process holding it
+			 * for reading.  Every fd on it in /prog/<pid>/fd was
+			 * `w' -- usbd's injecting writer, which never counted
+			 * -- and ps showed nothing that could be the reader.
+			 * The reference had outlived every process that could
+			 * own it, which is only possible if it was never
+			 * owned.
+			 *
+			 * The trigger was two readers colliding once.  After
+			 * that a mouse could enumerate, deliver reports and
+			 * have them decoded, and no consumer -- wm included --
+			 * could ever open the queue again.
+			 */
+			decref(&mouse.ref);
 			qunlock(&mouse.q);
 			error(Einuse);
 		}

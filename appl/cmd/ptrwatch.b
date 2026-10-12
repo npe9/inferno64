@@ -87,7 +87,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	#
 	evc := chan of string;
 	tick := chan of int;
-	spawn reader(fd, evc);
+	pidc := chan of int;
+	spawn reader(fd, evc, pidc);
+	rpid := <-pidc;
 	spawn timer(secs, tick);
 
 	n := 0;
@@ -103,6 +105,7 @@ init(nil: ref Draw->Context, argv: list of string)
 				# mouse that never moved.
 				#
 				sys->print("PTRWATCH-READFAIL after %d event(s)\n", n);
+				kill(rpid);
 				return;
 			}
 			n++;
@@ -118,6 +121,30 @@ init(nil: ref Draw->Context, argv: list of string)
 	# drawink(1) made: a line that cannot be told from a line printed
 	# by a test that checked nothing.
 	#
+	#
+	# KILL THE READER BEFORE RETURNING, and this was missing.
+	#
+	# reader() blocks in `evc <-= ...' once the loop above has stopped
+	# receiving, so it survives this process -- and it still holds
+	# /dev/pointer, which allows ONE reader.  So the first run of this
+	# command took the slot for the life of the boot and every run
+	# after it, and every other consumer including wm, got `device or
+	# object already in use'.
+	#
+	# Found on the board: `ps' showed
+	#
+	#	375  1  inferno  0:00.0  send  0K Ptrwatch
+	#
+	# -- a reader from an earlier run, blocked in send, hours later.
+	# The same shape as the two fd-group leaks in the board's own
+	# mousecheck and kbdcheck, which were fixed before this was
+	# written, so there was no excuse.
+	#
+	# Killed by pid through /prog, which is the idiom those two use.
+	# An error is ignored on purpose: if the reader has already gone
+	# the write fails and that is the outcome wanted.
+	#
+	kill(rpid);
 	if(n > 0)
 		sys->print("PTRWATCH-OK %d event(s) in %d s from /dev/pointer\n",
 			n, secs);
@@ -127,9 +154,16 @@ init(nil: ref Draw->Context, argv: list of string)
 			+ " moved it\n", secs);
 }
 
-reader(fd: ref Sys->FD, evc: chan of string)
+reader(fd: ref Sys->FD, evc: chan of string, pidc: chan of int)
 {
 	buf := array[128] of byte;
+
+	#
+	# Its own pid first, so init() can kill it.  A spawned process
+	# cannot be found by name -- several may exist -- and this is the
+	# idiom raspi3binit.b's mousereadproc uses for the same reason.
+	#
+	pidc <-= sys->pctl(0, nil);
 	for(;;){
 		n := sys->read(fd, buf, len buf);
 		if(n <= 0){
@@ -144,6 +178,13 @@ timer(secs: int, tick: chan of int)
 {
 	sys->sleep(secs * 1000);
 	tick <-= 1;
+}
+
+kill(pid: int)
+{
+	fd := sys->open("/prog/" + string pid + "/ctl", Sys->OWRITE);
+	if(fd != nil)
+		sys->write(fd, array of byte "kill", 4);
 }
 
 usage()
