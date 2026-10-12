@@ -6,6 +6,7 @@
 #	sh tools/jtag/splittrace -e 5.1			# one endpoint
 #	sh tools/jtag/splittrace -r			# the ring only
 #	sh tools/jtag/splittrace -c			# the control only
+#	sh tools/jtag/splittrace -w			# the wait only
 #	sh tools/jtag/splittrace -n 80			# last 80 ring entries
 #
 # WHY THIS EXISTS.  doc/usb-split-plan.ms, Phase 1.  Eight changes to
@@ -33,6 +34,31 @@
 #		without anyone checking what a working split looks like
 #		on this driver.
 #
+#   splitev1	64, fills ONCE, takes only PERIODIC events that are
+#		neither Chhltd|Nak nor Chhltd|Ack.  THE WAIT.
+#
+#		THE RING CANNOT ANSWER THE QUESTION THAT MATTERS, which
+#		is why this exists.  512 entries at five records a poll
+#		and a 10 ms interval is one second of history, and a
+#		JTAG read takes longer than that -- so reading the ring
+#		after somebody moves the mouse shows the mouse idle
+#		again.  The first read off this board was 20983 records,
+#		100% Chhltd|Nak on ep5.1, with nobody touching it, and
+#		THAT IS WHAT A WORKING HOST POLLING AN IDLE INTERRUPT
+#		ENDPOINT LOOKS LIKE.  A boot mouse that is not moving
+#		NAKs every poll; Linux's dwc2 restarts the start-split
+#		on exactly that, as this driver does.
+#
+#		So this array waits.  It needs no coordination with
+#		anybody and keeps the first 64 interesting periodic
+#		events whenever they happen.  IT HAS A PHYSICAL
+#		DEPENDENCY: somebody has to move the mouse at some point
+#		after the boot.  Until that happens an empty splitev1
+#		means "nothing interesting yet", NOT "the device is
+#		silent", and periodicpoll/periodicnak are printed as the
+#		denominator so the difference is visible rather than
+#		assumed.
+#
 # NO BEHAVIOUR CHANGE IN THE DRIVER.  splitlog() stores registers under
 # its own lock and formats nothing.  If installing this kernel changes
 # whether devices enumerate, the trace is not an instrument and the
@@ -55,13 +81,15 @@ ADAPTER=${ADAPTER:-interface/ftdi/olimex-arm-usb-tiny-h.cfg}
 EPFILT=
 WANTRING=1
 WANTCTL=1
+WANTWAIT=1
 NLAST=0
 while [ $# -gt 0 ]; do
 	case "$1" in
 	-e)	EPFILT=$2; shift 2;;
 	-n)	NLAST=$2; shift 2;;
-	-r)	WANTCTL=0; shift;;
-	-c)	WANTRING=0; shift;;
+	-r)	WANTCTL=0; WANTWAIT=0; shift;;
+	-c)	WANTRING=0; WANTWAIT=0; shift;;
+	-w)	WANTRING=0; WANTCTL=0; shift;;
 	-h|--help)
 		sed -n '2,46p' "$0" | sed 's/^#//;s/^ //'
 		exit 0;;
@@ -84,9 +112,16 @@ A_RING=`sym splitev`
 A_NRING=`sym nsplitev`
 A_CTL=`sym splitev0`
 A_NCTL=`sym nsplitev0`
+A_WAIT=`sym splitev1`
+A_NWAIT=`sym nsplitev1`
+A_PPOLL=`sym periodicpoll`
+A_PNAK=`sym periodicnak`
+A_PNYET=`sym periodicnyet`
+A_PDATA=`sym periodicdata`
 A_LOST=`sym splitevlost`
 
-for v in A_RING A_NRING A_CTL A_NCTL; do
+for v in A_RING A_NRING A_CTL A_NCTL A_WAIT A_NWAIT A_PPOLL A_PNAK \
+	A_PNYET A_PDATA; do
 	eval a=\$$v
 	if [ -z "$a" ]; then
 		echo "splittrace: $KERNEL has no $v symbol." >&2
@@ -110,6 +145,7 @@ done
 ESZ=32
 NRINGMAX=512
 NCTLMAX=256
+NWAITMAX=64
 
 #
 # What the image says the stamp should be, read at kerndate's address.
@@ -129,7 +165,8 @@ fi
 TMP=${TMPDIR:-/tmp}/jtag-splittrace.$$
 RINGBIN=$TMP.ring
 CTLBIN=$TMP.ctl
-trap 'rm -f "$TMP" "$RINGBIN" "$CTLBIN"' 0 1 2 15
+WAITBIN=$TMP.wait
+trap 'rm -f "$TMP" "$RINGBIN" "$CTLBIN" "$WAITBIN"' 0 1 2 15
 
 #
 # dump_image for the arrays, mdw for the three counters.  16KB and 8KB
@@ -141,9 +178,15 @@ trap 'rm -f "$TMP" "$RINGBIN" "$CTLBIN"' 0 1 2 15
 	-c "echo \"ST-STAMP\"; mdw ${KDADDR:-0} 1" \
 	-c "echo \"ST-NRING\"; mdw $A_NRING 1" \
 	-c "echo \"ST-NCTL\"; mdw $A_NCTL 1" \
+	-c "echo \"ST-NWAIT\"; mdw $A_NWAIT 1" \
+	-c "echo \"ST-PPOLL\"; mdw $A_PPOLL 1" \
+	-c "echo \"ST-PNAK\"; mdw $A_PNAK 1" \
+	-c "echo \"ST-PNYET\"; mdw $A_PNYET 1" \
+	-c "echo \"ST-PDATA\"; mdw $A_PDATA 1" \
 	-c "echo \"ST-LOST\"; mdw ${A_LOST:-0} 1" \
 	-c "dump_image $RINGBIN $A_RING `expr $NRINGMAX \* $ESZ`" \
 	-c "dump_image $CTLBIN $A_CTL `expr $NCTLMAX \* $ESZ`" \
+	-c "dump_image $WAITBIN $A_WAIT `expr $NWAITMAX \* $ESZ`" \
 	-c "resume; exit" ) >"$TMP" 2>&1
 
 if ! grep -aq ST-NRING "$TMP"; then
@@ -176,7 +219,7 @@ if [ -n "$WANT" ] && [ -n "$stamp" ]; then
 	echo "splittrace: kernel matches the board (stamp $gotd)"
 fi
 
-if [ ! -s "$RINGBIN" ] || [ ! -s "$CTLBIN" ]; then
+if [ ! -s "$RINGBIN" ] || [ ! -s "$CTLBIN" ] || [ ! -s "$WAITBIN" ]; then
 	echo "splittrace: dump_image produced nothing" >&2
 	grep -a 'Error\|error' "$TMP" | head -3 >&2
 	exit 1
@@ -184,10 +227,17 @@ fi
 
 NRING=`dec \`val ST-NRING\``
 NCTL=`dec \`val ST-NCTL\``
+NWAIT=`dec \`val ST-NWAIT\``
+PPOLL=`dec \`val ST-PPOLL\``
+PNAK=`dec \`val ST-PNAK\``
+PNYET=`dec \`val ST-PNYET\``
+PDATA=`dec \`val ST-PDATA\``
 LOST=`dec \`val ST-LOST\``
 
 exec python3 - "$RINGBIN" "$CTLBIN" "$NRING" "$NCTL" "$LOST" \
-	"$EPFILT" "$WANTRING" "$WANTCTL" "$NLAST" "$ESZ" <<'DECODER'
+	"$EPFILT" "$WANTRING" "$WANTCTL" "$NLAST" "$ESZ" \
+	"$WAITBIN" "$NWAIT" "$WANTWAIT" "$PPOLL" "$PNAK" \
+	"$PNYET" "$PDATA" <<'DECODER'
 import struct, sys
 
 ringf, ctlf = sys.argv[1], sys.argv[2]
@@ -196,6 +246,11 @@ epfilt = sys.argv[6]
 wantring, wantctl = sys.argv[7] == "1", sys.argv[8] == "1"
 nlast = int(sys.argv[9])
 esz = int(sys.argv[10])
+waitf = sys.argv[11]
+nwait = int(sys.argv[12])
+wantwait = sys.argv[13] == "1"
+ppoll, pnak = int(sys.argv[14]), int(sys.argv[15])
+pnyet, pdata = int(sys.argv[16]), int(sys.argv[17])
 
 FMT = "<6I2H4x"
 assert struct.calcsize(FMT) == esz, (struct.calcsize(FMT), esz)
@@ -299,7 +354,26 @@ def show(title, rs, note):
 
 
 print("splittrace: ring wrote %d records (cap 512, %d overwritten); "
-      "control holds %d of 256" % (nring, lost, nctl))
+      "control holds %d of 256; wait holds %d of 64"
+      % (nring, lost, nctl, nwait))
+#
+# THE PERIODIC LINE, and pdata is the number the whole exercise turns
+# on: complete-splits that carried Xfercomp, i.e. the endpoint actually
+# handing back a report.  It does not depend on the wait array having
+# room, which the first version's did -- that filter admitted NYETs and
+# filled 64 entries in seconds.
+#
+print("splittrace: periodic ep: %d start-splits armed; complete-splits "
+      "answered NAK %d, NYET %d, DATA %d"
+      % (ppoll, pnak, pnyet, pdata))
+if ppoll and pdata == 0:
+    print("splittrace:   DATA 0 -- this endpoint has never moved a byte"
+          " since boot.")
+elif pdata:
+    print("splittrace:   DATA %d -- the split path DOES deliver reports"
+          " on this endpoint;" % pdata)
+    print("splittrace:   anything still wrong is downstream of the"
+          " controller.")
 if nring == 0:
     print("splittrace: NOTHING WAS RECORDED.  Either no split transfer has"
           " run since boot -- no device behind the hub -- or splitlog is"
@@ -310,6 +384,46 @@ if nctl == 0 and nring > 0:
           " no LOW-SPEED CONTROL split has run, so the only low-speed"
           " device never enumerated and there is nothing to compare the"
           " failure against.")
+
+#
+# THE WAIT, FIRST, because whether it is empty changes what every other
+# section means.  An empty splitev1 beside a large periodicnak is an
+# endpoint that is being polled correctly and answering "nothing" --
+# which is an IDLE MOUSE, not a broken split path.  Saying so here, in
+# the tool, is the difference between a measurement and the reading
+# that was written down from eight capped prints of an earlier boot.
+#
+if wantwait:
+    show("WAIT: periodic events that are neither an idle NAK nor an "
+         "accepted start-split, first %d" % min(nwait, 64),
+         load(waitf, nwait, 64, False),
+         "data, a NYET, or an error on an interrupt endpoint -- kept "
+         "until reboot")
+    if nwait == 0:
+        if ppoll == 0:
+            print("   NO PERIODIC SPLIT HAS BEEN ARMED AT ALL.  No"
+                  " interrupt endpoint behind the hub, or usbd never"
+                  " attached a driver to one.")
+        else:
+            print("   EMPTY, with %d start-splits armed and %d NAKs." % (
+                ppoll, pnak))
+            print("   That is a host polling an endpoint that answers"
+                  " `nothing', which is")
+            print("   WHAT AN IDLE MOUSE LOOKS LIKE.  It is not evidence"
+                  " of a broken split")
+            print("   path.  THE EXPERIMENT NEEDS THE MOUSE MOVED at"
+                  " some point after this")
+            print("   boot; this array waits indefinitely, so no timing"
+                  " is needed -- move it")
+            print("   and read again.")
+    else:
+        print("   NON-EMPTY: the periodic endpoint has answered"
+              " something other than NAK")
+        print("   %d time(s) in %d polls.  Now the split path CAN be"
+              " judged: read the" % (nwait, ppoll))
+        print("   ring for the sequence around it and see whether the"
+              " bytes reached the")
+        print("   buffer (dma advancing) or stopped at the controller.")
 
 if wantctl:
     show("CONTROL: low-speed control splits, first %d" % min(nctl, 256),

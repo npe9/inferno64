@@ -247,7 +247,277 @@ the table is written and every row cites a file and function. A row that
 cannot be sourced is marked unknown rather than guessed \(em the
 guessing is what produced seven reverts.
 .NH 1
-Phase 1.  A trace that can show a sequence \(em board, no behaviour change
+PHASE 1 IS DONE, and the first thing it measured was my own reading
+.LP
+Committed: the trace in
+.CW os/inferno/raspi3b/usbdwc.c ,
+the reader
+.CW tools/jtag/splittrace ,
+and
+.CW tests/splittrace.sh
+in
+.CW tests/toolchain .
+Three arrays of 32\-byte records in BSS, written under their own lock,
+no formatting in the measured path. Read off the board as build
+1791764046 with all five devices enumerating, so the trace is a no\-op
+\(em verified, not assumed.
+.PP
+.B "THE SHAPE BELOW WAS BUILT AS WRITTEN, with one addition that turned
+.B "out to matter more than the ring."
+The plan asked for one array. It got three, because a trace of the
+failure alone cannot say what success looks like and the ring cannot
+outlive the thing it is meant to catch.
+.IP \(bu
+.CW splitev ,
+a ring of 512. Every split transition on every channel.
+.IP \(bu
+.CW splitev0 ,
+256, filling once, taking only
+.B "low\-speed control"
+splits \(em the mouse's
+.I own
+control endpoint. Same device, same hub port, same translator, same
+low\-speed link, and it
+.I works .
+The control for the experiment.
+.IP \(bu
+.CW splitev1 ,
+64, filling once, taking only periodic events that are neither
+.CW Chhltd|Nak
+nor
+.CW Chhltd|Ack ,
+plus
+.CW periodicpoll
+and
+.CW periodicnak
+as the denominator. See
+.B "WHAT THE RING CANNOT ANSWER
+below; this is the array the question actually needs.
+.NH 2
+The two sequences, side by side
+.LP
+The same low\-speed mouse behind the same transaction translator, two
+endpoints. This is the first time anyone has seen either.
+.PP
+.CW ep5.0 ,
+control, which
+.B works :
+.P1
+SS-ARM   frm 907.1  ss  -
+SS-EV    frm 907.1  ss  Chhltd|Ack
+PROMOTE  frm 907.1  CS  Chhltd|Ack
+CS-EV    frm 907.1  CS  Chhltd|Nyet
+CS-RETRY frm 907.1  CS  Chhltd|Nyet
+CS-EV    frm 907.1  CS  Chhltd|Nyet
+CS-RETRY frm 907.1  CS  Chhltd|Nyet
+CS-EV    frm 907.1  CS  Chhltd|Nyet
+TERM     frm 907.1  CS  Chhltd|Nyet
+SS-ARM   frm 907.2  ss  -
+SS-EV    frm 907.2  ss  Chhltd|Ack
+PROMOTE  frm 907.2  CS  Chhltd|Ack
+CS-EV    frm 907.2  CS  Xfercomp|Chhltd|Ack
+TERM     frm 907.2  CS  Xfercomp|Chhltd|Ack
+.P2
+.CW ep5.1 ,
+interrupt IN, which does not:
+.P1
+SS-ARM   frm 177.5  ss  -
+SS-EV    frm 178.0  ss  Chhltd|Ack
+PROMOTE  frm 178.0  CS  Chhltd|Ack
+CS-EV    frm 178.1  CS  Chhltd|Nak
+TERM     frm 178.1  CS  Chhltd|Nak
+.P2
+.NH 2
+What that settles
+.LP
+.B "The complete\-split IS issued on the periodic endpoint."
+The phase in each record is captured at the event, before this driver
+touches
+.CW hcsplt ,
+so
+.CW CS
+here is evidence where the printed diagnostic's
+.CW hcsplt
+was not: that print read the register two statements after the clear and
+reported every stall and every NAK as a start\-split. The comment in
+.CW splitcontinue()
+that rested on it is rewritten to say what the code does and that the
+change it described was tried and reverted.
+.PP
+.B "The control path succeeds by RE\-STARTING, not by retrying."
+Every low\-speed control stage in the trace spends all three NYET
+retries, is taken as terminal, and then succeeds on the
+.I next
+start\-split from
+.CW chanio 's
+outer loop. So
+.CW Splitretries
+has never been what makes control work.
+.PP
+And the reason is in the microframe column, which is the one thing no
+previous attempt could see: all three retries land in
+.B "the same microframe as the start\-split"
+\(em all three at
+.CW 907.1 .
+The translator runs the low\-speed transaction in the
+.I next
+microframe, so a complete\-split in the same one can only answer NYET.
+The budget is not too small \(em it is spent before the translator has
+begun. The re\-start at
+.CW 907.2
+then gets
+.CW Xfercomp
+on its first complete\-split, which is the translator handing back the
+.I first
+transaction's result.
+.PP
+.B "One oddity recorded and deliberately not chased:"
+.CW hcdma
+is
+.CW ...108
+through the nine records of the first attempt and
+.CW ...110
+on the re\-start. If the re\-start really re\-sent a SETUP from the
+advanced pointer the device would have seen eight bytes of something
+else \(em and enumeration says it did not. Worth understanding; not a
+blocker.
+.NH 2
+WHAT THE RING CANNOT ANSWER, which is the real finding
+.LP
+The first read off the board was
+.B "20983 records, 100%"
+.CW Chhltd|Nak
+.B "on ep5.1, with nobody touching the mouse."
+.PP
+.B "That is what a working host polling an idle interrupt endpoint looks
+.B "like."
+A boot mouse that is not moving NAKs every poll. NAK is the device's
+final answer \(em "nothing" \(em where NYET is "not yet". Linux's dwc2
+restarts the start\-split on exactly that: its
+.CW dwc2_hc_nak_intr
+carries the comment
+.I "Re\-start the SSPLIT transfer" ,
+which is what this driver does. So the
+sequence above is
+.I not
+a defect, and
+.PP
+.B "the prescription this document started with \(em retry the periodic
+.B "complete\-split on NAK \(em is withdrawn for the second time."
+It came back in new clothes while this section was being drafted,
+dressed as "USB 2.0 11.18.4 wants complete\-splits in consecutive
+microframes, and one is not a schedule." The spec's consecutive
+complete\-splits are for the NYET case, which this driver already
+retries. Writing it down twice is cheaper than implementing it twice.
+.PP
+.B "And the microframe gap on ep5.1 is not a slip either."
+.CW SS-ARM
+at
+.CW 177.5
+and
+.CW SS-EV
+at
+.CW 178.0
+looks like three microframes lost, and it is consistent:
+.P1
+188.1 -> 188.4
+198.5 -> 199.0
+209.1 -> 209.4
+219.5 -> 220.0
+230.1 -> 230.4
+.P2
+But
+.CW chanio
+sets
+.CW Oddfrm
+to the
+.I current
+frame parity and
+.CW splitcontinue
+sets it to the
+.I next
+\(em deliberately opposite, at
+.CW usbdwc.c:1272
+and
+.CW usbdwc.c:987
+\(em so the start\-split executes a frame later by construction and the
+complete\-split lands at X+1 or X+2, which is in spec for the first one.
+The rest is handler latency. Do not build on it.
+.NH 2
+So the discriminating fact is missing, and now there is an instrument for it
+.LP
+.B "Was anybody moving the mouse during those 20983 records?"
+On that boot, no. The claim that the device NAKs
+.I "while being moved"
+comes from eight capped prints in the first eighty milliseconds of an
+.I earlier
+boot \(em not from a capture taken during motion. It is the single fact
+that decides between two completely different pieces of work, and it has
+never been measured.
+.PP
+The ring cannot measure it: 512 entries at five records a poll and a
+10 ms interval is one second of history, and a JTAG read takes longer
+than that, so a read after motion shows the mouse idle again. Hence
+.CW splitev1 ,
+which fills once and waits indefinitely. It needs no coordination with
+anybody.
+.PP
+.B "THE EXPERIMENT HAS A PHYSICAL DEPENDENCY, stated plainly:"
+the mouse has to be moved at some point after the board boots. Until it
+is, an empty
+.CW splitev1
+means "nothing interesting has happened yet", not "the device is
+silent", and
+.CW splittrace
+says so in those words rather than leaving the reader to supply them \(em
+with
+.CW periodicpoll
+and
+.CW periodicnak
+printed as the denominator. Both branches of that verdict are in
+.CW tests/splittrace.sh ,
+because those are the only lines in the tool that draw a conclusion
+rather than print a field.
+.NH 2
+The two branches, and what each one makes the next piece of work
+.IP \(bu
+.B "Non\-NAK events appear with motion."
+The split path moves bytes and the defect is downstream: the data, the
+.CW /dev/pointer
+reader, or the check that reports
+.CW USB-MOUSE-NONE .
+Then
+.CW "pkt 2 xfer 8"
+becomes live \(em ep5.1 is programmed two packets for an 8\-byte read
+with
+.CW maxpkt
+5, because
+.CW HOWMANY(8,5)
+is 2 \(em and the records
+.I after
+the first data will show what the core does with
+.CW Pktcnt
+1 still outstanding on a split channel. That is where dwc2's
+.CW "num_packets = 1"
+would matter, and the one\-packet clamp can be re\-judged on the sequence
+instead of on whether the pointer moved.
+.IP \(bu
+.B "Still 100% NAK with motion."
+The device never has data on ep5.1 and the split path is exonerated. The
+next discriminator is a
+.CW "GET_REPORT(Input)"
+over ep5.0, which every HID device must answer: a report over the
+control pipe while ep5.1 NAKs puts the fault on the interrupt pipe;
+nothing over either puts it on the HID set\-up payloads.
+.PP
+.B "Phase 3 waits for that answer."
+Restructuring
+.CW chanio 's
+split path to per\-packet programming is a large change justified by
+Phase 0's reading of dwc2, and it is the wrong thing to start if the
+bytes are not being lost there. The capture costs one hand movement.
+.NH 1
+Phase 1 as originally written \(em the shape, kept for the record
 .LP
 .B "Goal:"
 see one failing transaction end to end, without prints.

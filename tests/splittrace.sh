@@ -122,13 +122,32 @@ for k in range(520):
         (1 << 1) | (1 << 4),
         0 << 29 | 1 << 19 | 5, 0xd0000000 + k, 4, 2)
 open(T + "/ring.bin", "wb").write(b"".join(ring))
+
+# The WAIT array: two interesting periodic events, which is what gets
+# kept when the mouse is actually moved.  First a complete-split that
+# moved five bytes (Xfercomp|Chhltd|Ack, dma advanced, pktcnt down to
+# 0), then a NYET.
+wait = [
+    rec(3000 << 3 | 1,
+        5 << 22 | 1 << 11 | 1 << 15 | 1 << 17 | 3 << 18 | 5,
+        1 << 31 | 1 << 16 | 1 << 7 | 4,
+        (1 << 0) | (1 << 1) | (1 << 5),
+        0 << 29 | 0 << 19 | 3, 0xc40407c5, 0, 3),
+    rec(3001 << 3 | 2,
+        5 << 22 | 1 << 11 | 1 << 15 | 1 << 17 | 3 << 18 | 5,
+        1 << 31 | 1 << 16 | 1 << 7 | 4,
+        (1 << 1) | (1 << 6),
+        0 << 29 | 1 << 19 | 5, 0xc40407c0, 0, 3),
+]
+open(T + "/wait.bin", "wb").write(b"".join(wait) + bytes(32 * (64 - len(wait))))
+open(T + "/wait0.bin", "wb").write(bytes(32 * 64))
 PYEOF
 
 #
 # nring=520 nctl=4 lost=8, no endpoint filter, both arrays, no tail cap.
 #
 python3 "$T/dec.py" "$T/ring.bin" "$T/ctl.bin" 520 4 8 "" 1 1 0 32 \
-	>"$T/out.txt" 2>"$T/err.txt"
+	"$T/wait.bin" 2 1 900 898 31 1 >"$T/out.txt" 2>"$T/err.txt"
 rc=$?
 if [ $rc -ne 0 ]; then
 	echo "splittrace.sh: the decoder exited $rc" >&2
@@ -219,7 +238,7 @@ fi
 
 # Endpoint filtering: ask for 5.1 and the control array's 5.0 must go.
 python3 "$T/dec.py" "$T/ring.bin" "$T/ctl.bin" 520 4 8 "5.1" 1 1 0 32 \
-	>"$T/out2.txt" 2>&1
+	"$T/wait.bin" 2 1 900 898 31 1 >"$T/out2.txt" 2>&1
 if grep -q "nothing for ep5.1" "$T/out2.txt" &&
    ! grep -q "^   .*ep5.0" "$T/out2.txt"; then
 	echo "  ok   filter: -e 5.1 drops ep5.0 and says so for the control"
@@ -235,7 +254,7 @@ T = sys.argv[1]
 open(T + "/zero.bin", "wb").write(bytes(32 * 512))
 PYEOF
 python3 "$T/dec.py" "$T/zero.bin" "$T/zero.bin" 0 0 0 "" 1 1 0 32 \
-	>"$T/out3.txt" 2>&1
+	"$T/wait0.bin" 0 1 0 0 0 0 >"$T/out3.txt" 2>&1
 if grep -q "NOTHING WAS RECORDED" "$T/out3.txt"; then
 	echo "  ok   empty: an unrecorded trace says so"
 else
@@ -245,11 +264,49 @@ fi
 
 # And the case that matters for the control: ring busy, control empty.
 python3 "$T/dec.py" "$T/ring.bin" "$T/zero.bin" 520 0 8 "" 1 1 0 32 \
-	>"$T/out4.txt" 2>&1
+	"$T/wait0.bin" 0 1 0 0 0 0 >"$T/out4.txt" 2>&1
 if grep -q "CONTROL array is empty while the ring is not" "$T/out4.txt"; then
 	echo "  ok   no control: an empty control array is called out"
 else
 	echo "  FAIL no control: an empty control array passed in silence"
+	fail=`expr $fail + 1`
+fi
+
+#
+# THE WAIT ARRAY AND ITS VERDICTS.  These are the only lines in the tool
+# that draw a conclusion rather than printing a field, so they are the
+# ones that can mislead.  Both branches are exercised: a non-empty wait
+# must NOT be reported as an idle mouse, and an empty one with polls on
+# the clock must NOT be reported as a broken split path.
+#
+ck "wait: the data record's five bytes show as dma advanced"	"dma c40407c5"
+ck "wait: a NYET on a periodic endpoint is kept"		"Chhltd|Nyet"
+ck "wait: the periodic denominators are printed"	"900 start-splits armed; complete-splits answered NAK 898, NYET 31, DATA 1"
+ck "wait: a nonzero DATA says the path delivers reports"	"the split path DOES deliver reports"
+ck "wait: a non-empty wait says the path can now be judged"	"NON-EMPTY"
+nk "wait: and does NOT call a non-empty wait an idle mouse"	"WHAT AN IDLE MOUSE LOOKS LIKE"
+
+# The empty-wait branch, from out3 (nothing at all) and a third run with
+# polls but no interesting event -- the state the board is actually in.
+python3 "$T/dec.py" "$T/ring.bin" "$T/ctl.bin" 520 4 8 "" 1 1 0 32 \
+	"$T/wait0.bin" 0 1 4196 4195 32 0 >"$T/out5.txt" 2>&1
+if grep -q "WHAT AN IDLE MOUSE LOOKS LIKE" "$T/out5.txt" &&
+   grep -q "NEEDS THE MOUSE MOVED" "$T/out5.txt" &&
+   grep -q "has never moved a byte" "$T/out5.txt" &&
+   ! grep -q "NO PERIODIC SPLIT HAS BEEN ARMED" "$T/out5.txt"; then
+	echo "  ok   wait: empty with 4196 polls reads as an IDLE mouse, and"
+	echo "       says the experiment needs the mouse moved"
+else
+	echo "  FAIL wait: an empty wait with polls on the clock did not say"
+	echo "       that it is an idle mouse rather than a broken path --"
+	echo "       which is the exact misreading this array exists to stop"
+	fail=`expr $fail + 1`
+fi
+if grep -q "NO PERIODIC SPLIT HAS BEEN ARMED" "$T/out3.txt"; then
+	echo "  ok   wait: zero polls is reported as no endpoint, not as idle"
+else
+	echo "  FAIL wait: zero periodic polls was not distinguished from an"
+	echo "       idle endpoint"
 	fail=`expr $fail + 1`
 fi
 

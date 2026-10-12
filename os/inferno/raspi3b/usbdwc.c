@@ -249,6 +249,38 @@ static int chaniotrace = 0;
  *		  ring cannot be it because the ring has wrapped past
  *		  enumeration within a second of it finishing.
  *
+ *	splitev1  64, fills ONCE, and takes only PERIODIC events that are
+ *		  not the boring ones -- anything on an interrupt channel
+ *		  that is neither Chhltd|Nak (an idle endpoint's answer)
+ *		  nor Chhltd|Ack (a start-split taken).  THE WAIT FOR
+ *		  SOMETHING TO HAPPEN.
+ *
+ *		  It exists because of what the ring could not answer.
+ *		  The ring holds about a hundred polls -- five records per
+ *		  poll, a 10 ms interval, 512 entries, so one second of
+ *		  history -- and a JTAG read takes longer than that.  So
+ *		  reading the ring after somebody moves the mouse shows
+ *		  the mouse idle again, and the first 20983 records read
+ *		  off this board were 100% Chhltd|Nak on ep5.1 with
+ *		  nobody touching it, WHICH IS THE CORRECT SIGNATURE OF A
+ *		  WORKING HOST POLLING AN IDLE ENDPOINT.  A boot mouse
+ *		  that is not moving NAKs every poll, and Linux's dwc2
+ *		  restarts the start-split on exactly that, as this driver
+ *		  does.  The ring alone therefore cannot tell a broken
+ *		  split path from an untouched mouse, and the claim that
+ *		  the device NAKs "while being moved" rests on eight
+ *		  capped prints from the first eighty milliseconds of an
+ *		  earlier boot -- not on a capture taken during motion.
+ *
+ *		  This array needs no timing coordination with anybody: it
+ *		  keeps the first 64 interesting periodic events whenever
+ *		  they occur, and periodicnak/periodicpoll below are the
+ *		  denominator.  THE EXPERIMENT NOW HAS A PHYSICAL
+ *		  DEPENDENCY: the mouse has to be moved at some point
+ *		  after a boot for this to hold anything.  Until it does,
+ *		  an empty splitev1 means "nothing interesting has
+ *		  happened yet", not "the device is silent".
+ *
  * The fields are the raw registers.  Decoding belongs in the reader,
  * where it can be fixed without a kernel build -- and where getting it
  * wrong cannot change the thing being measured.
@@ -262,8 +294,9 @@ static int chaniotrace = 0;
  * touched it -- see the note at Result: for the day that cost.
  */
 enum {
-	Nsplitev	= 512,	/* ring; 512*28 = 14KB */
-	Nsplitev0	= 256,	/* one-shot low-speed control; 7KB */
+	Nsplitev	= 512,	/* ring; 512*32 = 16KB */
+	Nsplitev0	= 256,	/* one-shot low-speed control; 8KB */
+	Nsplitev1	= 64,	/* one-shot interesting periodic; 2KB */
 
 	/* tags: which transition this record is */
 	Evarm		= 1,	/* chanio enabled the channel */
@@ -315,7 +348,21 @@ Splitev	splitev[Nsplitev];
 uint	nsplitev;		/* records written, ever; head = % Nsplitev */
 Splitev	splitev0[Nsplitev0];
 uint	nsplitev0;		/* stops at Nsplitev0 */
+Splitev	splitev1[Nsplitev1];
+uint	nsplitev1;		/* stops at Nsplitev1 */
 uint	splitevlost;		/* ring entries overwritten before being read */
+/*
+ * The denominator for splitev1, and the only two numbers that can say
+ * whether a run of nothing-interesting is a silent device or an
+ * untouched one.  periodicpoll counts start-splits armed on an
+ * interrupt channel; periodicnak counts complete-splits answered
+ * Chhltd|Nak.  If they track each other the endpoint is being polled
+ * and is answering "nothing", which is what an idle mouse does.
+ */
+uint	periodicpoll;
+uint	periodicnak;
+uint	periodicnyet;
+uint	periodicdata;		/* complete-splits that carried Xfercomp */
 
 /*
  * Its own lock.  Every call site today already holds the controller's
@@ -367,6 +414,63 @@ splitlog(Hostchan *hc, Dwcregs *r, int tag, uint v)
 	if(nsplitev0 < Nsplitev0 && (hcchar & Lspddev) != 0
 	&& (hcchar & Eptype) == Epctl)
 		splitev0[nsplitev0++] = *e;
+	/*
+	 * AND THE WAIT.  A periodic event that is not one of the two
+	 * uninteresting ones: Chhltd|Nak is an idle endpoint answering
+	 * "nothing", Chhltd|Ack is a start-split being taken, and v == 0
+	 * is an Evarm record, which carries no event at all.  Everything
+	 * else -- data, a NYET, any error, a NAK the handler had to halt
+	 * itself -- lands here and stays until the board is rebooted.
+	 *
+	 * The two counters are the denominator.  Without them a run of
+	 * zeroes here reads as "the device never answers", when the
+	 * honest reading is "nothing interesting has happened yet".
+	 */
+	if((hcchar & Eptype) == Epintr){
+		/*
+		 * COUNT THE EVENT, NOT THE RECORD, and the first version of
+		 * this did the latter.  splitlog() is called twice for a
+		 * terminal event -- once as Evcs when the handler sees it
+		 * and once as Evterm when splitcontinue decides it is final
+		 * -- with the same hcint and the same phase both times, so
+		 * counting every matching record DOUBLED the NAK figure.
+		 * It read 4334 NAKs against 2180 polls, which is two per
+		 * poll and looked like a real asymmetry worth explaining.
+		 * It was 2167 NAKs counted twice.
+		 */
+		if(tag == Evarm)
+			periodicpoll++;
+		else if(tag == Evcs){
+			if(v & Xfercomp)
+				periodicdata++;
+			else if(v & Nyet)
+				periodicnyet++;
+			else if(v & Nak)
+				periodicnak++;
+		}
+		/*
+		 * AND NYET IS EXCLUDED FROM THE ARRAY, which is the second
+		 * thing the first read of this board corrected.
+		 *
+		 * The filter was "anything that is not an idle NAK or an
+		 * accepted start-split", and 64 entries filled with NYETs
+		 * within seconds -- 32 NYET/retry pairs out of 2180 polls.
+		 * The array was then FULL and could no longer catch the one
+		 * event it exists for, which is the mouse actually
+		 * delivering a report.  A one-shot array whose filter
+		 * admits a recurring event is not a trap, it is a sample of
+		 * the first few seconds.
+		 *
+		 * So NYETs are a counter and this waits for data or an
+		 * error.  periodicdata is the single number that answers
+		 * "has this endpoint ever moved a byte"; it does not depend
+		 * on the array having room.
+		 */
+		if(nsplitev1 < Nsplitev1 && v != 0
+		&& v != (Chhltd|Nak) && v != (Chhltd|Ack)
+		&& v != (Chhltd|Nyet))
+			splitev1[nsplitev1++] = *e;
+	}
 	iunlock(&splitevl);
 }
 
@@ -977,6 +1081,43 @@ splitcontinue(Ctlr *ctlr, Hostchan *hc, int v, int n)
 			splitlog(hc, ctlr->regs, Evterm, v);
 			return 0;
 		}
+		/*
+		 * THIS RETRY IS IMMEDIATE, AND FOR A PERIODIC ENDPOINT THAT
+		 * IS WRONG.  Recorded here rather than fixed, because the
+		 * trace says it is 1.5% of the traffic and not the blocker.
+		 *
+		 * Linux's dwc2 is explicit about the distinction; the
+		 * comment at the head of dwc2_hc_nyet_intr reads
+		 *
+		 *	NYET on CSPLIT
+		 *	re-do the CSPLIT immediately on non-periodic
+		 *
+		 * and the function then branches: control and bulk fall
+		 * through to an immediate re-issue, while INT and ISOC go
+		 * to dwc2_halt_channel(..., DWC2_HC_XFER_NYET), which
+		 * releases the channel and re-queues it at the endpoint's
+		 * NEXT scheduled microframe.  If the scheduled window has
+		 * already passed -- next_active_frame beyond
+		 * start_active_frame + num_hs_transfers -- it treats the
+		 * NYET as a transaction error instead.  One complete-split
+		 * per microframe, under a schedule, with an end.
+		 *
+		 * The code below re-enables the channel in the SAME
+		 * microframe for every transfer type, which the trace
+		 * confirms: a periodic NYET and its retry carry identical
+		 * hfnum values (969.4 and 969.4, 1004.4 and 1004.4,
+		 * 1043.1 and 1043.1).
+		 *
+		 * WHY IT IS NOT FIXED HERE.  splitcontinue runs in the
+		 * interrupt handler and cannot sleep, so deferring to the
+		 * next microframe needs the SOF interrupt to re-arm the
+		 * channel -- a real change to this path, and Phase 3's
+		 * shape, not a line.  And the measurement says it would buy
+		 * 32 polls in 2180: 98.5% of this endpoint's
+		 * complete-splits are answered Nak on the FIRST one, with
+		 * no NYET anywhere near them.  Fixing the 1.5% first is how
+		 * the previous eight attempts were chosen.
+		 */
 		tag = Evretry;
 	}
 	if(hc->hcchar & Chen){
