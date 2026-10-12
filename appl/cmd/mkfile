@@ -131,6 +131,7 @@ TARG=\
 	plumber.dis\
 	prof.dis\
 	ps.dis\
+	ptrwatch.dis\
 	puttar.dis\
 	qputry.dis\
 	pwd.dis\

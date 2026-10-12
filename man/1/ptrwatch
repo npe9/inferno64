@@ -1,0 +1,106 @@
+.TH PTRWATCH 1
+.SH NAME
+ptrwatch \- print pointer events for a bounded time
+.SH SYNOPSIS
+.B ptrwatch
+[
+.B -t
+.I secs
+]
+[
+.B -n
+.I events
+]
+.SH DESCRIPTION
+.I Ptrwatch
+reads
+.B /dev/pointer
+(see
+.IR pointer (3))
+and prints each event, stopping after
+.I events
+of them or
+.I secs
+seconds, whichever comes first.
+The defaults are 20 events and 10 seconds.
+It then prints one of four verdict lines:
+.TP
+.B PTRWATCH-OK \fIn\fP event(s) in \fIs\fP s from /dev/pointer
+events arrived.
+The count is the evidence; a verdict without one could not be told from
+a check that looked at nothing.
+.TP
+.B PTRWATCH-NONE no events in \fIs\fP s
+the queue stayed empty.
+With a pointing device attached, that means nobody moved it.
+.TP
+.B PTRWATCH-INUSE /dev/pointer: \fIerror\fP
+.IR pointer (3)
+allows one reader and refused this one.
+Something else holds the slot \(em on the Pi 3B that is
+.I mousecheck
+in the board's init, while it is still inside its window, or a window
+manager.
+This is reported as its own outcome because the right next step is to
+find out who, not to conclude the device is dead.
+.TP
+.B PTRWATCH-FAIL /dev/pointer: \fIerror\fP
+the file could not be opened for any other reason.
+.PP
+.B PTRWATCH-READFAIL
+is printed if the read returns an error or end of file part way through,
+which is neither a timeout nor a success: a reader that died would
+otherwise look exactly like a device that was never moved.
+.SH EXAMPLE
+Watch for eight seconds, from the host, through
+.BR tools/jtag/boardrun :
+.IP
+.EX
+sh tools/jtag/boardrun 'ptrwatch -t 8'
+.EE
+.SH SOURCE
+.B /appl/cmd/ptrwatch.b
+.SH "SEE ALSO"
+.IR pointer (3),
+.IR usb (3),
+.IR usbd (8)
+.SH BUGS
+It is bounded on purpose and cannot be told to wait indefinitely.
+.B tools/jtag/boardrun
+runs one command and waits for it, so a
+.B cat
+of
+.B /dev/pointer
+wedges the board's remote-command poller \(em and a poller that never
+returns is a board that answers nothing afterwards.
+.PP
+.B "WHAT IT DOES AND DOES NOT PROVE,"
+stated because on the Pi 3B it is half of a two-part measurement.
+A
+.B PTRWATCH-OK
+says a decoded event reached
+.B /dev/pointer ,
+which is the whole path: controller, split transaction,
+.IR usbd 's
+HID decode, and the device.
+A
+.B PTRWATCH-NONE
+says only that none arrived, and does not distinguish a device that
+reported nothing from a report lost on the way.
+The other half is
+.B periodicdata
+in
+.B os/inferno/raspi3b/usbdwc.c ,
+read by
+.B tools/jtag/splittrace ,
+which counts complete-splits that carried data at the
+.I controller
+\(em so
+.B PTRWATCH-NONE
+with a nonzero
+.B periodicdata
+locates the loss between the controller and
+.B /dev/pointer ,
+and with a zero one says the device never answered.
+See
+.B doc/usb-split-plan.ms .

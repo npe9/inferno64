@@ -423,6 +423,7 @@ prefix sh-string
 primes math-misc
 prof prof
 ps ps
+ptrwatch ptrwatch
 psalmody psalmody
 puttar gettar
 putzip getzip
