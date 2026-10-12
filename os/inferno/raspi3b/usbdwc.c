@@ -210,6 +210,167 @@ dmabufalloc(long n)
 static int chaniotrace = 0;
 
 /*
+ * THE SPLIT TRACE.  doc/usb-split-plan.ms, Phase 1.
+ *
+ * One fixed-size record per split state transition, written in the
+ * interrupt handler and in chanio, read off the board over JTAG by
+ * tools/jtag/splittrace.  No prints, no formatting in the measured
+ * path, no 16K ring to overflow and no rate limit to hide the
+ * interesting event -- the three ways every previous attempt to watch
+ * this path lost the thing it was watching.
+ *
+ * WHY A TRACE AT ALL.  Eight one-line fixes have been tried and
+ * reverted on this path, and not one of them could be told from the
+ * others afterwards: the only readout was "the mouse moves" or "the
+ * mouse is gone".  The printed diagnostics cap at eight lines per boot
+ * and twice reported a register this driver had already cleared, so
+ * what has been written down about the failure rests on evidence that
+ * was partly manufactured.  This replaces it with the sequence.
+ *
+ * TWO ARRAYS, because a trace of the failure alone cannot say what a
+ * success looks like:
+ *
+ *	splitev	  a RING.  Every split transition on every channel.  The
+ *		  most recent Nsplitev are therefore whatever the board is
+ *		  doing now, which after enumeration is the mouse's
+ *		  interrupt endpoint and nothing else.  nsplitev counts
+ *		  every record ever written, so the reader can find the
+ *		  head and say how many were lost.
+ *
+ *	splitev0  fills ONCE and never wraps, and takes only LOW-SPEED
+ *		  CONTROL splits.  That is the mouse's own control
+ *		  endpoint: same device, same hub port, same transaction
+ *		  translator, same low-speed link -- and it WORKS, which is
+ *		  how the device is known to be there at all.  The
+ *		  high-speed hub's own traffic is not split and never
+ *		  appears here; the full-speed serial adapter's control
+ *		  transfers are split but not low-speed, so they do not
+ *		  either.  It is the control for the experiment, and the
+ *		  ring cannot be it because the ring has wrapped past
+ *		  enumeration within a second of it finishing.
+ *
+ * The fields are the raw registers.  Decoding belongs in the reader,
+ * where it can be fixed without a kernel build -- and where getting it
+ * wrong cannot change the thing being measured.
+ *
+ * ONE CAPTURE RULE, which is the whole reason the earlier diagnostics
+ * were worthless: hcint is passed IN as an argument and never read from
+ * the channel.  The handler read-and-W1C-clears hc->hcint before it
+ * does anything else, so by the time any of these records runs the
+ * register is zero.  Likewise the start-split/complete-split phase is
+ * recorded from hc->hcsplt only at points where this driver has not yet
+ * touched it -- see the note at Result: for the day that cost.
+ */
+enum {
+	Nsplitev	= 512,	/* ring; 512*28 = 14KB */
+	Nsplitev0	= 256,	/* one-shot low-speed control; 7KB */
+
+	/* tags: which transition this record is */
+	Evarm		= 1,	/* chanio enabled the channel */
+	Evss		= 2,	/* handler: event in the START-split phase */
+	Evcs		= 3,	/* handler: event in the COMPLETE-split phase */
+	Evprom		= 4,	/* promoted to complete-split, re-enabled */
+	Evretry		= 5,	/* complete-split NYET, re-issued */
+	Evterm		= 6,	/* taken as terminal; the waiter is woken */
+	Evnakh		= 7,	/* handler halted an unhalted NAK (QEMU path) */
+};
+
+typedef struct Splitev Splitev;
+struct Splitev {
+	uint	hfnum;		/* frame and microframe, at the transition */
+	uint	hcchar;		/* device address, endpoint, type, direction */
+	uint	hcsplt;		/* hub address, port, Compsplt -- the PHASE */
+	uint	hcint;		/* passed in; NOT read from the channel */
+	uint	hctsiz;		/* packet count and transfer size remaining */
+	uint	hcdma;		/* how far the core has moved the pointer */
+	ushort	chan;
+	ushort	tag;
+};
+
+/*
+ * Not static: tools/jtag/splittrace resolves these in the kernel's
+ * symbol table.  A counter nothing reads is the shape tools/jtag/vmheld
+ * exists to avoid, so the reader lands in the same commit.
+ */
+/*
+ * THE RECORD SIZE IS PART OF THE INTERFACE, so the compiler checks it
+ * rather than the reader guessing.  tools/jtag/splittrace dumps raw
+ * memory and unpacks "<6I2H4x"; if a field is ever added here without
+ * that format changing, every decoded entry is garbage that still
+ * looks like registers -- the exact failure mode where a wrong number
+ * passes for a right one.  A mismatch makes this a negative array size
+ * and the build stops.
+ *
+ * AND IT IS 32, NOT 28.  Six uints and two ushorts come to 28 bytes of
+ * fields and 7c pads the struct to a multiple of 8, which is the "4x"
+ * in the format above.  28 was written here first, from counting, and
+ * BOTH 28 and 29 failed this check -- so the number came from the
+ * compiler, as it has to.  A reader built on 28 would have walked off
+ * by four bytes per entry and printed plausible register values for
+ * all 512 of them.
+ */
+static char splitevsize[sizeof(Splitev) == 32? 1: -1];
+
+Splitev	splitev[Nsplitev];
+uint	nsplitev;		/* records written, ever; head = % Nsplitev */
+Splitev	splitev0[Nsplitev0];
+uint	nsplitev0;		/* stops at Nsplitev0 */
+uint	splitevlost;		/* ring entries overwritten before being read */
+
+/*
+ * Its own lock.  Every call site today already holds the controller's
+ * ilock, so this is uncontended and costs a splhi and a test -- but an
+ * instrument that is only correct because of where it happens to be
+ * called from is one edit away from being wrong, and a half-written
+ * record would be indistinguishable from a real transition.  Nested
+ * ctlr -> splitevl only, never the reverse.
+ */
+static Lock splitevl;
+
+static void
+splitlog(Hostchan *hc, Dwcregs *r, int tag, uint v)
+{
+	Splitev *e;
+	uint hcchar, hcsplt, hctsiz, hcdma, hfnum;
+	int chan;
+
+	chan = hc - r->hchan;
+	/*
+	 * Read every register ONCE, before taking the lock, so the record
+	 * is one consistent instant and the lock is held for stores only.
+	 */
+	hfnum = r->hfnum;
+	hcchar = hc->hcchar;
+	hcsplt = hc->hcsplt;
+	hctsiz = hc->hctsiz;
+	hcdma = hc->hcdma;
+
+	ilock(&splitevl);
+	e = &splitev[nsplitev % Nsplitev];
+	if(nsplitev >= Nsplitev)
+		splitevlost++;
+	e->hfnum = hfnum;
+	e->hcchar = hcchar;
+	e->hcsplt = hcsplt;
+	e->hcint = v;
+	e->hctsiz = hctsiz;
+	e->hcdma = hcdma;
+	e->chan = chan;
+	e->tag = tag;
+	nsplitev++;
+	/*
+	 * The control: low-speed AND control-type only.  Eptype is a
+	 * two-bit field at bit 18 and Epctl is 0, so the test is that the
+	 * field is zero -- written out rather than compared against Epctl
+	 * because Epctl is already shifted.
+	 */
+	if(nsplitev0 < Nsplitev0 && (hcchar & Lspddev) != 0
+	&& (hcchar & Eptype) == Epctl)
+		splitev0[nsplitev0++] = *e;
+	iunlock(&splitevl);
+}
+
+/*
  * How long a completion waits for the processor, on every boot.
  *
  * chaniotrace above answers this for a handful of transfers and has to
@@ -695,6 +856,15 @@ chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 static int
 splitcontinue(Ctlr *ctlr, Hostchan *hc, int v, int n)
 {
+	int tag;
+
+	/*
+	 * FIRST, before this function touches hcsplt or hcchar.  The
+	 * phase in the record is therefore the phase the event belongs
+	 * to, which is the single fact every previous reading of this
+	 * path got wrong.
+	 */
+	splitlog(hc, ctlr->regs, (hc->hcsplt & Compsplt)? Evcs: Evss, v);
 	/*
 	 * THE PHASE DECIDES, NOT AN EXACT BIT PATTERN, and the exact
 	 * pattern is why no full- or low-speed device has ever enumerated
@@ -745,49 +915,69 @@ splitcontinue(Ctlr *ctlr, Hostchan *hc, int v, int n)
 	if((v & (Chhltd|Splterr)) != Chhltd){
 		if((hc->hcsplt & Compsplt) == 0)
 			ctlr->splitterm++;
+		splitlog(hc, ctlr->regs, Evterm, v);
 		return 0;			/* halted with an error: terminal */
 	}
 	if((hc->hcsplt & Compsplt) == 0){
 		/*
-		 * A PERIODIC START-SPLIT GETS NO HANDSHAKE, so requiring an
-		 * Ack before issuing the complete-split means a low-speed
-		 * interrupt endpoint never gets one.
+		 * AN ACK IS REQUIRED TO PROMOTE, FOR EVERY TRANSFER TYPE.
+		 * What this comment used to say was the opposite, and it
+		 * described a change that was tried and reverted -- which is
+		 * worse than saying nothing, because the next reader of this
+		 * function takes a comment as the code's intent.
 		 *
-		 * USB 2.0 20.2: a start-split for an interrupt or
-		 * isochronous transfer has no handshake phase -- the hub's
-		 * transaction translator accepts it and the host then issues
-		 * complete-splits in the microframes that follow.  Only
-		 * control and bulk start-splits are ACK'd.
+		 * The reading that motivated the change is still, as far as
+		 * the specification goes, correct: USB 2.0 11.17 and 11.18
+		 * give a periodic start-split no handshake phase, so the
+		 * hub's translator accepts it and the host is expected to
+		 * issue complete-splits in the microframes that follow
+		 * without waiting to be told.  Only control and bulk
+		 * start-splits are ACK'd.
 		 *
-		 * Measured on an IBM boot mouse that enumerates and then
-		 * reports nothing:
+		 * AND PROMOTING WITHOUT THE ACK MADE IT WORSE, measured:
+		 * `mouse gone' with no reports at all, where before the
+		 * device at least answered.  It was reverted, along with
+		 * seven other changes of the same kind.  Linux's dwc2 does
+		 * not promote without one either -- it treats the halt as
+		 * the end of the start-split and re-starts it -- which is
+		 * what the code below does.
+		 *
+		 * WHAT THE DIAGNOSTIC THAT MOTIVATED IT IS WORTH.  It read
 		 *
 		 *   ep5.1 INTR-IN NAK 1: hcint 00000012 hcsplt 8000c104
 		 *     hctsiz 00100008 iters 1
 		 *   ... NAK 2 iters 2 ... NAK 5 iters 5
 		 *
-		 * hcint is Chhltd|Nak, hcsplt has Compsplt CLEAR on every
-		 * one, and iters climbs: each attempt was a fresh
-		 * START-split that was never promoted, so the complete-split
-		 * that would have collected the report was never issued.
-		 *
-		 * For a periodic endpoint a clean halt therefore ends the
-		 * start-split whatever handshake bit came with it.  Control
-		 * and bulk keep the Ack requirement, which is what their
-		 * start-splits actually return.
+		 * and the hcint (Chhltd|Nak) and the climbing iters are
+		 * real.  THE Compsplt BIT IN THAT hcsplt IS NOT EVIDENCE:
+		 * chanio clears Compsplt two statements before the print
+		 * that produced the line, so it would have read clear
+		 * whatever the phase was.  That is the second time a
+		 * conclusion here rested on a register this driver had
+		 * already changed, and it is why splitlog() above takes
+		 * hcint as an argument and is called before anything is
+		 * written.  The phase on a NAK is an open question until
+		 * tools/jtag/splittrace answers it.
 		 */
 		if((v & Ack) == 0){
 			ctlr->splitterm++;
+			splitlog(hc, ctlr->regs, Evterm, v);
 			return 0;
 		}
 		hc->hcsplt |= Compsplt;
 		ctlr->splitretry[n] = 0;
 		ctlr->splitpromote++;
+		tag = Evprom;
 	}else{
-		if((v & Nyet) == 0)
+		if((v & Nyet) == 0){
+			splitlog(hc, ctlr->regs, Evterm, v);
 			return 0;		/* the device's answer */
-		if(++ctlr->splitretry[n] >= Splitretries)
+		}
+		if(++ctlr->splitretry[n] >= Splitretries){
+			splitlog(hc, ctlr->regs, Evterm, v);
 			return 0;
+		}
+		tag = Evretry;
 	}
 	if(hc->hcchar & Chen){
 		hc->hcchar |= Chen | Chdis;
@@ -800,6 +990,13 @@ splitcontinue(Ctlr *ctlr, Hostchan *hc, int v, int n)
 		hc->hcchar |= Oddfrm;
 	hc->hcchar = (hc->hcchar &~ Chdis) | Chen;
 	ctlr->hcintr[n] = 0;			/* discard; wait for the complete-split */
+	/*
+	 * AFTER the enable, so the record carries the hcchar and the
+	 * microframe the complete-split actually went out in -- which is
+	 * the number the "complete-split lands in the wrong microframe"
+	 * hypothesis needs and no previous attempt could see.
+	 */
+	splitlog(hc, ctlr->regs, tag, v);
 	return 1;
 }
 
@@ -1112,6 +1309,16 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		hc->hcintmsk = imask;
 		r->haintmsk |= 1<<chan;
 		hc->hcchar = (hc->hcchar &~ Chdis) | Chen;
+		/*
+		 * The one record written from outside the interrupt handler,
+		 * and it is here rather than before the enable so that the
+		 * microframe is the one the transaction was launched in.
+		 * hcint is 0 because nothing has been reported yet; a zero
+		 * hcint beside an Evarm tag therefore means "no event", not
+		 * "an event with no bits".
+		 */
+		if(split)
+			splitlog(hc, r, Evarm, 0);
 		iunlock(ctlr);
 
 	started:
@@ -1987,6 +2194,7 @@ usbintr(Ureg*, void *a)
 			 */
 			if((hc->hcsplt & Spltena) && (v & Nak) && (v & Chhltd) == 0
 			&& (hc->hcchar & Chen)){
+				splitlog(hc, r, Evnakh, v);
 				hc->hcchar |= Chen | Chdis;
 				ctlr->hcintr[i] |= v;
 				continue;	/* Chhltd follows on the next pass */

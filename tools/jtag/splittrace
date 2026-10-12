@@ -1,0 +1,331 @@
+#!/bin/sh
+#
+# What the USB split state machine actually did, read off the board.
+#
+#	sh tools/jtag/splittrace			# both arrays
+#	sh tools/jtag/splittrace -e 5.1			# one endpoint
+#	sh tools/jtag/splittrace -r			# the ring only
+#	sh tools/jtag/splittrace -c			# the control only
+#	sh tools/jtag/splittrace -n 80			# last 80 ring entries
+#
+# WHY THIS EXISTS.  doc/usb-split-plan.ms, Phase 1.  Eight changes to
+# the split path have been tried and reverted on this board and not one
+# of them could be told from the others afterwards, because the only
+# readout was "the mouse moves" or "the mouse is gone".  The printed
+# diagnostics in usbdwc.c cap at eight lines per boot, and twice a
+# conclusion drawn from one of them rested on a register the driver had
+# already cleared.  usbdwc.c now writes a fixed record per split state
+# transition into two arrays in BSS and this reads them.
+#
+# TWO ARRAYS, and the second is the point:
+#
+#   splitev	a RING of 512.  Every split transition on every channel,
+#		so the newest entries are whatever the board is doing
+#		now -- after enumeration, the mouse's interrupt endpoint
+#		and nothing else.  THE FAILURE.
+#
+#   splitev0	256, fills ONCE, and takes only LOW-SPEED CONTROL
+#		splits.  That is the same mouse, same hub port, same
+#		transaction translator, same low-speed link -- and it
+#		works, which is how the device is known to be there.
+#		THE CONTROL.  Reading the failure without it is how
+#		"the device NAKs every complete-split" got written down
+#		without anyone checking what a working split looks like
+#		on this driver.
+#
+# NO BEHAVIOUR CHANGE IN THE DRIVER.  splitlog() stores registers under
+# its own lock and formats nothing.  If installing this kernel changes
+# whether devices enumerate, the trace is not an instrument and the
+# first thing to do is say so rather than read it.
+#
+# AND IT CHECKS THE KERNEL FIRST, like vmheld and where beside it.
+# Resolving an address against a kernel built from different sources is
+# how item C1 wasted three sessions: kerndate moves between builds, so
+# a read at the tree's kerndate address in another kernel lands on an
+# unrelated variable and prints a plausible number.
+#
+set -u
+HERE=`cd \`dirname "$0"\` && pwd`
+ROOT=`cd "$HERE/../.." && pwd`
+CONF=${CONF:-raspi3b}
+KERNEL=${KERNEL:-$ROOT/os/inferno/$CONF/i$CONF}
+IMG=${IMG:-$ROOT/os/inferno/$CONF/kernel8.img}
+ADAPTER=${ADAPTER:-interface/ftdi/olimex-arm-usb-tiny-h.cfg}
+
+EPFILT=
+WANTRING=1
+WANTCTL=1
+NLAST=0
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-e)	EPFILT=$2; shift 2;;
+	-n)	NLAST=$2; shift 2;;
+	-r)	WANTCTL=0; shift;;
+	-c)	WANTRING=0; shift;;
+	-h|--help)
+		sed -n '2,46p' "$0" | sed 's/^#//;s/^ //'
+		exit 0;;
+	*)	echo "splittrace: unknown argument $1" >&2; exit 1;;
+	esac
+done
+
+if [ ! -r "$KERNEL" ]; then
+	echo "splittrace: no kernel at $KERNEL" >&2
+	exit 1
+fi
+
+sym() {	# $1 symbol name -> hex address, empty if absent
+	python3 "$HERE/ksyms" "$KERNEL" -g "$1" 2>/dev/null |
+		awk -v n="$1" '$3==n{print $1; exit}'
+}
+
+KDADDR=`sym kerndate`
+A_RING=`sym splitev`
+A_NRING=`sym nsplitev`
+A_CTL=`sym splitev0`
+A_NCTL=`sym nsplitev0`
+A_LOST=`sym splitevlost`
+
+for v in A_RING A_NRING A_CTL A_NCTL; do
+	eval a=\$$v
+	if [ -z "$a" ]; then
+		echo "splittrace: $KERNEL has no $v symbol." >&2
+		echo "splittrace: this kernel predates the split trace --" >&2
+		echo "splittrace: see doc/usb-split-plan.ms Phase 1." >&2
+		exit 1
+	fi
+done
+
+#
+# THE RECORD SIZE IS 32 AND COMES FROM THE COMPILER, not from counting
+# the fields.  Six uints and two ushorts are 28 bytes and 7c pads the
+# struct to a multiple of eight; usbdwc.c carries
+#
+#	static char splitevsize[sizeof(Splitev) == 32? 1: -1];
+#
+# so a field added there without this number changing stops the build
+# rather than making every entry here garbage that still looks like
+# registers.  28 was written here first and was wrong.
+#
+ESZ=32
+NRINGMAX=512
+NCTLMAX=256
+
+#
+# What the image says the stamp should be, read at kerndate's address.
+# Verbatim from vmheld, for the reason spelled out there.
+#
+WANT=
+if [ -n "$KDADDR" ] && [ -r "$IMG" ]; then
+	WANT=`python3 - "$IMG" "$KDADDR" <<'PYEOF'
+import sys
+img, addr = sys.argv[1], int(sys.argv[2], 16)
+d = open(img, "rb").read()
+o = addr - 0x80000
+print(int.from_bytes(d[o:o+4], "little") if 0 <= o <= len(d)-4 else "")
+PYEOF`
+fi
+
+TMP=${TMPDIR:-/tmp}/jtag-splittrace.$$
+RINGBIN=$TMP.ring
+CTLBIN=$TMP.ctl
+trap 'rm -f "$TMP" "$RINGBIN" "$CTLBIN"' 0 1 2 15
+
+#
+# dump_image for the arrays, mdw for the three counters.  16KB and 8KB
+# as thousands of mdw lines would take minutes and would have to be
+# re-parsed out of openocd's output; dump_image writes the bytes.
+#
+( cd "$ROOT" && timeout 180 openocd -f "$ADAPTER" -f tools/jtag/raspi3b.cfg \
+	-c "init; halt; targets bcm2837.cpu0" \
+	-c "echo \"ST-STAMP\"; mdw ${KDADDR:-0} 1" \
+	-c "echo \"ST-NRING\"; mdw $A_NRING 1" \
+	-c "echo \"ST-NCTL\"; mdw $A_NCTL 1" \
+	-c "echo \"ST-LOST\"; mdw ${A_LOST:-0} 1" \
+	-c "dump_image $RINGBIN $A_RING `expr $NRINGMAX \* $ESZ`" \
+	-c "dump_image $CTLBIN $A_CTL `expr $NCTLMAX \* $ESZ`" \
+	-c "resume; exit" ) >"$TMP" 2>&1
+
+if ! grep -aq ST-NRING "$TMP"; then
+	echo "splittrace: the debugger did not answer; is the adapter attached?" >&2
+	grep -a 'Error' "$TMP" | head -3 >&2
+	exit 1
+fi
+
+val() {	# $1 label -> the first word printed after it
+	awk -v l="$1" '
+		$0 ~ l {seen=1; next}
+		seen && /^0x/ {sub(/^[^:]*: */, ""); print $1; exit}
+	' "$TMP"
+}
+dec() { python3 -c "print(int('$1',16))" 2>/dev/null || echo "?"; }
+
+stamp=`val ST-STAMP`
+if [ -n "$WANT" ] && [ -n "$stamp" ]; then
+	gotd=`dec "$stamp"`
+	if [ "$gotd" != "$WANT" ]; then
+		echo "splittrace: $KERNEL does NOT describe the running kernel" >&2
+		echo "splittrace:   $IMG says $WANT; the board read $gotd" >&2
+		echo "splittrace: so splitev's address came from one kernel and" >&2
+		echo "splittrace: was read in another.  The bytes dumped would be" >&2
+		echo "splittrace: whatever lives at that address in the RUNNING" >&2
+		echo "splittrace: kernel -- decodable, plausible, and not this" >&2
+		echo "splittrace: trace.  Rebuild from the commit the card holds." >&2
+		exit 2
+	fi
+	echo "splittrace: kernel matches the board (stamp $gotd)"
+fi
+
+if [ ! -s "$RINGBIN" ] || [ ! -s "$CTLBIN" ]; then
+	echo "splittrace: dump_image produced nothing" >&2
+	grep -a 'Error\|error' "$TMP" | head -3 >&2
+	exit 1
+fi
+
+NRING=`dec \`val ST-NRING\``
+NCTL=`dec \`val ST-NCTL\``
+LOST=`dec \`val ST-LOST\``
+
+exec python3 - "$RINGBIN" "$CTLBIN" "$NRING" "$NCTL" "$LOST" \
+	"$EPFILT" "$WANTRING" "$WANTCTL" "$NLAST" "$ESZ" <<'DECODER'
+import struct, sys
+
+ringf, ctlf = sys.argv[1], sys.argv[2]
+nring, nctl, lost = int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
+epfilt = sys.argv[6]
+wantring, wantctl = sys.argv[7] == "1", sys.argv[8] == "1"
+nlast = int(sys.argv[9])
+esz = int(sys.argv[10])
+
+FMT = "<6I2H4x"
+assert struct.calcsize(FMT) == esz, (struct.calcsize(FMT), esz)
+
+TAG = {1: "SS-ARM", 2: "SS-EV", 3: "CS-EV", 4: "PROMOTE",
+       5: "CS-RETRY", 6: "TERM", 7: "NAK-HALT"}
+
+# hcint, from dwcotg.h.  Order is bit order so a decoded value reads
+# the same way the register does.
+HCINT = [(1 << 0, "Xfercomp"), (1 << 1, "Chhltd"),  (1 << 2, "Ahberr"),
+         (1 << 3, "Stall"),    (1 << 4, "Nak"),     (1 << 5, "Ack"),
+         (1 << 6, "Nyet"),     (1 << 7, "Xacterr"), (1 << 8, "Bblerr"),
+         (1 << 9, "Frmovrun"), (1 << 10, "Datatglerr")]
+EPTYPE = ["ctl", "iso", "bulk", "intr"]
+PID = ["DATA0", "DATA2", "DATA1", "SETUP/MDATA"]
+POS = ["MIDDLE", "END", "BEGIN", "ALL"]
+
+
+def bits(v, table):
+    s = [n for m, n in table if v & m]
+    return "|".join(s) if s else ("-" if v == 0 else "?%#x" % v)
+
+
+def ep(r):
+    # hcchar: Devaddr 0x7f<<22, Epnum 0xf<<11
+    return "%d.%d" % ((r.hcchar >> 22) & 0x7f, (r.hcchar >> 11) & 0xf)
+
+
+class R:
+    __slots__ = ("hfnum", "hcchar", "hcsplt", "hcint", "hctsiz", "hcdma",
+                 "chan", "tag", "seq")
+
+    def __init__(self, b, seq):
+        (self.hfnum, self.hcchar, self.hcsplt, self.hcint,
+         self.hctsiz, self.hcdma, self.chan, self.tag) = \
+            struct.unpack(FMT, b)
+        self.seq = seq
+
+    def blank(self):
+        return (self.hfnum == 0 and self.hcchar == 0 and self.hcsplt == 0
+                and self.tag == 0)
+
+    def line(self):
+        return ("%6d ch%-2d %-8s ep%-5s %-4s %-3s  frm %4d.%d  "
+                "pkt %2d xfer %5d %-11s  dma %08x  %s  %s" % (
+                    self.seq, self.chan, TAG.get(self.tag, "?%d" % self.tag),
+                    ep(self), EPTYPE[(self.hcchar >> 18) & 3],
+                    "in" if self.hcchar & (1 << 15) else "out",
+                    # hfnum: Frnum 0xffff<<0 counts microframes
+                    (self.hfnum & 0x3fff) >> 3, self.hfnum & 7,
+                    (self.hctsiz >> 19) & 0x3ff, self.hctsiz & 0x7ffff,
+                    PID[(self.hctsiz >> 29) & 3],
+                    self.hcdma,
+                    # hcsplt: Compsplt 1<<16, Spltena 1<<31,
+                    # Xactpos 0x3<<14, Hubaddr 0x7f<<7, Prtaddr 0x7f<<0
+                    "CS" if self.hcsplt & (1 << 16) else "ss",
+                    bits(self.hcint, HCINT)))
+
+
+def load(path, n, cap, ring):
+    raw = open(path, "rb").read()
+    out = []
+    if ring:
+        # nsplitev counts every record ever written; with n >= cap the
+        # oldest live entry is at n % cap and the sequence numbers are
+        # the absolute ones, so a gap in them is a real loss and not a
+        # decoding error.
+        first = max(0, n - cap)
+        for k in range(first, n):
+            i = k % cap
+            out.append(R(raw[i * esz:(i + 1) * esz], k))
+    else:
+        for i in range(min(n, cap)):
+            out.append(R(raw[i * esz:(i + 1) * esz], i))
+    return out
+
+
+def show(title, rs, note):
+    print()
+    print("== %s ==" % title)
+    print("   %s" % note)
+    if not rs:
+        print("   (empty)")
+        return
+    if epfilt:
+        rs = [r for r in rs if ep(r) == epfilt]
+        if not rs:
+            print("   (nothing for ep%s)" % epfilt)
+            return
+    if nlast and len(rs) > nlast:
+        rs = rs[-nlast:]
+    for r in rs:
+        print("   " + r.line())
+    # The endpoints present, so a reader can see at a glance whether the
+    # window holds one conversation or several interleaved.
+    eps = {}
+    for r in rs:
+        eps[ep(r)] = eps.get(ep(r), 0) + 1
+    print("   endpoints in this window: " +
+          ", ".join("ep%s x%d" % (k, v) for k, v in sorted(eps.items())))
+
+
+print("splittrace: ring wrote %d records (cap 512, %d overwritten); "
+      "control holds %d of 256" % (nring, lost, nctl))
+if nring == 0:
+    print("splittrace: NOTHING WAS RECORDED.  Either no split transfer has"
+          " run since boot -- no device behind the hub -- or splitlog is"
+          " not being reached.  That is a finding about the trace, not"
+          " about the hub.")
+if nctl == 0 and nring > 0:
+    print("splittrace: the CONTROL array is empty while the ring is not:"
+          " no LOW-SPEED CONTROL split has run, so the only low-speed"
+          " device never enumerated and there is nothing to compare the"
+          " failure against.")
+
+if wantctl:
+    show("CONTROL: low-speed control splits, first %d" % min(nctl, 256),
+         load(ctlf, nctl, 256, False),
+         "the mouse's own control endpoint -- same device, same TT, "
+         "and it WORKS")
+if wantring:
+    show("RING: the most recent split transitions",
+         load(ringf, nring, 512, True),
+         "after enumeration this is the live periodic traffic")
+
+print()
+print("Reading it: SS-ARM is chanio enabling the channel; SS-EV and CS-EV")
+print("are the handler's event with the phase AS IT ARRIVED (the ss/CS")
+print("column); PROMOTE and CS-RETRY re-enable the channel; TERM is the")
+print("event taken as final and the waiter woken.  A start-split that")
+print("never reaches PROMOTE is one whose complete-split was never")
+print("issued.  frm is frame.microframe at the transition.")
+DECODER
