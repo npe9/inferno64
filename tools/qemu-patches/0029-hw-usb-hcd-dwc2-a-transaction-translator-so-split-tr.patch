@@ -1,0 +1,308 @@
+From 3c6829c3fb6aa03b485851504c6276fd99d788cf Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Mon, 12 Oct 2026 06:15:42 -0400
+Subject: [PATCH] hw/usb/hcd-dwc2: a transaction translator, so split
+ transactions mean  something
+
+The model stored HCSPLT and never read it.  A guest that set SPLTENA got
+its transaction performed as if it were a direct one: every split
+succeeded by accident, in one stage, with no ACK and no NYET -- which
+are the two HCINT bits this model never set at all.
+
+WHAT IS MODELLED.  One buffered result per channel, in DWC2Packet.  A
+start-split performs the transaction against the downstream device --
+usb_find_device() already recurses through hubs -- and leaves the answer
+in p->packet with split_pending set, reporting the hub's ACK|CHHLTD and
+no data.  The matching complete-split re-enters dwc2_handle_packet()
+with send == false, which is the path an asynchronous completion already
+takes, so the DMA write-back, the HCTSIZ/HCDMA bookkeeping and the
+cleanup all happen exactly once in the existing tail.  A complete-split
+with nothing buffered is answered NYET.
+
+NYET and not NAK, and for a periodic endpoint the difference is the
+whole protocol: NYET means "the translator has not finished, ask again"
+while NAK is the DEVICE's own "nothing to report", which is terminal and
+sends the guest back to a fresh start-split.  Answering NAK would make a
+too-early complete-split indistinguishable from an idle endpoint.
+
+A COMPLETE-SPLIT IS ANSWERED BEFORE THE DEVICE LOOKUP, and SET_ADDRESS
+is the proof that it has to be.  On the wire a complete-split is
+addressed to the hub; the device is not involved.  With the lookup first
+-- and a failure returning silently, with no interrupt -- every
+full-speed device behind a high-speed hub wedged at its new address:
+
+	usb_set_addr dev 4
+	usb_dwc2_enable_chan ch 0 dev 0x0 ep 0
+	no device at addr 0 ep 0 hcsplt 8001c102
+
+qemu applies SET_ADDRESS at the SETUP stage, so the device moves to
+address 4 during that stage's START-split and the matching
+COMPLETE-split, still correctly addressed to 0, finds nothing.  The
+guest waited out twenty seconds and reported `completion timeout'.
+
+AND THE CTRL/BULK NAK AUTO-RETRY IS NOT FOR A SPLIT CHANNEL.  It leaves
+the channel enabled and sets needs_service, so dwc2_work_bh re-issues
+the transaction every 250us -- right when the model is the only one
+retrying, wrong when the guest's split state machine is.  On a split
+channel both ran, the work queue re-running the same transaction behind
+the guest's back.
+
+WHAT IS NOT MODELLED, stated because the shape of the model bounds what
+it can ever show.  There is no per-microframe scheduling and no
+XACTPOS: a real translator buffers one transaction per periodic
+endpoint per microframe, and this does not pretend to, because the
+model has no usable microframe clock to pretend with --
+dwc2_frame_boundary() divides (now - sof_time) by s->fi, which is
+USB_FRMINTVL - 1 = 11999, a BIT-TIME count dividing NANOSECONDS, so
+FRNUM jumps by about 83 per 1 ms tick and never by one.
+
+WHAT IT BUYS, measured with a mutation test against a guest kernel
+(Inferno on -M raspi3b) and not asserted:
+
+  mutant                              split cfg   plain cfg
+  ----------------------------------  ---------   ---------
+  none                                ok 49       ok 52
+  stale interrupt accumulator (RACE)  ok 49       ok 52
+  exact-equality split phase test     FAIL        ok 52
+
+The third is the real defect that stopped every full- and low-speed
+device enumerating behind a hub on Broadcom silicon, and only the split
+configuration notices.  The second is a race, and a model that runs the
+whole transfer synchronously inside the CHEN store has no race to hit --
+so this catches protocol defects and not timing ones, which is worth
+knowing before anyone trusts it.
+
+With it in, the guest reproduces the silicon failure exactly:
+
+	usbd: ep2.0: port 2: full ep4.0 vid 0627 did 0001 class 0
+	usbd: ep4.0: boot mouse on ep4.1
+	usbdwc: ep4.1 INTR-IN NAK 1: hcint 00000012 COMPLETE-split
+
+-- a periodic start-split answered ACK and the complete-split answered
+NAK, which is what a real Pi 3B prints, where before the translator the
+START-split was answered NAK because the model never raised ACK.
+
+vmstate version 2 for split_pending, minimum left at 1: a version 1
+stream leaves it false, which is the right default.
+---
+ hw/usb/hcd-dwc2.c | 138 +++++++++++++++++++++++++++++++++++++++++++++-
+ hw/usb/hcd-dwc2.h |  17 ++++++
+ 2 files changed, 154 insertions(+), 1 deletion(-)
+
+diff --git a/hw/usb/hcd-dwc2.c b/hw/usb/hcd-dwc2.c
+index 3d95ed5..02162c1 100644
+--- a/hw/usb/hcd-dwc2.c
++++ b/hw/usb/hcd-dwc2.c
+@@ -320,6 +320,46 @@ babble:
+         return;
+     }
+ 
++    /*
++     * THE START-SPLIT ENDS HERE, with the answer kept and not delivered.
++     *
++     * USB 2.0 11.17: a start-split hands the transaction to the hub's
++     * translator, which performs it on the downstream bus; the host then
++     * issues complete-splits to collect the result.  So the transaction
++     * has just been performed against the downstream device -- the
++     * lookup already recurses through hubs -- and what the guest must
++     * see now is the hub's acknowledgement, not the device's answer.
++     *
++     * p->packet is left INITIALISED and uncleaned on purpose: it is the
++     * buffer.  The matching complete-split re-enters this function with
++     * send == false, which is the same path an asynchronous completion
++     * takes, and the tail below then does the DMA write-back, the
++     * hctsiz/hcdma bookkeeping and the cleanup exactly once.
++     *
++     * An OUT start-split carries the data, and it has already gone: the
++     * dma_memory_read and usb_handle_packet above did it.  The
++     * complete-split then collects only the handshake, which is what the
++     * specification says it does.
++     */
++    if ((s->hreg1[index + 1] & HCSPLT_SPLTENA) &&
++        !(s->hreg1[index + 1] & HCSPLT_COMPSPLT)) {
++        p->devadr = devadr;
++        p->epnum = epnum;
++        p->epdir = epdir;
++        p->mps = mps;
++        p->pid = pid;
++        p->index = index;
++        p->pcnt = pcnt;
++        p->len = tlen;
++        p->split_pending = true;
++        p->needs_service = false;
++        hcchar &= ~HCCHAR_CHENA;
++        s->hreg1[index] = hcchar;
++        s->hreg1[index + 2] |= HCINTMSK_ACK | HCINTMSK_CHHLTD;
++        dwc2_update_hc_irq(s, index);
++        return;
++    }
++
+     if (p->packet.status == USB_RET_SUCCESS) {
+         if (actual > tlen) {
+             p->packet.status = USB_RET_BABBLE;
+@@ -357,11 +397,30 @@ babble:
+     } else {
+         intr |= pintr[stsidx];
+         if (p->packet.status == USB_RET_NAK &&
++            !(s->hreg1[index + 1] & HCSPLT_SPLTENA) &&
+             (eptype == USB_ENDPOINT_XFER_CONTROL ||
+              eptype == USB_ENDPOINT_XFER_BULK)) {
+             /*
+              * for ctrl/bulk, automatically retry on NAK,
+              * but send the interrupt anyway
++             *
++             * NOT FOR A SPLIT CHANNEL.  This retry leaves the channel
++             * enabled and sets needs_service, so dwc2_work_bh re-issues
++             * the transaction every 250us -- which is the right thing
++             * when the model is the only one retrying, and the wrong
++             * thing when the guest's own split state machine is.  On a
++             * split channel both run: the complete-split has already
++             * halted the channel and the guest is about to re-start the
++             * start-split, while the work queue re-runs the SAME
++             * transaction against the device behind its back.
++             *
++             * Measured: with this ungated, no full-speed device behind
++             * a high-speed hub got past its first transfer at its new
++             * address -- `ep4.0 completion timeout channel 0' and then
++             * `error intr 00000082' (Xacterr|Chhltd), twenty seconds of
++             * nothing.  A NAK on a split channel is the device's answer
++             * and belongs to the guest, which re-starts the start-split
++             * on it exactly as Linux's dwc2 does.
+              */
+             intr &= ~HCINTMSK_RESERVED14_31;
+             s->hreg1[index + 2] |= intr;
+@@ -631,6 +690,76 @@ static void dwc2_enable_chan(DWC2State *s,  uint32_t index)
+     dev = dwc2_find_device(s, devadr);
+ 
+     trace_usb_dwc2_enable_chan(index >> 3, dev, &p->packet, epnum);
++
++    /*
++     * A COMPLETE-SPLIT IS ANSWERED BEFORE THE DEVICE IS LOOKED UP, AND
++     * SET_ADDRESS IS THE PROOF THAT IT HAS TO BE.
++     *
++     * On the wire a complete-split is addressed to the HUB, not to the
++     * device: the translator already holds the answer and the device is
++     * not involved.  This model had it the other way round -- the
++     * device lookup came first and a failure returned silently, with no
++     * interrupt -- and SET_ADDRESS then wedged every full-speed device
++     * behind a high-speed hub.
++     *
++     * The sequence, traced:
++     *
++     *   usb_set_addr dev 4
++     *   usb_dwc2_enable_chan ch 0 dev 0x0 ep 0
++     *   TEMPDBG: no device at addr 0 ep 0 hcsplt 8001c102
++     *
++     * qemu applies SET_ADDRESS at the SETUP stage, so the device moves
++     * to address 4 during that stage's START-split; the guest then
++     * issues the matching COMPLETE-split still addressed to 0 -- which
++     * is correct, a control transfer does not change address
++     * mid-transfer -- and nothing answers to 0 any more.  The channel
++     * stayed enabled with no interrupt, the guest waited out
++     * chanwait's twenty seconds and reported
++     *
++     *   usbdwc: ep4.0 completion timeout channel 0
++     *   usbdwc: ep4.0 error intr 00000082
++     *
++     * dwc2_handle_packet() with send == false touches neither dev nor
++     * ep -- it is the same path an asynchronous completion takes -- so
++     * passing them through is harmless and the NULL is never
++     * dereferenced.
++     */
++    if (s->hreg1[index + 1] & HCSPLT_SPLTENA) {
++        if (s->hreg1[index + 1] & HCSPLT_COMPSPLT) {
++            if (!p->split_pending) {
++                /*
++                 * NYET, not NAK, and the difference is load-bearing for
++                 * a periodic endpoint: NYET means "the translator has
++                 * not finished, ask again" while NAK is the DEVICE's
++                 * own "nothing to report", which is terminal and sends
++                 * the guest back to a fresh start-split.  Answering NAK
++                 * here would make a too-early complete-split
++                 * indistinguishable from an idle endpoint.
++                 */
++                hcchar &= ~HCCHAR_CHENA;
++                s->hreg1[index] = hcchar;
++                s->hreg1[index + 2] |= HCINTMSK_NYET | HCINTMSK_CHHLTD;
++                dwc2_update_hc_irq(s, index);
++                return;
++            }
++            p->split_pending = false;
++            dwc2_handle_packet(s, devadr, dev, NULL, index, false);
++            qemu_bh_schedule(s->async_bh);
++            return;
++        }
++        /*
++         * A fresh start-split abandons whatever the last one left.
++         * dwc2 re-starts the start-split on a NAK or an error rather
++         * than retrying the complete-split, so an answer that was never
++         * collected is stale and must not be handed to the NEXT
++         * transaction's complete-split.
++         */
++        if (p->split_pending) {
++            p->split_pending = false;
++            usb_packet_cleanup(&p->packet);
++        }
++    }
++
+     if (dev == NULL) {
+         return;
+     }
+@@ -1330,6 +1459,7 @@ static void dwc2_reset_enter(Object *obj, ResetType type)
+ 
+     for (i = 0; i < DWC2_NB_CHAN; i++) {
+         s->packet[i].needs_service = false;
++        s->packet[i].split_pending = false;
+     }
+ }
+ 
+@@ -1417,7 +1547,12 @@ static void dwc2_init(Object *obj)
+ 
+ static const VMStateDescription vmstate_dwc2_state_packet = {
+     .name = "dwc2/packet",
+-    .version_id = 1,
++    /*
++     * 2: split_pending.  A stream from version 1 leaves it false, which
++     * is the right default -- no split in progress -- so the minimum is
++     * left at 1 and an older stream still loads.
++     */
++    .version_id = 2,
+     .minimum_version_id = 1,
+     .fields = (const VMStateField[]) {
+         VMSTATE_UINT32(devadr, DWC2Packet),
+@@ -1431,6 +1566,7 @@ static const VMStateDescription vmstate_dwc2_state_packet = {
+         VMSTATE_INT32(async, DWC2Packet),
+         VMSTATE_BOOL(small, DWC2Packet),
+         VMSTATE_BOOL(needs_service, DWC2Packet),
++        VMSTATE_BOOL(split_pending, DWC2Packet),
+         VMSTATE_END_OF_LIST()
+     },
+ };
+diff --git a/hw/usb/hcd-dwc2.h b/hw/usb/hcd-dwc2.h
+index 2d5a569..3631b05 100644
+--- a/hw/usb/hcd-dwc2.h
++++ b/hw/usb/hcd-dwc2.h
+@@ -55,6 +55,23 @@ struct DWC2Packet {
+     int32_t async;
+     bool small;
+     bool needs_service;
++    /*
++     * The transaction translator, all of it: one buffered result per
++     * channel.  A start-split runs the transaction against the
++     * downstream device and leaves the answer HERE, in p->packet, with
++     * this flag set; the matching complete-split hands that answer to
++     * the guest.  A complete-split with the flag clear is answered
++     * NYET, which is what "the translator has not finished" means.
++     *
++     * One per channel and not one per (hub, port, endpoint) because a
++     * channel is what the guest's split state machine owns: dwc2 holds
++     * the channel from the start-split to the complete-split and does
++     * not reuse it in between.  A real translator buffers per periodic
++     * endpoint per microframe; this does not pretend to, and the model
++     * has no usable microframe clock to pretend with -- see the note
++     * about s->fi in dwc2_frame_boundary().
++     */
++    bool split_pending;
+ };
+ 
+ struct DWC2State {

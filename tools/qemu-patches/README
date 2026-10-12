@@ -1150,3 +1150,77 @@ attached, a default kernel prints:
 	make it OBSERVABLE.  That needs the translator in
 	hcd-dwc2.c, which never reads HCSPLT and never raises ACK or
 	NYET: Phase 2 of doc/usb-split-plan.ms.
+
+0029 hw/usb/hcd-dwc2: a transaction translator, so split transactions
+	mean something.  The model stored HCSPLT and never read it, so a
+	guest that set SPLTENA got its transaction performed as if it
+	were a direct one: every split succeeded by accident, in one
+	stage, with no ACK and no NYET -- the two HCINT bits the model
+	never set at all.
+
+	One buffered result per channel.  A start-split performs the
+	transaction against the downstream device and leaves the answer
+	in p->packet, reporting ACK|CHHLTD and no data; the matching
+	complete-split re-enters dwc2_handle_packet() with send == false
+	-- the path an asynchronous completion already takes -- so the
+	DMA write-back and the HCTSIZ/HCDMA bookkeeping happen exactly
+	once in the existing tail.  Nothing buffered means NYET.
+
+	THREE THINGS IT HAD TO GET RIGHT, each one measured after
+	getting it wrong:
+
+	  - NYET and not NAK when nothing is buffered.  For a periodic
+	    endpoint they are different answers: NYET is "the translator
+	    has not finished" and NAK is the DEVICE's "nothing to
+	    report", which is terminal.  NAK would make a too-early
+	    complete-split look like an idle endpoint.
+
+	  - a complete-split is answered BEFORE the device lookup.  On
+	    the wire it is addressed to the hub.  With the lookup first,
+	    SET_ADDRESS wedged every full-speed device behind a
+	    high-speed hub: qemu applies the address at the SETUP stage,
+	    so the device moves during that stage's start-split and the
+	    matching complete-split, still correctly addressed to 0,
+	    found nothing and returned with no interrupt.
+
+	  - the ctrl/bulk NAK auto-retry is skipped on a split channel.
+	    It leaves the channel enabled and sets needs_service, so
+	    dwc2_work_bh re-issues every 250us -- right when the model
+	    is the only one retrying, wrong when the guest's split state
+	    machine is.
+
+	WHAT IT DOES NOT MODEL: per-microframe scheduling, and XACTPOS.
+	A real translator buffers one transaction per periodic endpoint
+	per microframe; this does not pretend to, because the model has
+	no usable microframe clock -- dwc2_frame_boundary() divides
+	(now - sof_time) by s->fi, which is USB_FRMINTVL - 1 = 11999, a
+	BIT-TIME count dividing NANOSECONDS, so FRNUM jumps by about 83
+	per 1 ms tick and never by one.  That is a pre-existing defect
+	and is deliberately not fixed here: it would move HFNUM for
+	every board the suite runs.
+
+	WHAT IT BUYS, by mutation test against an Inferno guest on
+	-M raspi3b, not by assertion:
+
+	  mutant                             raspi3b-split  raspi3b-usb
+	  ---------------------------------  -------------  -----------
+	  none                               ok 49          ok 52
+	  stale interrupt accumulator (RACE) ok 49          ok 52
+	  exact-equality split phase test    FAIL           ok 52
+
+	The third is the real defect that kept every full- and low-speed
+	device off the Pi 3B's hub on silicon, and only the split
+	configuration notices it.  The second is a RACE, and a model
+	that runs the whole transfer synchronously inside the CHEN store
+	has no race to hit -- so this catches protocol defects and not
+	timing ones.  Worth knowing before trusting it.
+
+	With it in, the guest reproduces the silicon failure exactly:
+
+		usbd: ep4.0: boot mouse on ep4.1
+		usbdwc: ep4.1 INTR-IN NAK 1: hcint 00000012 COMPLETE-split
+
+	-- a periodic start-split answered ACK and the complete-split
+	answered NAK, which is what a real Pi 3B prints.  Before the
+	translator the START-split was answered NAK, because the model
+	never raised ACK and the guest's splitcontinue() never promoted.

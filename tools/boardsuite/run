@@ -756,7 +756,25 @@ config_last() {
 	# from -OK to -NONE when the split path cannot reach a full-speed
 	# device behind a high-speed hub.
 	#
-	raspi3b-split)		echo 'RASPI3B-SH-OK'; echo 'USB-MOUSE'; echo 'TIME-';;
+	#
+	# TIME-NONE, NOT `TIME-'.  The prefix form is what raspi3b-usb
+	# uses and it is wrong here: `TIME-' also matches TIME-TRY, which
+	# the board prints when it STARTS asking an NTP server, about
+	# thirty seconds before it gives up.  With the mouse reporting
+	# promptly on this configuration, TIME-TRY satisfied the wait, the
+	# run was stopped mid-NTP, and the marker diff came back one
+	# marker short -- 48 against a 49 baseline, a red run with nothing
+	# wrong.  An anchor that is also a prefix of an earlier marker is
+	# not an anchor.
+	#
+	# TIME-NONE and not an alternation with TIME-OK because allseen()
+	# uses plain grep and the grep on this host is ugrep, which drops
+	# alternation matches.  NTP has never answered under qemu's
+	# user-mode networking, so TIME-NONE is the deterministic one; if
+	# it ever did answer, this would wait out the timeout and SAY so
+	# rather than quietly passing.
+	#
+	raspi3b-split)		echo 'RASPI3B-SH-OK'; echo 'USB-MOUSE'; echo 'TIME-NONE';;
 	# Two markers, both required, because on these two neither one is
 	# reliably last.  The pointer check reports when its own timeout
 	# runs out and the shell marker comes after the kfs ream, and the
