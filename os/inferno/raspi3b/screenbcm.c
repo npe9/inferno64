@@ -702,8 +702,51 @@ fbpaintcursor(Point p)
 
 /*
  * Restore old footprint, save under new hotpoint, paint glyph.
- * Safe without drawlock; never blocks on Bounce holding drawlock.
+ *
+ * SERIALISED AGAINST ITSELF, and it was not.
+ *
+ * "Safe without drawlock; never blocks on Bounce holding drawlock" is
+ * what this comment used to say, and it is true as far as it goes: this
+ * takes no drawlock and so cannot be held off by a Dis program that
+ * has it.  But not deadlocking is not the same as being safe, and this
+ * function is reached from two contexts with nothing between them:
+ *
+ *	flushmemscreen()	drawlock held
+ *	cursorproc()		a kproc, no lock at all
+ *	setcursor()		a /dev/cursor write
+ *	cursorenable()		a /dev/pointer open
+ *
+ * All four mutate the same three pieces of state -- underok, curslast
+ * and the under[] pixel buffer -- and two of them can run at once.
+ *
+ * WHAT THAT LOOKS LIKE ON A SCREEN.  Interleave two calls A and B:
+ *
+ *	A  fbrestoreunder()	underok = 0
+ *	B  fbrestoreunder()	skipped, underok is already 0
+ *	A  fbsaveunder(nA)	under[] = pixels at nA
+ *	A  fbpaintcursor(pA)	the cursor is now ON the framebuffer
+ *	B  fbsaveunder(nB)	under[] = pixels at nB -- WHICH NOW
+ *				CONTAIN A's CURSOR
+ *	B  fbpaintcursor(pB)
+ *
+ * and the next restore writes A's cursor glyph back into the
+ * framebuffer as though it were background.  It is then permanent:
+ * nothing will ever restore over it, because under[] no longer holds
+ * the pixels that were there before.  A moving pointer leaves a trail
+ * of stamped cursors.
+ *
+ * A plain Lock and not drawlock, so the property the old comment
+ * claimed is kept: this still cannot be held off by a Dis program.
+ * And not ilock: every caller is process context -- the two /dev
+ * paths, the flush, and the kproc -- so splhi would buy nothing and
+ * cost interrupt latency across a copy into uncached scanout memory.
+ *
+ * curscontend counts the collisions, because a lock added on the
+ * strength of an argument is a lock nobody can show was needed.
  */
+static Lock curslock;
+ulong	curscontend;		/* cursorcompose found curslock held */
+
 void
 cursorcompose(void)
 {
@@ -713,6 +756,19 @@ cursorcompose(void)
 
 	if(!cursenable || fb == nil)
 		return;
+	if(!canlock(&curslock)){
+		curscontend++;
+		lock(&curslock);
+	}
+	/*
+	 * Re-tested under the lock: cursordisable() can have run between
+	 * the test above and here, and composing after it would paint a
+	 * cursor nothing will take away.
+	 */
+	if(!cursenable || fb == nil){
+		unlock(&curslock);
+		return;
+	}
 	cycles(&t0);
 	p = mousexy();
 	if(underok)
@@ -725,6 +781,7 @@ cursorcompose(void)
 	cycles(&t1);
 	ncompose++;
 	tcycles_compose += t1 - t0;
+	unlock(&curslock);
 }
 
 void
@@ -743,7 +800,16 @@ screenstats(void)
 	print("skip ");
 	print("%llud ", ncomposeskip);
 	print("cyc ");
-	print("%llud\n", tcycles_compose);
+	print("%llud ", tcycles_compose);
+	/*
+	 * COLLISIONS, which is the number that says whether serialising
+	 * cursorcompose() was necessary rather than merely defensible.
+	 * Nonzero means two callers were inside it at once -- the flush
+	 * under drawlock and the swcursor kproc -- which is what stamps a
+	 * cursor permanently into the framebuffer.
+	 */
+	print("collide ");
+	print("%lud\n", curscontend);
 	print("SCREEN fbloop raw lines %llud bytes %llud movecyc %llud"
 		" cleancyc %llud hz %lud\n",
 		nfbline, nfbbyte, tcycles_fbmove, tcycles_fbclean,
