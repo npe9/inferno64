@@ -19443,6 +19443,56 @@ says which direction
 HID-to-devpointer remap went, and it is the evidence line.  The Pi 3
 reaches it over dwc2 and the Pi 4 over xHCI.
 .PP
+.B "WHAT THIS MARKER DOES NOT COVER, said here because for weeks it was
+.B "read as covering it."
+.CW USB-MOUSE-OK
+and
+.CW USB-KBD-OK
+are evidence about
+.CW usbd 's
+HID decode, the
+.CW #m/pointer
+and
+.CW /dev/keyboard
+paths, and the controller's ability to run an interrupt endpoint.
+.B "They say nothing whatever about split transactions,"
+for two independent reasons, and on silicon the split path is the only
+way any of this reaches a real mouse.
+.IP \(bu
+.B "The devices are on the root port."
+The configuration attaches
+.CW "-device usb-mouse -device usb-kbd -device usb-tablet"
+with no
+.CW bus=
+argument, so they sit on the controller's own port and not behind the
+.CW usb-lan9514 .
+There is no transaction translator between them and the host, so
+.CW Spltena
+is never set for them and
+.CW usbdwc.c 's
+split path is never entered.
+.IP \(bu
+.B "And qemu's dwc2 model has no split support to enter."
+.CW hw/usb/hcd-dwc2.c
+mentions
+.CW HCSPLT
+exactly once, in the array of register names used for tracing, and
+.CW hw/usb/hcd-dwc2.h
+once more as the accessor macro. Nothing in the model reads
+.CW Spltena
+or
+.CW Compsplt .
+.PP
+The consequence is worth stating in one sentence because it is the
+expensive one:
+.B "raspi3b-usb was 52 markers green while no full\- or low\-speed device
+.B "could enumerate behind the hub on the real board,"
+and it would be green again if the split path were deleted. A green
+board suite does not mean splits work, and this configuration cannot be
+made to mean it without implementing splits in the model \(em which is
+Phase 2 of
+.CW doc/usb-split-plan.ms .
+.PP
 Attaching it moved
 .CW config_last .
 With a mouse the check reports as soon as it has what it wants instead

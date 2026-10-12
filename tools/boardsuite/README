@@ -558,6 +558,33 @@ USB-MOUSE-OK ... buttons 6 is the evidence line: 6 is right (4) and
 middle (2) together, and the number is what says which direction
 usbd's HID-to-devpointer remap went.  Both boards report 6.
 
+AND NEITHER MARKER SAYS ANYTHING ABOUT SPLIT TRANSACTIONS, which is
+worth stating here because for weeks it was read as though it did.
+
+The devices are attached with "-device usb-mouse -device usb-kbd
+-device usb-tablet" and no bus= argument, so they sit on the
+controller's own port rather than behind the usb-lan9514.  With no
+transaction translator between them and the host, Spltena is never set
+for them and usbdwc.c's split path is never entered.  And the model
+could not run it anyway: hw/usb/hcd-dwc2.c mentions HCSPLT exactly once,
+in the array of register names used for tracing, and hcd-dwc2.h once
+more as the accessor macro -- nothing in it reads Spltena or Compsplt.
+
+So raspi3b-usb was 52 markers green while no full- or low-speed device
+could enumerate behind the hub on the real board, and it would be green
+again if the split path were deleted outright.  That is not a defect in
+this configuration; it is the limit of it.  USB-MOUSE-OK and USB-KBD-OK
+are evidence about usbd's HID decode, the #m/pointer and /dev/keyboard
+paths, and the controller running an interrupt endpoint at all -- which
+is real and was worth having.  They are not evidence that a device
+behind a hub works, and on silicon that is the only way a mouse is ever
+reached.
+
+Making this configuration able to fail when splits break means
+implementing splits in the model, which is Phase 2 of
+doc/usb-split-plan.ms.  Until then the only instrument for that path is
+tools/jtag/splittrace against the board.
+
 Both also carry a usb-tablet, which is a different device in the one
 way that matters: it offers no boot protocol, so nothing in usbd's
 fixed-offset mouse decode can read it, and it is what the HID
