@@ -78,7 +78,135 @@ The phases below build the three missing things, in increasing cost, and
 each one has an acceptance test that does not depend on the mouse
 working.
 .NH 1
-Phase 0.  An oracle to read \(em no board, no code
+PHASE 0 IS DONE, and it changes the shape of the work
+.LP
+The oracle is on this disk after all:
+.CW /Users/npe/src/linux-cursor/linux/drivers/usb/dwc2/ .
+Three things read out of it, each contradicting or reframing an earlier
+attempt.
+.NH 2
+What dwc2 does, and where
+.LP
+.CW dwc2_hc_start_transfer() ,
+.CW drivers/usb/dwc2/hcd.c :
+.P1
+if (chan->do_split) {
+        num_packets = 1;
+        if (chan->complete_split && !chan->ep_is_in)
+                chan->xfer_len = 0;           /* CSPLIT OUT */
+        else if (chan->ep_is_in || chan->xfer_len > chan->max_packet)
+                chan->xfer_len = chan->max_packet;
+        else if (!chan->ep_is_in && chan->xfer_len > 188)
+                chan->xfer_len = 188;
+
+        /* For split set ec_mc for immediate retries */
+        if (chan->ep_type == INT || chan->ep_type == ISOC)
+                ec_mc = 3;
+        else
+                ec_mc = 1;
+}
+.P2
+.CW dwc2_hc_nak_intr() ,
+.CW drivers/usb/dwc2/hcd_intr.c ,
+whose comment reads
+.I "Re-start the SSPLIT transfer" :
+.P1
+if (chan->do_split) {
+        if (chan->complete_split)
+                qtd->error_count = 0;
+        qtd->complete_split = 0;              /* back to the START-split */
+        qtd->num_naks++;
+        qtd->qh->want_wait = qtd->num_naks >= DWC2_NAKS_BEFORE_DELAY && ...;
+        dwc2_halt_channel(hsotg, chan, qtd, DWC2_HC_XFER_NAK);
+}
+.P2
+.NH 2
+Three findings
+.IP 1.
+.B "THIS DRIVER'S NAK HANDLING IS ALREADY RIGHT, and the plan was wrong."
+A NAK on a complete\-split means restart the start\-split, which is
+exactly what the main loop does by clearing
+.CW Compsplt .
+The earlier prescription here \(em retry the complete\-split on NAK \(em
+is contradicted by the oracle, and that is why attempt 7 regressed. That
+prescription is withdrawn.
+.IP 2.
+.B "MULTICNT is the split retry count and this driver always writes 1."
+.CW chansetup()
+sets
+.CW 1<<OMulticnt
+unconditionally; dwc2 asks for
+.B 3
+on a periodic split, which is how many immediate retries the core makes
+for itself. Measured here:
+.CW hcchar
+.CW 215e8805 ,
+MC 1. None of the seven attempts looked at this field.
+.IP 3.
+.B "num_packets = 1 applies to EVERY split, not just periodic ones,"
+and an IN split asks for
+.CW max_packet
+exactly rather than a rounded total.
+.NH 2
+AND THE RULES DO NOT GRAFT ON, which is the real finding
+.LP
+Both were applied \(em MC 3 for periodic splits, one packet and
+.CW maxpkt
+for every split \(em and the result was no reports and
+.CW "mouse gone" ,
+the same regression attempt 7 produced. Reverted.
+.PP
+.B "The reason is structural."
+dwc2 can program one packet per split because it does its own
+bookkeeping:
+.CW chan->xfer_count
+and
+.CW chan->xfer_buf ,
+advanced by hand
+.CW ( "chan->xfer_count += bcnt; chan->xfer_buf += bcnt;"
+in
+.CW hcd_intr.c )
+plus a separate
+.CW ssplit_out_xfer_count ,
+and the channel re\-programmed for each packet.
+.PP
+.CW chanio()
+is a different shape. It programs
+.CW hctsiz
+once for the whole transfer, lets the hardware advance
+.CW hcdma
+and
+.CW Pktcnt
+across packets, and measures progress as
+.CW "n = hc->hcdma - hcdma" .
+Telling it that a transfer is one packet while it still accounts for
+.CW len
+bytes leaves the two disagreeing, and the transfer errors.
+.PP
+.B "So this is not a register to find."
+It is
+.CW chanio 's
+transfer loop restructured to program one packet per split and keep its
+own offset \(em dwc2's shape \(em with the split rules then following
+naturally. That is the work, and it explains why eight one\-line changes
+failed: every one of them was a fragment of a different design.
+.NH 2
+What Phase 0 leaves for the rest
+.IP \(bu
+Phase 1's trace is still worth building, and more so: a restructured
+loop needs a before\-and\-after of the transition sequence, which a
+rate\-limited print cannot give.
+.IP \(bu
+Phase 2's model is unchanged in value but no longer the only oracle. Its
+acceptance tests stand.
+.IP \(bu
+Phase 3 now has a definite shape: port
+.CW chanio 's
+split path to per\-packet programming with explicit bookkeeping, then
+apply MC 3 and the one\-packet rules, which are known\-good only in that
+design.
+.NH 1
+Phase 0 as originally written \(em an oracle to read \(em no board, no code
 .LP
 .B "Goal:"
 a written state\-machine table in this document \(em phase (start or
