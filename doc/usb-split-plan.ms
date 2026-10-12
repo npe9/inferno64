@@ -1533,6 +1533,64 @@ of the mouse is a single programming that has looped thousands of times.
 On silicon, build 1791803556:
 .CW "USB-SPLITPKT-OK periodic split programmed 1 packet of 5" .
 .NH 2
+Three more numbers off the board, none of which needed a hand
+.LP
+.B "Nine multi-packet CONTROL splits completed, nine for nine, and that
+.B "is what justifies the `periodic only' scope."
+Do the arithmetic on one read:
+.CW pkt1
+37 and
+.CW pktn
+9 against 45 completions, with the mouse's single programming never
+completing \(em 37 + 9 \(mi 1 = 45. So
+.B "every one of the nine multi-packet splits completed."
+Those are the 18\- and 64\-byte descriptor reads, at
+.CW npkt
+3 and 8, running
+.B unclamped
+across the translator on silicon: the core advanced
+.CW Pktcnt
+across the complete\-split boundaries and
+.CW chanio
+re\-armed correctly every time. That is measured evidence that control
+splits do not need the per\-packet restructure, where before it was an
+argument.
+.PP
+.B "The clamp did not change the NYET rate, and the comparison is
+.B "apples to apples because the same instrument took both."
+.CW mousecapture
+differences two reads, so these are interval rates and not
+boot\-cumulative ones:
+.P1
+unclamped   984 polls,  2 NYET  = 0.20%
+clamped    1906 polls,  7 NYET  = 0.37%
+.P2
+.B "That says UNCHANGED, not `slightly worse'."
+Two events is not a rate: the ninety\-five per cent intervals are 0.02\(en0.73%
+and 0.15\(en0.75% and overlap almost entirely. So the NYETs are the
+translator's own timing and the clamp did not touch them \(em which is
+also the answer to whether asking for a second packet was what provoked
+them. It was not.
+.PP
+.B "And the error branch of"
+.CW splitcontinue()
+.B "has never run on this board."
+.CW "taken as terminal 0"
+over tens of thousands of polls means every start\-split got its Ack, so
+the
+.CW Splterr
+test \(em
+.CW Stall ,
+.CW Xacterr ,
+.CW Bblerr ,
+.CW Datatglerr ,
+.CW Ahberr ,
+.CW Frmovrun
+\(em has never once fired. That is good news about the link and it also
+means that branch is untested on silicon. Recorded, not acted on: a
+branch nothing can provoke is not a branch worth rewriting blind, and
+the qemu translator never raises those bits either.
+.NH 2
 What is left of Phase 3, and why it is not started
 .LP
 dwc2's full shape is the restructure Phase 0 described: keep
