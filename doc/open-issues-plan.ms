@@ -50,20 +50,57 @@ comes before
 because it is about damage this session may already have done, and that
 outranks extending the fix to another architecture.
 .NH 1
-STATE OF THE BOARD, read before picking anything (11 October 2026)
+STATE OF THE BOARD, read before picking anything (12 October 2026)
 .LP
-.B "THE CARD IS IN THE PI AND THE PI BOOTS FROM IT."
-What the card holds is a kernel from before 10 October, so
-.B "none of this week's USB work is on it."
-The working kernel reaches the board by
-.CW tools/jtag/boot.sh ,
-which loads it into RAM and
-.B "does not survive a power cycle."
-.CW kinstall.sh
-with the card in a reader is what makes it permanent, and that needs a
-person.
+.B "THE CARD HOLDS THE CURRENT KERNEL AND THE PI BOOTS FROM IT."
+As of 12 October the card is at build 1791803556, which has every piece
+of the USB work on it, and
+.B "nothing about installing a kernel needs a person."
+.CW tools/jtag/kinstall.sh
+writes the card
+.I "through the board"
+\(em it boots the candidate over JTAG first, requires the remote poller
+to answer, then stages, backs up to
+.CW kernel8.bak ,
+writes and re\-verifies, reboots over the network and requires the
+poller again. It has been run a dozen times today without anybody
+touching the hardware.
 .PP
-.B "EVERY USB MEASUREMENT IN THIS FILE SINCE 10 OCTOBER IS SINGLE-PROCESSOR."
+.B "THAT LAST POINT HAS BEEN GOT WRONG AT LEAST TWICE AND IS WORTH THE
+.B "SENTENCE:"
+this document used to say "with the card in a reader is what makes it
+permanent, and that needs a person", and a session acting on it asked
+for the card to be moved to a reader, which was unnecessary and cost a
+cycle. A card reader is needed only to recover a card whose
+.CW kernel8.img
+is unbootable \(em which is what
+.CW kernel8.bak
+exists to avoid.
+.PP
+.B "AND MEASUREMENTS ON THE CARD ARE FOUR-PROCESSOR."
+A card boot reports
+.CW "SCHED-MACHS nmach 4" .
+The restriction below applies to a
+.CW boot.sh
+RAM boot only, which is still one processor, so the rule is: measure on
+the card unless there is a reason not to, and say which was used.
+.PP
+.B "WHAT IS OPEN, in one place."
+.CW doc/usb-split-plan.ms
+is the USB board and has one row left \(em Phase 3's restructure, which
+waits on
+.CW "sh tools/jtag/mousecapture"
+being run while somebody moves the mouse, because three measurements now
+argue it may have nothing to fix.
+.CW H1a
+(tearing) and the
+.CW putsymb
+symbol width are decisions rather than work.
+.CW doc/compiler-quality-plan.ms
+is complete.
+.PP
+.B "EVERY USB MEASUREMENT IN THIS FILE DATED BEFORE 11 OCTOBER IS
+.B "SINGLE-PROCESSOR."
 .CW jtagrestart
 halts all four cores and resumes core 0 alone, so a JTAG-booted kernel
 runs with
