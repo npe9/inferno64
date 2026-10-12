@@ -1458,6 +1458,104 @@ triple, which EHCI copies. USB core's
 .CW usb_ep_combine_input_packets()
 and friends are pipelining aids, not schedulers.
 .NH 1
+MEASURED: THE SPLIT PATH DELIVERS. Phase 3's restructure is not needed
+.LP
+12 October 2026, the mouse moved by hand inside a 60\-second
+.CW mousecapture
+window, on build 1791803556 from the card:
+.P1
+   data         2492 -> 3397      +905
+   poll       134932 -> 136225    +1293
+   nak        132432 -> 132820     +388
+   ok           2567 -> 3465      +898
+   okdata       2550 -> 3448      +898
+   bytes       20577 -> 27761    +7184
+   empty           0 -> 0           +0
+   term            0 -> 0           +0
+.P2
+.B "905 complete-splits carried data, 898 split transfers completed, and
+.B "7184 bytes moved."
+NAK stopped tracking the poll count one\-for\-one \(em 388 of 1293, where
+every previous reading had them equal to within a handful \(em so about
+seventy per cent of polls in that window returned a report.
+.PP
+.B "That is the question this plan has been built around, answered."
+The periodic split path works on silicon. The eight reverted attempts
+were all aimed at a path that was already delivering, and the thing
+stopping the pointer was never in it.
+.PP
+.B "So Phase 3's restructure \(em per-packet programming with explicit
+.B "bookkeeping, dwc2's shape \(em is NOT DONE and NOT NEEDED,"
+and that is a conclusion from a measurement rather than from reading the
+oracle. What shipped of Phase 3 is the one\-packet clamp, which was
+justified on its own terms and gated on
+.CW USB-SPLITPKT-OK .
+The rest is closed.
+.NH 2
+And what WAS stopping it: two reference leaks in devpointer
+.LP
+The same capture reported
+.CW PTRWATCH-INUSE
+\(em
+.CW /dev/pointer
+refused a reader \(em with
+.B "no process holding it for reading."
+Every fd on it across
+.CW /prog/*/fd
+was
+.CW w ,
+.CW usbd 's
+injecting writer, which never counts, and
+.CW ps
+showed nothing that could be the reader.
+.B "A reference that has outlived every process that could own it was
+.B "never owned."
+.IP \(bu
+.CW pointeropen() 's
+refusal path incremented and errored
+.I without
+decrementing, so every refused open raised the count permanently \(em and
+each further attempt raised it again on its way to the same refusal.
+.B "One collision between two readers poisons the single reader slot for
+.B "the rest of the boot,"
+after which a mouse can enumerate, deliver reports and have them
+decoded, and no consumer, wm included, can open the queue.
+.IP \(bu
+.CW pointerwalk()
+carried an unbalanced
+.CW incref
+under a comment asking "can this happen?" that nobody had answered. It
+can, and nothing could balance it:
+.CW devclone()
+panics on a chan with
+.CW COPEN
+set, so a clone is always of an unopened chan, and
+.CW pointerclose()
+returns early on exactly that.
+.PP
+.B "And the trigger was this plan's own tool."
+.CW ptrwatch 's
+reader blocked in
+.CW "evc <-= ..."
+once its parent stopped receiving, so it survived and kept the fd \(em
+.CW ps
+found it hours later. It kills its reader by pid now, which is the idiom
+the board's own
+.CW mousecheck
+and
+.CW kbdcheck
+already used after being fixed for the same class of leak.
+.PP
+Verified in the order that separates the two fixes:
+.P1
+ptrwatch -t 8 & sleep 2; ptrwatch -t 2; sleep 8; ptrwatch -t 2
+PTRWATCH-INUSE      <- the collision is still refused
+PTRWATCH-NONE       <- the first one finishes
+PTRWATCH-NONE       <- AND THE SLOT RECOVERED
+.P2
+That last line is the fix. Before it, a refusal left the count above
+zero for ever.
+.NH 1
 PHASE 3: the first piece has landed, and the rest still waits on one hand
 .LP
 .B "Landed:"
