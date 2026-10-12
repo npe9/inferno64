@@ -788,11 +788,35 @@ show
 .B "no full-speed enumeration"
 behind a hub \(em the state the board was in this morning.
 .IP 2.
-with the current driver, the model must show the periodic
-complete\-split being
-.B NAK'd ,
-which is the state the board is in now.
+with the current driver and an
+.B idle
+low\-speed interrupt endpoint behind the hub, the model must show the
+periodic complete\-split answered
+.B NAK ,
+and the driver must
+.B "keep polling indefinitely."
+.B "THIS ROW WAS WRITTEN WRONG THE FIRST TIME"
+and the correction is the main thing Phase 1 taught: it said "the model
+must show the periodic complete\-split being NAK'd, which is the state
+the board is in now", as though the NAK were the defect. It is not. An
+idle interrupt endpoint NAKs every poll, correctly, and dwc2 restarts
+the start\-split on exactly that. A model that treated a NAK as a
+failure would encode the misunderstanding this phase exists to avoid.
 .IP 3.
+with
+.CW Maxiters
+.B "restored to its old form"
+\(em no exemption for interrupt IN \(em the model must reproduce
+.P1
+usbdwc: ep5.1 type 4 dir in: 4001 attempts, ...
+.P2
+after about forty seconds of an idle endpoint, and must
+.I not
+produce it with the exemption in. That is a known silicon failure with
+a known fix and a forty\-second repro, which makes it the cheapest row
+on this list to check and the one most likely to catch a model that
+does not really poll.
+.IP 4.
 with a high\-speed device, the model must be unchanged from today.
 .PP
 Only when a model reproduces two known failures and one known success is
