@@ -1382,6 +1382,31 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		 * device NAKs while being moved" reading rests on came from
 		 * the first eighty milliseconds of a reader that then died,
 		 * and the mouse was moved long afterwards, into nothing.
+		 *
+		 * AND WHAT STILL ENDS THE LOOP, because removing a deadline
+		 * from the only path that takes ctlr->split is a claim that
+		 * has to be checked rather than asserted.  Every failure is
+		 * still bounded; only the correct case is not:
+		 *
+		 *   Stall                      error(Estalled) at Result
+		 *   Xacterr, Bblerr,           error(Eio) at Result, via
+		 *   Datatglerr, Ahberr         `if(i & ~(Chhltd|Ack))'
+		 *   a detached device          Xacterr, so as above
+		 *   a channel that says        chanwait breaks at i >= 20
+		 *   nothing at all             and returns Chhltd|Xacterr,
+		 *                              so error(Eio) -- 20 seconds
+		 *   NAK for ever               loops, which is the whole
+		 *                              point: an idle interrupt
+		 *                              endpoint is entitled to
+		 *
+		 * The lock is taken and released per ATTEMPT, not per
+		 * transfer, so a reader that never finishes does not hold
+		 * it.  Verified on the board rather than reasoned: with
+		 * periodicpoll past 35000 and climbing, the USB NIC still
+		 * answered two pings and /chan/usbdisk0 was still there,
+		 * and a Styx command round trip still ran -- 35 processes,
+		 * /dev/sysname read.  This is the same risk profile bulk IN
+		 * has carried since the donor driver.
 		 */
 		if(++iters > Maxiters
 		&& ((ep->ttype != Tbulk && ep->ttype != Tintr) || dir != Epin)){
