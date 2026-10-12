@@ -599,19 +599,46 @@ PTRWATCH-NONE, periodicdata > 0   lost between the controller
                                   and /dev/pointer
 PTRWATCH-NONE, periodicdata == 0  the device never answered
 .P2
-.B "The procedure, in full, for whoever runs it:"
+.B "The procedure is now one command:"
 .P1
-sh tools/jtag/boardrun 'ptrwatch -t 20'   # then MOVE THE MOUSE
-sh tools/jtag/splittrace -w
+sh tools/jtag/mousecapture
 .P2
-The order does not matter much and the second command can be run at any
-later time, because
-.CW splitev1
-and
-.CW periodicdata
-both persist until the board is rebooted.
+It reads the counters, says
+.B "MOVE THE MOUSE NOW
+for twenty seconds, watches
+.CW /dev/pointer
+through
 .CW ptrwatch
-is the one that has to overlap the movement.
+for exactly that window, reads the counters again, and gives a verdict
+on the
+.I difference .
+.PP
+.B "On the difference and not the value,"
+because an absolute reading cannot tell a report delivered during the
+window from one delivered an hour ago \(em and this document already
+records one conclusion published from an absolute counter that had
+stopped moving.
+.PP
+.B "And it checks the instrument before it reads the result."
+If the poll count did not move, the endpoint was not being polled and it
+says
+.CW "CANNOT SAY" ,
+which is a statement about the instrument rather than about the device.
+Verified live with nobody at the mouse: 984 polls and 984 NAKs in an
+eight\-second window, which is 123 a second against the hundred a second
+of a 10 ms interval, so the reader is alive and running at the right
+rate.
+.PP
+The two awkward verdicts are the reason it is a tool and not a pair of
+commands. Data counted at the controller with no events at
+.CW /dev/pointer
+locates the loss
+.I downstream ;
+events at
+.CW /dev/pointer
+with no data counted is reported as
+.B CONTRADICTORY
+with the counter named as the suspect, rather than as a success.
 .NH 2
 The periodic NYET deferral: four attempts, four reverts, and why
 .LP
