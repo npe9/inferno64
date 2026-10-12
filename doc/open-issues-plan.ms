@@ -95,9 +95,165 @@ argue it may have nothing to fix.
 .CW H1a
 (tearing) and the
 .CW putsymb
-symbol width are decisions rather than work.
+symbol width were both carried here as "decisions rather than work" and
+.B "both are already decided;"
+see the two sections immediately below. Neither is open.
 .CW doc/compiler-quality-plan.ms
 is complete.
+.NH 2
+H1a is DECIDED: the page flip does not ship, and the numbers say why
+.LP
+.CW "enum { Dbuf = 0 }"
+in
+.CW os/inferno/raspi3b/screenbcm.c ,
+and it stays 0. The reasoning is already written out there in full; this
+is the decision and its three numbers, so that the next reader does not
+have to find it.
+.PP
+.B "The pixel argument for the flip is dead because Directfb removed the
+.B "copy it was going to save."
+.CW Directfb
+is 1, so
+.CW fb
+.I is
+.CW vfb
+and
+.CW flushmemscreen() 's
+memmove is skipped: the shipping path copies
+.B nothing
+per present. The 128\(mufold reduction in bytes copied that the flip
+achieves is 128\(mu fewer than a number nobody pays. The scheme was never
+competing with a copy \(em it was competing with Directfb, which had
+already removed it.
+.PP
+.B "And the flip REINTRODUCES a copy of exactly the kind Directfb
+.B "removed."
+The repair of
+.CW "dmgprev \(mi dmg"
+runs at 43 MB/s because it writes uncached scanout memory, so 17082
+bytes a rectangle costs 397\ \(mcs. Small bytes, slow bytes.
+.PP
+.B "The cost, attributed inside the run that pays it, WITH ITS RATE:"
+at 106 presents a second, 219\ \(mcs of repair plus 168\ \(mcs of mailbox
+exchange is 387\ \(mcs of a 9356\ \(mcs present \(em 4.14 per cent.
+Measured that way on purpose: differencing throughput across builds was
+.I not
+resolvable, because two
+.CW Dbuf=0
+builds differed by 2.9 per cent while differing only in code unreachable
+at
+.CW Dbuf=0 ,
+and that between\-build layout spread is the size of the effect.
+.PP
+.B "AND THE RATE IS THE POINT, which this section nearly restated the
+.B "4.14 without."
+A flip per present scales mailbox traffic with the
+.I client's
+rate and nothing bounds the client's rate. At 1050 flips a second the
+exchange costs 597\ \(mcs each, which is
+.B "627ms of every second inside"
+.CW mboxvirtoffset()
+\(em 63 per cent of the machine, in a property exchange. The 168\ \(mcs
+was taken at 106 flips a second and is not a constant to design against;
+later in this document that is stated as
+.B "a cost per event is not a constant unless the event rate is part of
+.B "the claim,"
+and this paragraph exists because the first draft of it quoted the 4.14
+with no rate at all.
+.PP
+.B "And pacing it cannot be bolted on."
+.CW bcmpresent()
+holds
+.CW drawlock ,
+so the
+.CW Flippace
+spin waits up to a frame under it; the phase can be predicted instead of
+waited for, and is, to 3 ppm \(em but the margin at the live mode is
+13\ \(mcs, nine tenths of a scanline, and
+.CW fpperiod/64
+would buy headroom by making the spin
+.I longer .
+An asynchronous flip would move the wait off the lock without improving
+the margin, and would not recover the repair either.
+.PP
+.B "So tear-freedom is the only remaining argument, and it is the one
+.B "thing no instrument on this board can see."
+Every check in
+.CW screenbcm.c
+is a readback, and a readback cannot observe what the scanout showed \(em
+.B "memory against memory leaves the beam out."
+Tearing is real and measured at about half of all draws under a probe,
+but whether it is visible at the rate a
+.CW wm
+session actually presents cannot be answered from the ARM side at all.
+.PP
+.B "WHAT WOULD REOPEN IT:"
+an observation of the display \(em a camera, or a person saying they see
+it \(em which is a hardware action, not a piece of work. Until then the
+flip costs between 4 and 63 per cent of the machine depending on a rate
+nothing bounds, to buy a property nothing here can verify, and it stays
+off.
+.PP
+.B "AND IF IT DOES REOPEN, THE SHAPE IS ALREADY KNOWN and it is not a
+.B "knob."
+Present the most recently completed frame
+.I "at each vblank"
+rather than at each client present: that bounds the mailbox at 60 a
+second, where the exchange is 60 \(mu 168\ \(mcs = 10ms of every second,
+.B "one per cent,"
+and it removes the half\-frame wait from
+.CW drawlock
+at the same time. The two arguments for that design \(em the lock and
+the unbounded rate \(em are independent and both already written down.
+What it does
+.I not
+fix is the 13\ \(mcs margin or the repair copy, so it is a piece of work
+with a known cost and an unverifiable benefit, which is why it is
+recorded rather than started.
+.NH 2
+The putsymb symbol width is DECIDED, and was fixed on both sides
+.LP
+Carried as an open choice between four\-byte compatibility and
+eight\-byte truth. It is neither: both halves take the width from the
+machine's address size, and have since the inconsistency was found.
+.IP \(bu
+.CW utils/7l/asm.c 's
+.CW putsymb()
+sets
+.CW "l = 8"
+and writes
+.CW "lput(v>>32); lput(v)"
+\(em the machine's address size. Its own comment records why: it used to
+write four bytes in an ELF and eight in a Plan 9 header, so a kernel
+linked above 4GB had its symbol table silently truncated.
+.CW jl
+always wrote eight, which is what made the disagreement visible.
+.IP \(bu
+.CW utils/libmach/sym.c
+keys on
+.CW "mach->szaddr == 8" ,
+set by
+.CW crackhdr
+before it runs.
+.IP \(bu
+.CW tools/jtag/ksyms
+reads
+.B both ,
+deliberately, and its discriminator is exact rather than a guess: every
+loader writes the type byte as
+.CW t+0x80 ,
+so the byte after the value always has its top bit set and a letter
+underneath. It tries eight and falls back to four. That is not
+indecision \(em the card can still be holding a kernel built before the
+fix, and
+.CW alive
+and
+.CW where
+have to read whatever is actually on it.
+.PP
+So there is nothing to choose. The entry is kept because it was listed
+as open twice and a reader finding it a third time should be able to
+stop in one paragraph.
 .PP
 .B "EVERY USB MEASUREMENT IN THIS FILE DATED BEFORE 11 OCTOBER IS
 .B "SINGLE-PROCESSOR."
