@@ -444,6 +444,77 @@ and
 complete\-split lands at X+1 or X+2, which is in spec for the first one.
 The rest is handler latency. Do not build on it.
 .NH 2
+AND THE READER WAS DEAD. The experiment could not have run
+.LP
+.B "periodicpoll stops at exactly 4000, and"
+.CW Maxiters
+.B "is 4000."
+.PP
+An idle interrupt endpoint NAKs for ever \(em correctly; it is how a
+device says "nothing to report" \(em and a blocking read on one is
+supposed to wait. Only bulk IN was exempt from
+.CW Maxiters ,
+so at
+.CW pollival
+10 ms every
+.CW read(ep5.1/data)
+ended in
+.CW Eio
+forty seconds in and
+.CW usbd 's
+mouse reader stopped. The board then polled nothing for the rest of its
+uptime.
+.PP
+.B "The tell was a number that would not move, and it had been read
+.B "four times."
+.CW periodicpoll
+came back 4000 on four separate JTAG reads of the same boot, minutes
+apart, with
+.CW periodicnak
+pinned at 3997 beside it. Worse, the read before those four went
+.CW 3362 \(->
+.CW 4000
+across forty-five seconds and was taken as "polling is live" \(em but
+forty-five seconds at a hundred polls a second is four and a half
+thousand polls, not six hundred. That was the approach to a cap being
+read as a rate.
+.PP
+.B "A counter that has stopped looks exactly like a counter that is
+.B "high."
+That is the whole lesson, and the ring had the proof all along:
+.P1
+usbdwc: ep5.1 type 4 dir in: 4001 attempts, last intr 00000012
+hcchar 215e8805 hctsiz 00100008 hcsplt 8000c104
+.P2
+Nobody had grepped for it because nobody was looking for a bound. The
+NAK bound two lines below in the same function already exempted
+.CW Tintr
+IN for precisely this reason; the two bounds now agree.
+.PP
+.B "What this does to everything written above, and to the plan's whole
+.B "history."
+The eight capped NAK prints that "the device NAKs while being moved"
+rests on came from the first eighty milliseconds of a reader that then
+died. The mouse was moved long afterwards, into nothing. That claim has
+never been tested \(em and until this fix it
+.I could
+not be, because
+.CW splitev1
+could never fill: there was nothing polling the endpoint to fill it.
+.PP
+.B "Verified on silicon,"
+build 1791794616 from the card:
+.CW periodicpoll
+2415
+.CW \(->
+10881
+.CW \(->
+11859 across three reads, past the old cap and still climbing, all five
+devices enumerating, boot mouse attached on ep5.1.
+.CW DATA
+is still 0 \(em which is now a statement about an endpoint that is
+actually being polled, and was not before.
+.NH 2
 So the discriminating fact is missing, and now there is an instrument for it
 .LP
 .B "Was anybody moving the mouse during those 20983 records?"
@@ -460,7 +531,13 @@ The ring cannot measure it: 512 entries at five records a poll and a
 than that, so a read after motion shows the mouse idle again. Hence
 .CW splitev1 ,
 which fills once and waits indefinitely. It needs no coordination with
-anybody.
+anybody \(em
+.B "and, until the"
+.CW Maxiters
+.B "fix in the section above, it could not have worked either,"
+because nothing was polling the endpoint for it to catch. Both halves
+of the instrument had to be right before the question could be put, and
+only one of them was.
 .PP
 .B "THE EXPERIMENT HAS A PHYSICAL DEPENDENCY, stated plainly:"
 the mouse has to be moved at some point after the board boots. Until it
