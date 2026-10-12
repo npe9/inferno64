@@ -1448,7 +1448,74 @@ the model is wrong about the hub rather than the driver being wrong, and
 Phase 2's acceptance list grows a row. Say that rather than patching the
 driver to suit the model.
 .NH 1
-Phase 4.  Make it stay fixed
+PHASE 4 IS DONE, all three items
+.IP 1.
+.B "A configuration that can fail when splits break:"
+.CW raspi3b-split ,
+with
+.CW USB-MOUSE-OK
+as the delivered\-report marker and five evidence lines for the
+enumeration \(em including
+.CW "INTR-IN NAK 1: hcint 00000012 COMPLETE-split" ,
+the one line only a two\-phase handshake can print, checked to reject
+the pre\-translator text. The mutation table above is what it is worth.
+.IP 2.
+.B "The six split counters, readable."
+They were fields of
+.CW Ctlr
+and the only way to see them was a print, capped at a handful per boot.
+They now live in a
+.CW Splitstat
+whose address
+.CW reset()
+publishes in
+.CW dwcsplitstat ,
+and
+.CW tools/jtag/splittrace
+follows the pointer.
+.B "A struct and a pointer, not six globals:"
+six globals would attribute one controller's counts to whichever
+controller bumped them, and a Pi 3B has exactly one dwc2, so nothing
+could tell the difference \(em which is why it is worth not writing it
+that way.
+.IP 3.
+.B "The annotation."
+.CW USB-MOUSE-OK
+and
+.CW USB-KBD-OK
+in
+.CW doc/inferno-ports.ms
+now say what they were measured on, and the correction went further than
+the plan asked: the devices are not on the root port at all but behind a
+hub qemu creates by itself, at
+.B full
+speed \(em which is also why every ethernet number this suite has
+produced for the Pi boards is a full\-speed number.
+.NH 2
+What the counters say on silicon, which is the point of having them
+.P1
+splits completed 45, of them moving bytes 28 (401 bytes),
+  MOVING NOTHING 0
+start-splits promoted to complete-split 5561, taken as terminal 0
+.P2
+.B "Both zeroes are the interesting numbers."
+.CW "MOVING NOTHING 0"
+is the stale\-accumulator fix confirmed by a counter rather than by a
+marker \(em that counter is exactly the signature of a split reported
+complete without its data stage having run, which is what the bug did to
+every IN transfer.
+.CW "taken as terminal 0"
+says the Ack requirement in
+.CW splitcontinue()
+has never once rejected a start\-split on this board, which retires the
+last of the doubt about the periodic no\-Ack promotion that was tried and
+reverted.
+.PP
+And 5561 promotions against 45 completions is the idle mouse, stated as
+a ratio: every start\-split promotes, and the complete\-split that
+follows is answered NAK.
+.NH 1
+Phase 4 as originally written \(em the three items, kept for the record
 .IP \(bu
 a boardsuite configuration that exercises a full\- and a low\-speed
 device behind a hub, with markers for enumeration
