@@ -163,7 +163,7 @@ bookkeeping:
 and
 .CW chan->xfer_buf ,
 advanced by hand
-.CW ( "chan->xfer_count += bcnt; chan->xfer_buf += bcnt;"
+.CW "(chan->xfer_count += bcnt; chan->xfer_buf += bcnt;"
 in
 .CW hcd_intr.c )
 plus a separate
@@ -556,6 +556,63 @@ printed as the denominator. Both branches of that verdict are in
 because those are the only lines in the tool that draw a conclusion
 rather than print a field.
 .NH 2
+The measurement, in two parts, and what each part can say alone
+.LP
+.B "The controller half"
+is
+.CW periodicdata
+in
+.CW usbdwc.c ,
+read by
+.CW tools/jtag/splittrace :
+complete\-splits that carried
+.CW Xfercomp .
+It counts at the controller, so it does not depend on any Dis process
+being alive to read the result \(em which matters, because on this
+board none is.
+.PP
+.B "The other half"
+is
+.CW ptrwatch (1),
+new, which reads
+.CW /dev/pointer
+for a bounded time and says how many events arrived.
+.B "It exists because nothing on this board reads that queue:"
+.CW mousecheck()
+in the board's init gives up after twenty\-five seconds and reports
+.CW USB-MOUSE-NONE ,
+so a mouse moved by hand later produces events nobody sees. It is
+bounded because
+.CW tools/jtag/boardrun
+runs one command and waits for it, so a
+.CW cat
+of
+.CW /dev/pointer
+wedges the poller \(em a self\-inflicted wedge this tree has paid for
+once already.
+.PP
+.B "Together they locate the loss."
+Neither can alone:
+.P1
+PTRWATCH-OK                       the whole path works
+PTRWATCH-NONE, periodicdata > 0   lost between the controller
+                                  and /dev/pointer
+PTRWATCH-NONE, periodicdata == 0  the device never answered
+.P2
+.B "The procedure, in full, for whoever runs it:"
+.P1
+sh tools/jtag/boardrun 'ptrwatch -t 20'   # then MOVE THE MOUSE
+sh tools/jtag/splittrace -w
+.P2
+The order does not matter much and the second command can be run at any
+later time, because
+.CW splitev1
+and
+.CW periodicdata
+both persist until the board is rebooted.
+.CW ptrwatch
+is the one that has to overlap the movement.
+.NH 2
 The periodic NYET deferral: four attempts, four reverts, and why
 .LP
 Phase 1 found a real protocol error and it was fixed four ways, none of
@@ -834,6 +891,293 @@ build.
 .B "It is also the only route to a regression test for any of this,"
 and the coverage hole it closes is the one that let a total split
 failure pass 52 green markers.
+.NH 2
+Phase 2 surveyed: it is two device models, not one, and the first is the blocker
+.LP
+.CW hw/usb/hcd-dwc2.c
+and
+.CW hw/usb/dev-hub.c
+read in
+.CW /Users/npe/src/qemu-v10.1.3 ,
+with
+.CW include/hw/usb/dwc2-regs.h .
+What follows is cited rather than recalled.
+.NH 3
+The blocker: nothing in qemu can make a guest emit a split at all
+.LP
+A driver only sets
+.CW Spltena
+for a full\- or low\-speed device behind a
+.B high\-speed
+hub. There is no such hub in the tree:
+.IP \(bu
+.CW dev-hub.c:124
+has
+.CW ".bcdUSB = 0x0110" ,
+and its
+.CW desc_hub
+carries only a
+.CW .full
+descriptor with no
+.CW .high ,
+so
+.CW usb_desc_init()
+gives it
+.CW USB_SPEED_MASK_FULL ,
+.CW usb_pick_speed()
+picks FULL, and
+.CW dwc2_attach()
+writes
+.CW HPRT0.PRTSPD
+= FULL. The driver then never sets
+.CW Spltena .
+Downstream ports register LOW|FULL only
+.CW "(dev-hub.c:617)."
+.IP \(bu
+There is no transaction translator anywhere:
+.CW "grep -rni 'transaction translator' hw/usb/"
+finds nothing, and EHCI says so in comments \(em
+.CW hcd-ehci.c:1308
+.I "TODO check 4.12 for splits"
+and
+.CW ":1747"
+.I "TODO: split transfers are not implemented" .
+.IP \(bu
+.B "And our own"
+.CW usb-lan9514
+.B "is not a hub."
+.CW hw/usb/dev-lan9514.c:4
+says so in its own second comment line: "the ethernet function only:
+the hub in front of it on a Raspberry Pi" is not modelled. It
+.I is
+high\-speed
+.CW "(.bcdUSB"
+.CW 0x0200 ,
+a
+.CW .high
+descriptor at
+.CW ":296" )
+but it has no downstream ports \(em no
+.CW usb_register_port
+call in the file at all.
+.PP
+So Phase 2's first half is a
+.B "high-speed, TT-advertising hub,"
+which is a second device model: a
+.CW .high
+descriptor,
+.CW bDeviceProtocol
+1 or 2, the hub descriptor's TT fields, and downstream ports advertising
+.CW USB_SPEED_MASK_HIGH .
+Either that or downstream ports added to
+.CW usb-lan9514 ,
+which is closer to the board's real topology and is probably the better
+buy.
+.NH 3
+The controller half, with the functions named
+.LP
+.B "hcsplt is never read, confirmed by grep and not by belief."
+.CW "grep -n 'index + 1' hw/usb/hcd-dwc2.c"
+finds nothing;
+.CW hcsplt
+appears only as a trace\-table name
+.CW "(hcd-dwc2.c:964)"
+and an accessor macro
+.CW "(hcd-dwc2.h:137)"
+\(em and
+.B "none of those accessor macros is used anywhere either,"
+the
+.CW .c
+hand\-indexes
+.CW s->hreg1[] .
+.CW HCSPLT_*
+in
+.CW dwc2-regs.h:772-784
+are defined and referenced from no
+.CW .c
+file.
+.CW HCCHAR_LSPDDEV
+.CW "(:765),"
+.CW HCCHAR_ODDFRM
+and
+.CW HCCHAR_MULTICNT
+are likewise never referenced:
+.B "the model is speed-blind below the root port."
+.PP
+.B "And the two interrupt bits the split protocol needs do not exist in
+.B "the model."
+.CW HCINTMSK_NYET
+and
+.CW HCINTMSK_ACK
+are never set anywhere \(em nor are
+.CW DATATGLERR ,
+.CW FRMOVRUN ,
+.CW BNA
+or
+.CW AHBERR .
+A start\-split completion is ACK+CHHLTD and a not\-ready complete\-split
+is NYET+CHHLTD, so both have to be added.
+.PP
+.B "The first transaction runs synchronously inside the CHEN store:"
+.CW dwc2_hsotg_write
+.CW ":1156"
+\(->
+.CW dwc2_hreg1_write
+.CW ":1051"
+\(->
+.CW dwc2_enable_chan
+.CW ":658"
+\(->
+.CW dwc2_handle_packet
+.CW ":287"
+.CW usb_handle_packet()
+\(-> the HCINT/HAINT/IRQ raise at
+.CW ":384-387" ,
+all before the guest's store retires. Two async paths exist
+.CW "(USB_RET_ASYNC"
+at
+.CW ":305" ,
+and
+.CW needs_service
+with
+.CW dwc2_work_bh
+at
+.CW ":567" )
+but neither defers the
+.I first
+attempt. Making a start\-split not complete synchronously means
+.CW qemu_bh_schedule ,
+as
+.CW ":659"
+already does.
+.PP
+.B "Device lookup is already hub-transparent,"
+which is one piece of luck:
+.CW dwc2_find_device
+.CW "(:183)"
+calls
+.CW usb_find_device() ,
+which recurses through
+.CW usb_hub_find_device()
+.CW "(dev-hub.c:289),"
+and hub completions already forward upstream. A plain
+.CW HCCHAR.DEVADDR
+lookup is enough; resolving by
+.CW "HCSPLT.HUBADDR / PRTADDR"
+is optional.
+.NH 3
+A modelling defect found on the way, which matters to any TT schedule
+.LP
+.CW dwc2_frame_boundary()
+.CW "(:149-166)"
+computes
+.P1
+frcnt = (uint16_t)((now - s->sof_time) / s->fi);
+s->frame_number = (s->frame_number + frcnt) & 0xffff;
+.P2
+and
+.CW s->fi
+is
+.CW "USB_FRMINTVL - 1"
+= 11999, a
+.B bit\-time
+count being used to divide
+.B nanoseconds .
+At expiry
+.CW "now - sof_time"
+is about
+.CW usb_frame_time ,
+so FRNUM jumps by roughly 83 per 1 ms tick and 10 per 125\ \(mcs tick \(em
+never by one.
+.B "So a TT must not schedule against HFNUM+1;"
+it has to use the
+.CW eof_timer
+tick itself or its own counter. And it means the microframe numbers this
+driver reads under qemu are not microframe numbers, which is worth
+knowing before any of Phase 1's microframe reasoning is checked against
+the model.
+.PP
+Note also that
+.CW usb_frame_time
+is 125\ \(mcs only when the
+.I root\-port
+device is high\-speed
+.CW "(:441-455),"
+1 ms otherwise, and that HFIR writes are accepted and ignored
+.CW "(:893)"
+\(em the interval is not guest\-programmable.
+.NH 3
+The change list
+.IP 1.
+.CW dwc2_enable_chan()
+.CW "(:611)"
+\(em read
+.CW "s->hreg1[index + 1]" ,
+branch on
+.CW "Spltena / Compsplt,"
+decode
+.CW "HUBADDR / PRTADDR / XACTPOS."
+.IP 2.
+.CW dwc2_handle_packet()
+.CW "(:223)"
+\(em read hcsplt beside
+.CW ":227-229" ,
+emit
+.CW ACK
+and
+.CW NYET
+in the
+.CW ":357-389"
+region, and force per\-maxpacket sizing for splits, bypassing the
+.CW p->small
+heuristic at
+.CW ":652-656" .
+.IP 3.
+.CW dwc2_hreg1_write()
+.CW "(:986)"
+\(em a
+.CW HCSPLT
+case if write masking is wanted; today it raw\-stores.
+.IP 4.
+.CW DWC2Packet
+.CW "(hcd-dwc2.h:45-58)"
+\(em split phase, hub address, port, position, and the buffered result
+so a complete\-split can replay it.
+.B "This must be mirrored in"
+.CW vmstate_dwc2_state_packet
+.CW "(hcd-dwc2.c:1418)"
+.B "or migration breaks silently."
+.IP 5.
+a deferral hook \(em
+.CW dwc2_frame_boundary()
+for a real per\-frame translator pump, or
+.CW dwc2_work_bh()
+plus
+.CW needs_service
+for a cheaper 250\ \(mcs retry.
+.IP 6.
+.CW dwc2_reset_enter()
+.CW "(:1246" ,"
+loop at
+.CW ":1331" )
+\(em clear the new per\-channel split state beside
+.CW needs_service .
+.IP 7.
+.CW hw/usb/trace-events
+.CW "(:187-235)"
+\(em trace points for the split phase.
+.PP
+.B "And there is no generic qemu helper for `one transaction per
+.B "frame'."
+The in\-tree template is the model's own
+.CW needs_service
++
+.CW dwc2_work_bh
++
+.CW frame_timer
+triple, which EHCI copies. USB core's
+.CW usb_ep_combine_input_packets()
+and friends are pipelining aids, not schedulers.
 .NH 1
 Phase 3.  Fix it
 .LP
