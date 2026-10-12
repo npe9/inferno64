@@ -12,6 +12,8 @@
 #include <draw.h>
 #include <memdraw.h>
 #include <cursor.h>
+
+extern Memimage *gscreen;	/* the board's screen; nil before screeninit */
 #include "screen.h"
 
 enum{
@@ -91,6 +93,52 @@ mousetrack(int b, int x, int y, int isdelta)
 			b |= 1<<8;
 		mouse.lastb = b & 0x1f;
 		mouse.msec = msec;
+	}
+	/*
+	 * CLAMP TO THE SCREEN, and nothing did.
+	 *
+	 * A relative pointer accumulates: usbd's mousereader adds each
+	 * report's signed dx and dy to a running position, clamps the
+	 * result at zero below -- and has no upper bound, because the
+	 * only thing that knows the screen size is here.  So moving a
+	 * mouse right or down walks the position off the display and it
+	 * never comes back: the cursor is clipped away pixel by pixel in
+	 * the board's fbpaintcursor() and simply disappears.
+	 *
+	 * MEASURED on a Pi 3B with wm running and the cursor enabled:
+	 *
+	 *	curshot   (1756, 1566)      on a 640x480 screen
+	 *	cursenable 1
+	 *	ncompose   1220             it WAS tracking, off-screen
+	 *	curcursor  byte-identical to arrow
+	 *
+	 * Every piece of the cursor machinery was working and the
+	 * position was two and a half screens to the right.  The symptom
+	 * reported was "the mouse works, but there are a lot of
+	 * artifacts" and then, a few seconds of movement later, "no
+	 * pointer at all" -- which is this: a glyph clipped at the edge
+	 * and then gone.
+	 *
+	 * HERE AND NOT IN usbd, because this is the only place that
+	 * knows how big the screen is, and because every pointer source
+	 * has the same problem -- a touchscreen reporting absolute
+	 * coordinates from a calibration that drifted lands outside the
+	 * screen in exactly the same way.  Plan 9's devmouse clamps in
+	 * the same function for the same reason.
+	 *
+	 * gscreen is nil until a board calls screeninit(), so a pointer
+	 * event before then is left alone rather than clamped to a
+	 * rectangle that does not exist yet.
+	 */
+	if(gscreen != nil){
+		if(x < gscreen->clipr.min.x)
+			x = gscreen->clipr.min.x;
+		if(x >= gscreen->clipr.max.x)
+			x = gscreen->clipr.max.x - 1;
+		if(y < gscreen->clipr.min.y)
+			y = gscreen->clipr.min.y;
+		if(y >= gscreen->clipr.max.y)
+			y = gscreen->clipr.max.y - 1;
 	}
 	if(x == mouse.x && y == mouse.y && mouse.b == b)
 		return;
