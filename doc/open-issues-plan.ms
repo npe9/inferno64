@@ -211,6 +211,134 @@ fix is the 13\ \(mcs margin or the repair copy, so it is a piece of work
 with a known cost and an unverifiable benefit, which is why it is
 recorded rather than started.
 .NH 2
+H1a REOPENED THE SAME DAY: the observation it was waiting for arrived
+.LP
+The section above closes the page flip on the grounds that
+.B "tear-freedom is the only argument left and nothing on this board can
+.B "see it"
+\(em every instrument in
+.CW screenbcm.c
+is a readback, and memory against memory leaves the beam out. It names
+what would reopen it: "an observation of the display \(em a camera, or a
+person saying they see it".
+.PP
+.B "A person said they see it."
+With the USB mouse working and
+.CW wm
+running, 12 October: "much less shearing/leftovers, still a little bit
+but mostly fine".
+.B "That is the reopening condition, met,"
+and it is recorded here rather than left in a conversation.
+.PP
+.B "What it does NOT do is change the cost,"
+and the cost is what closed it: 4.14 per cent of a present at 106
+presents a second, and
+.B "627ms of every second \(em 63 per cent of the machine \(em at 1050,"
+because a flip per present scales with the client's rate and nothing
+bounds the client's rate. The shape that would work is already derived
+twice over: present the most recently completed frame
+.I "at each vblank"
+rather than at each client present, which bounds the mailbox at 60 a
+second (10ms of every second, one per cent) and takes the half\-frame
+wait off
+.CW drawlock .
+It fixes neither the 13\ \(mcs margin at the live mode nor the repair
+copy.
+.PP
+.B "So the decision is now a trade with both sides measured"
+\(em one per cent of the machine and a real piece of work against
+"a little bit" of shearing on a display that is otherwise mostly fine
+\(em rather than a cost against a hypothetical. It stays off, and it
+stays off for a stated reason instead of an absent one.
+.NH 2
+Two artifact mechanisms, told apart, and only one of them was fixed
+.LP
+The symptom arrived in three steps and each one named a different fault,
+which is the only reason they could be separated at all:
+.IP 1.
+.B "`the mouse works, but there are a lot of artifacts'"
+\(em then
+.IP 2.
+.B "`no pointer at all'"
+\(em which was
+.I not
+a regression from the cursor lock added minutes earlier. Measured:
+.CW cursenable
+1,
+.CW curcursor
+byte\-identical to
+.CW arrow ,
+.CW ncompose
+1220, and
+.CW curshot
+.CW "(1756, 1566)"
+on a 640\(mu480 screen.
+.B "Every piece of the cursor machinery working and the position two and
+.B "a half screens to the right."
+A relative pointer accumulates and
+.CW mousereader
+clamped only at zero, so moving right or down walked it off the display
+for good;
+.CW fbpaintcursor()
+clips per pixel, so the glyph was drawn partly at the edge \(em the
+artifacts \(em and then not at all. Clamped in
+.CW mousetrack() ,
+where Plan 9's
+.CW devmouse
+does it, because that is the only place that knows the screen size.
+.IP 3.
+.B "`cursor is back, much less shearing/leftovers, still a little bit'."
+.PP
+.B "And the cursor lock has never fired:"
+1625 composes,
+.CW curscontend
+0. So the race it serialises is real by construction \(em two callers,
+no mutual exclusion \(em and is
+.I not
+what was producing the artifacts, and the lock is
+.I not
+what reduced them. It is kept and labelled unproven in the source,
+because an inert guard believed to have fixed something is worse than no
+guard.
+.NH 3
+The leftover mechanism that is identified and NOT fixed
+.LP
+.CW swcursor.c
+says "gscreen stays clean \(em never paint/hide/avoid the glyph there",
+and that premise is false on this board.
+.CW Directfb
+is 1, so
+.CW fb
+.I is
+.CW vfb
+and gscreen's pixel data
+.I is
+the scanout buffer: the cursor is inside gscreen, and a draw that
+.B reads
+the screen under it takes the glyph with it. Dragging a window over the
+pointer is exactly that read.
+.PP
+.CW swcursoravoid()
+is what prevents it, and it is a no\-op \(em
+.B "and it has no caller at all."
+.CW "grep -rn 'swcursoravoid|swcursorhide'"
+outside
+.CW swcursor.c
+finds nothing in
+.CW os/inferno/port
+or
+.CW os/inferno/raspi3b .
+.B "A no-op with no caller reads as `handled' twice over,"
+which is why it survived this long. Implementing the bodies is not
+enough; the draw path has to start calling them.
+.PP
+.B "Not done,"
+because the hook belongs in devdraw's read path \(em a change with a
+real regression surface \(em against a symptom currently described as
+"a little bit, mostly fine". Recorded in
+.CW swcursor.c
+beside the premise it falsifies.
+.NH 2
 The putsymb symbol width is DECIDED, and was fixed on both sides
 .LP
 Carried as an open choice between four\-byte compatibility and

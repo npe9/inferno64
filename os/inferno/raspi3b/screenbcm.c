@@ -743,6 +743,20 @@ fbpaintcursor(Point p)
  *
  * curscontend counts the collisions, because a lock added on the
  * strength of an argument is a lock nobody can show was needed.
+ *
+ * AND IT HAS NEVER FIRED.  Read on the board after a person moved the
+ * mouse around with wm running: 1625 composes, curscontend 0.  So the
+ * race is real by construction -- two callers, no mutual exclusion --
+ * and is NOT what was producing the artifacts on this display, and
+ * this lock is not what reduced them.  The clamp in
+ * devpointer.c's mousetrack() was.
+ *
+ * Kept, because the window is real: cursorproc() only composes when
+ * swcursorneeded() and the flush path only when the damage hits the
+ * footprint or the pointer moved, so the two coincide rarely rather
+ * than never.  A canlock costs nothing.  But it is an UNPROVEN guard
+ * and labelled as one here, because an inert guard that is believed to
+ * have fixed something is worse than no guard at all.
  */
 static Lock curslock;
 ulong	curscontend;		/* cursorcompose found curslock held */
