@@ -17958,28 +17958,55 @@ on another core.
 .NH 2
 What is still not done, precisely
 .IP \(bu
-.B "The pointer does not move."
-.CW usbd
-attaches the boot\-mouse driver
-.CW "boot mouse on ep5.1"
+.B "The pointer does not move,"
 and
-.CW mousereader
-blocks in
+.B "THE SENTENCE THAT USED TO FOLLOW THIS ONE WAS WRONG."
+It said the device answers NAK to every complete\-split
+.I "even while the mouse is being moved" ,
+and concluded "the device is simply not producing reports". Neither
+half was established. Corrected 12 October 2026; the whole account is
+.CW doc/usb-split-plan.ms
+and only the correction is here.
+.PP
+.B "The reader was dead."
+.CW Maxiters
+is 4000 and exempted only bulk IN, so at a 10 ms poll interval every
 .CW read(ep5.1/data)
-with its fd open. The transfer reaches the wire and the
-.I device
-answers NAK to every complete\-split, even while the mouse is being
-moved:
-.P1
-ep5.1 INTR-IN NAK 1: hcint 00000012 COMPLETE-split hctsiz 00100008 iters 1
-... NAK 6 ... iters 6
-.P2
-\(em
-.CW Chhltd|Nak ,
-and the phase is the
-.I complete
-split, so the split state machine is doing its job. The device is simply
-not producing reports.
+ended in
+.CW Eio
+forty seconds into every boot and the board polled nothing for the rest
+of its uptime. An idle interrupt endpoint NAKs for ever, correctly, and
+the NAK bound two lines below in the same function already exempted
+.CW Tintr
+IN for exactly that reason. The two agree now.
+.PP
+.B "So the eight prints above are the first eighty milliseconds of a
+.B "reader that then died,"
+and the mouse was moved long afterwards, into nothing. The tell was a
+number read four times without being seen:
+.CW periodicpoll
+came back 4000 on four JTAG reads of one boot, minutes apart, with
+.CW periodicnak
+pinned at 3997 beside it \(em and the ring had
+.CW "ep5.1 type 4 dir in: 4001 attempts"
+in it the whole time.
+.B "A counter that has stopped looks exactly like a counter that is
+.B "high."
+.PP
+.B "What IS established, on a board that now polls continuously:"
+the split state machine does its job \(em every start\-split is promoted
+.CW ( "taken as terminal 0"
+over tens of thousands of polls), the control half moves bytes (45
+completions, 401 bytes,
+.CW "MOVING NOTHING 0" ,
+and nine of nine multi\-packet descriptor reads completed), and the
+periodic endpoint answers NAK, which is
+.B "the correct answer from an endpoint with nothing to report."
+Whether a
+.I moved
+mouse answers differently has still never been measured;
+.CW "sh tools/jtag/mousecapture"
+measures it in one command.
 .IP \(bu
 Ruled out already:
 .CW SET_IDLE
@@ -17990,15 +18017,38 @@ are both sent
 duration 0 and boot protocol) and neither reports an error, so the
 device is configured as a boot mouse.
 .IP \(bu
-.B "The remaining candidate is periodic-split SCHEDULING."
-A complete\-split has to be issued in the microframes that follow its
-start\-split; this driver sleeps
-.CW ep->pollival
-between attempts and re\-issues from the beginning, so the translator may
-never hold data at the moment it is asked. That is a real piece of work
-in
-.CW chanio 's
-split path and is not started.
+.B "Periodic-split scheduling was the named candidate, and it has been
+.B "tried four ways and reverted."
+The reading was that a complete\-split must be issued in the microframes
+following its start\-split while this driver re\-issues from the
+beginning. The deferral was built \(em the channel into a mask, the SOF
+interrupt re\-arming it \(em and
+.CW hfnum
+was sampled at the NYET and again at the re\-arm so the claim could be
+checked. Eight samples each time: 6 of 8, 8 of 8, 7 of 8 and 8 of 8 in
+the
+.I same
+microframe. The reason is structural:
+.CW dwcinterrupt()
+reads
+.CW gintsts
+once and services
+.CW Hcintr
+and
+.CW Sofintr
+from that one value, so a deferral raised in the first arm is serviced
+by the second arm of the same call. The last attempt also made the NYET
+rate sixteen times worse.
+.PP
+And the measurement says it was the wrong target anyway: 96% of this
+endpoint's complete\-splits are answered NAK on the
+.I first
+one with no NYET anywhere near them, and the NYET rate is unchanged by
+the one\-packet clamp (0.20% against 0.37%, two events against seven \(em
+overlapping intervals, so
+.I unchanged ).
+.CW doc/usb-split-plan.ms
+has all of it.
 .NH 2
 A no-op reverted, and the diagnostic that caused it
 .LP
