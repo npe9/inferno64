@@ -3,6 +3,9 @@
 draw3dkerntest \- check that the draw device implements the draw3d protocol
 .SH SYNOPSIS
 .B draw3dkerntest
+[
+.B -r
+]
 .SH DESCRIPTION
 .I Draw3dkerntest
 draws the same geometry through both
@@ -45,15 +48,67 @@ Pi 3B kernel  poly 0x1124da01  line \-0x208b1d40  plot \-0x35ddb944
 .IR draw3d (2),
 .IR draw3dsafetest (1),
 .IR qputry (1)
+.SH "THE BASELINE, AND WHY IT IS WHAT MAKES THIS A TEST"
+Besides comparing the two providers, the device's own checksum for each
+primitive is asserted against a value recorded in the source.
+.B -r
+prints the three in a form that can be pasted back in, and does not
+assert.
+.PP
+.B "Without that this harness cannot fail on wrong pixels."
+It printed
+.B "6 ok, 0 fail"
+on a Pi 3B while reporting 228 differing bytes on
+.B fillpoly3
+and 18 on
+.BR line3 ,
+because the six were only the
+.I "inked something"
+checks and the comparison was informational. A backend assigned to
+.BR devdraw 's
+.B gpudraw*
+hooks could have rasterised anything at all and passed \(em which is
+precisely what the paragraph above says this test exists to prevent.
+.PP
+The baseline is the
+.I device's
+checksum and not equality with the software path, so it needs no
+resolution of the provider disagreement below to be useful: it says the
+pixels have not changed. Re\-recording is deliberate, and the rule is
+the one
+.B tools/ci/README
+states for markers \(em a changed value fails, and the fix is either the
+code or a reviewed new baseline, never a quiet pass.
+.PP
+The checksum is masked to
+.B 31
+bits, not 32, and that is not fussiness.
+.B int
+is 64 bits at runtime on this board while
+.B %d
+and
+.B %#x
+print a 32\-bit signed view, so a 32\-bit mask yields values above 2^31
+that
+.I display
+as negative: a baseline pasted from that display is a different number
+that prints identically, and the assertion then fails while the two
+printed values match character for character. That happened three times
+before the mask was narrowed. 31 bits keeps every value positive and
+printable in both worlds and the baseline portable between the board and
+the QEMU arms.
 .SH BUGS
 .B "fillpoly3 differs between the providers"
-by 228 bytes of 4356, and the test reports that rather than asserting
-it: the two rasterisers disagree on an edge rule, which predates this
-and is not something a comparison can fix.
-.B Line3
-and
+by 228 bytes of 4356 and
+.B line3
+by 18, and the test reports those rather than asserting them: the two
+rasterisers disagree on an edge rule, which predates this and is not
+something a comparison can fix.
 .B plot3
-agree to the byte.
+agrees to the byte.
+.PP
+.B "This page used to say line3 agreed to the byte,"
+and it does not. The figure was 18 bytes on every run measured.
 .PP
 The ink assertions are not decoration. The first version of this test
 compared two

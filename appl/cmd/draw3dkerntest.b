@@ -36,8 +36,45 @@ Draw3dkerntest: module
 W: con 160;
 H: con 120;
 
+#
+# 0x7FFFFFFF, and THIRTY-ONE bits rather than thirty-two on purpose.
+#
+# A 32-bit mask produces values above 2^31, and on this board that is
+# unambiguous in the value and ambiguous in every PRINT: int is 64 bits
+# at runtime here, so the masked result is +3748700864, while `%d' and
+# `%#x' show a 32-bit signed view of it -- -545987904 and -0x208b1d40.
+# A baseline pasted from that display is a different number that
+# displays identically, so the assertion fails while the two printed
+# values match character for character.  That happened three times
+# before this line existed, and the poly checksum passed throughout
+# only because it is below 2^31.
+#
+# 31 bits keeps every value positive and printable in both worlds, which
+# also makes the baseline portable between the board and the QEMU arms.
+# A 31-bit hash is ample for "have these pixels changed".
+#
+Mask31: con (big 1 << 31) - big 1;
+
 ok, fail: int;
 disp: ref Display;
+
+#
+# The device's checksums as last recorded on silicon, in the order the
+# loop below walks: poly, line, plot.  Read with `draw3dkerntest -r',
+# which prints a line that can be pasted here.
+#
+# These came off a Pi 3B, build 1791830376, and were confirmed
+# byte-for-byte identical across two consecutive runs before being
+# committed -- a baseline that is not reproducible is worse than none,
+# because it fails for the wrong reason and teaches people to re-record.
+#
+Baseline: con 287627777;		# poly
+Baselineline: con 1601495744;		# line
+Baselineplot: con 1243760316;		# plot
+
+expect: list of int;
+recpoly, recline, recplot: int;
+
 
 report(good: int, what: string)
 {
@@ -71,10 +108,40 @@ differ(a, b: array of byte): int
 # can travel over a serial console when the images cannot.
 sum32(a: array of byte): int
 {
-	h := int 2166136261;	# int, not the big this literal would be
+	#
+	# THE MASK WAS INERT AND THE NAME WAS WRONG.
+	#
+	# `h & int 16rFFFFFFFF' looks like a truncation to 32 bits and is
+	# not: int is 64 bits at runtime here, and `int 16rFFFFFFFF' is
+	# the 32-bit literal sign-extended, which is -1.  Masking with
+	# -1 keeps every bit, so h ran on as a full 64-bit value and
+	# this function returned something that was not a 32-bit hash at
+	# all.
+	#
+	# IT WAS INVISIBLE BECAUSE OF HOW IT WAS PRINTED.  `%#x' shows a
+	# signed 32-bit view, so the line checksum displayed as
+	# -0x208b1d40 while the value had bits above 31 -- and a
+	# baseline pasted from that display compared UNEQUAL to the
+	# value that printed it.  Three assertions failed against
+	# numbers identical on screen, which is what sent me looking.
+	#
+	# `big' for the multiply, and a mask BUILT RATHER THAN WRITTEN:
+	# `big 16rFFFFFFFF' is -1 as well, because the literal is parsed
+	# as a 32-bit int before the widening, so the big form of the
+	# bug is the same bug.  (big 1 << 32) - big 1 cannot be
+	# sign-extended because nothing in it is a 32-bit literal.
+	# Measured, not assumed: with `big 16rFFFFFFFF' the line
+	# checksum was still -545987904, which is the signed reading of
+	# 0xDF74E2C0 -- a negative result from a mask that is supposed
+	# to clear the top 32 bits.
+	#
+	# Decimal everywhere below, because a 32-bit hash printed as
+	# signed hex is how this hid in the first place.
+	#
+	h := int 2166136261;
 	for(i := 0; i < len a; i++){
 		h = h ^ int a[i];
-		h = (h * 16777619) & int 16rFFFFFFFF;	# the mask is big too
+		h = int ((big h * big 16777619) & Mask31);
 	}
 	return h;
 }
@@ -149,9 +216,26 @@ frame(d3: Draw3d, name: string, what: string): array of byte
 	return buf;
 }
 
-init(nil: ref Draw->Context, nil: list of string)
+init(nil: ref Draw->Context, args: list of string)
 {
+	record := 0;
+
 	sys = load Sys Sys->PATH;
+	#
+	# -r records instead of asserting: it prints the three device
+	# checksums in a form that can be pasted into the Baseline
+	# constants above, and does NOT compare them.  Anything else is
+	# an assertion against the recorded values.
+	#
+	# Two modes and not one, because the alternative is a test whose
+	# baseline is whatever it just measured -- which passes always.
+	#
+	if(args != nil)
+		args = tl args;
+	if(args != nil && hd args == "-r")
+		record = 1;
+	else
+		expect = Baseline :: Baselineline :: Baselineplot :: nil;
 	draw = load Draw Draw->PATH;
 	if(draw == nil){
 		sys->print("draw3dkerntest: no Draw: %r\n");
@@ -186,17 +270,67 @@ init(nil: ref Draw->Context, nil: list of string)
 			sys->sprint("%s: software inked something (%d)", what, inked(ssoft)));
 		if(sdev != nil && ssoft != nil){
 			d := differ(sdev, ssoft);
-			# Reported, not asserted: see BUGS in the man page. The
-			# two providers are meant to agree and mostly do; where
-			# they do not is a pre-existing difference between the C
-			# and Limbo rasterisers, not something this test can fix,
-			# and printing the number per primitive says which.
+			#
+			# STILL REPORTED AND NOT ASSERTED AS AN EQUALITY,
+			# for the reason the man page gives: the two
+			# providers disagree today on poly and line, that
+			# is a pre-existing difference between the C and
+			# Limbo rasterisers, and this test cannot fix it.
+			#
 			sys->print("     %s: device vs software, %d bytes differ\n",
 				what, d);
-			sys->print("     %s: device sum %#x, software sum %#x\n",
+			sys->print("     %s: device sum %d, software sum %d\n",
 				what, sum32(sdev), sum32(ssoft));
+			#
+			# BUT THE DEVICE'S OWN PIXELS ARE ASSERTED AGAINST
+			# A BASELINE, and that is what makes this a test a
+			# GPU backend can be graded by.
+			#
+			# Without it the harness cannot fail on wrong
+			# pixels: `6 ok, 0 fail' is what it printed on this
+			# board while reporting 228 differing bytes on poly
+			# and 18 on line, because the six were only the
+			# `inked something' checks.  A backend assigned to
+			# devdraw's gpudraw* hooks could rasterise anything
+			# at all and this would have passed it -- which is
+			# the one thing the header says the test exists to
+			# prevent: "a device that accepts the letters and
+			# rasterises them wrongly passes any `did it error'
+			# test."
+			#
+			# The baseline is the device's checksum, not
+			# equality with the software path, so it needs no
+			# resolution of the C-against-Limbo difference to
+			# be useful: it says THE PIXELS HAVE NOT CHANGED.
+			# Measured byte-for-byte reproducible across runs
+			# on silicon before being written down.
+			#
+			# Re-recording is deliberate, and the rule is the
+			# one tools/ci/README already states for markers: a
+			# changed value fails, and the fix is either the
+			# backend or a reviewed new baseline -- never a
+			# quiet pass.
+			case what {
+			"poly" => recpoly = sum32(sdev);
+			"line" => recline = sum32(sdev);
+			"plot" => recplot = sum32(sdev);
+			}
+			if(expect != nil){
+				e := hd expect;
+				expect = tl expect;
+				report(e == sum32(sdev),
+					sys->sprint("%s: device sum %d is the"
+						+ " baseline %d", what,
+						sum32(sdev), e));
+			}
 		}
 	}
+	if(record)
+		sys->print("DRAW3D-RECORD paste into draw3dkerntest.b:\n"
+			+ "Baseline: con %d;\t\t# poly\n"
+			+ "Baselineline: con %d;\t\t# line\n"
+			+ "Baselineplot: con %d;\t\t# plot\n",
+			recpoly, recline, recplot);
 	sys->print("DRAW3DKERNTEST %d ok, %d fail\n", ok, fail);
 	if(fail > 0)
 		raise "fail:draw3dkerntest";
