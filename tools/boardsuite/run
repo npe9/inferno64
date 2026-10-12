@@ -822,6 +822,44 @@ config_evidence() {
 		echo 'FAT-OK /n/dos/kernel8\.img is 39 bytes'
 		echo 'SD-MULTI-OK 32768 bytes, last block matches it read alone \(eb3c90'
 		;;
+	raspi3b-split)
+		#
+		# THE MARKERS ALONE CANNOT TELL THIS CONFIGURATION APART
+		# FROM ONE WHERE SPLITS ARE IGNORED, and that is the whole
+		# reason these lines exist here.
+		#
+		# Recorded with the hub but WITHOUT the translator, this arm
+		# reported the same 49 markers it reports with it: the model
+		# performed each split transaction as though it were a
+		# direct one, in one stage, and every transfer succeeded by
+		# accident.  A future regression that returned it to that
+		# state would pass green against the marker baseline.  These
+		# are the lines only a real two-phase split can print.
+		#
+		# The topology, from the guest's own reading of the hub's
+		# port status words.  A high-speed child needs no split and
+		# a full-speed one does, and the guest says which is which
+		# -- so these two lines together assert that the hub came up
+		# high-speed AND that something behind it is full-speed.
+		echo 'port 1: high ep[0-9]+\.0 vid 0409 did 55aa class 9'
+		echo 'port 1 status 0x10501 .*high-speed \(no split\)'
+		echo 'port 2 status 0x10101 .*full-speed \(needs split\)'
+		# And a full-speed device that got all the way through
+		# enumeration over splits, which is what control splits
+		# working means.
+		echo 'port 2: full ep[0-9]+\.0 vid 0627 did 0001 class 0'
+		#
+		# THE SILICON SIGNATURE, and the one line that can only be
+		# printed by a translator.  A periodic start-split answered
+		# ACK and promoted, and the complete-split answered NAK by
+		# the device.  Without the translator the model never raises
+		# ACK, splitcontinue() never promotes, and this says
+		# START-split instead -- so the word COMPLETE here is the
+		# assertion that the two-phase handshake happened.
+		#
+		# It is also exactly what a real Pi 3B prints.
+		echo 'INTR-IN NAK 1: hcint 00000012 COMPLETE-split'
+		;;
 	raspi3b-4g)
 		echo 'sdhost: card rca 0x[0-9a-f]+ block 8388608 sectors, core clock 350000000 Hz, 4-bit'
 		echo 'FAT-OK /n/dos/kernel8\.img is 39 bytes'
