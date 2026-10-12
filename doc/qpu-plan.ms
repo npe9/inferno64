@@ -851,6 +851,122 @@ can silently become),
 .CW bndstest
 11 ok 0 fail \(em so bounds checks are still armed with the JIT on.
 .NH 1
+ANSWERED, 12 October 2026: THE QPU RUNS. The firmware was never needed
+.LP
+.B "The question this document was written to answer is closed, and the
+.B "answer is that EXECUTE_QPU was the wrong door."
+.PP
+.B "What this plan had never considered:"
+a grep for
+.CW SRQ
+in this document and in
+.CW devv3d.c
+found
+.B nothing .
+The V3D block has a
+.B "user shader request queue"
+\(em four registers \(em and it is what
+.CW EXECUTE_QPU
+drives internally. Write the uniforms address and length, then write the
+program counter, which queues the request.
+.EX
+V3D_SRQPC 0x430   V3D_SRQUA 0x434   V3D_SRQUL 0x438   V3D_SRQCS 0x43c
+.EE
+Offsets from Linux's
+.CW drivers/gpu/drm/vc4/vc4_regs.h ,
+the only copy of them on this disk \(em and note that vc4 only
+.I dumps
+these, submitting through the binning and rendering pipeline instead, so
+Linux is an authority on the addresses and not on the protocol.
+.PP
+.B "Everything this needed was already here."
+.CW SET_ENABLE_QPU
+ungates the block, which this plan had already measured;
+.CW v3dident()
+already read V3D registers through identity\-mapped MMIO; and
+.CW gpualloc
+already obtained firmware memory with a bus address. The missing piece
+was four register writes.
+.NH 2
+The measurement, and why it is evidence and not a counter moving
+.LP
+Three submissions on silicon, build 1791830376 from the card, and the
+third was predicted before it ran:
+.EX
+submission             SRQCS     bits 15:8  bits 23:16
+thrend + 2 nops        0x010100      1          1
+garbage, no thrend     0x010200      2          1
+thrend + 2 nops        0x020300      3          2
+.EE
+Bits 15:8 rise on
+.I every
+submission. Bits 23:16 rise
+.B only
+for a program containing
+.CW thrend .
+So 15:8 counts requests dispatched and 23:16 counts requests that ran to
+the end \(em and
+.B "because the second depends on the INSTRUCTION CONTENT, the QPU is
+.B "executing the instructions."
+.PP
+.B "That is this document's own test, applied one layer down."
+Section "Program content makes no difference" ran a terminating program
+against nonsense through the mailbox, got the same answer four
+milliseconds apart, and concluded \(em correctly \(em that "a
+terminating program is not treated differently from nonsense, so the
+firmware is not getting as far as running the code".
+.B "Through the registers the content is the whole difference."
+.PP
+On a clean boot, one submission:
+.CW "dispatched 1 completed 1 queued 0"
+in
+.B "1146 microseconds."
+.CW EXECUTE_QPU
+never completed in a million.
+.NH 2
+What is NOT established, and the field names' provenance
+.LP
+.B "The field positions come from the differential, not from a document."
+The architecture guide is not on this disk and Linux's header carries
+the register with no fields. Two candidate layouts put
+.CW errored
+and
+.CW completed
+in opposite bytes, and a single reading of
+.CW 0x010100
+cannot choose between them \(em
+.B "three readings can,"
+because only one of the bytes tracks termination. The raw word is
+printed beside the decode in
+.CW /dev/v3dctl ,
+because a name inferred from three points is worth having and is not
+worth hiding the evidence behind.
+.PP
+.B "And the program did not compute anything."
+.CW thrend
+plus two nops ends; it does not write. The next step turns the counter
+into a readback: a program that
+.B "writes a word to memory,"
+after which the evidence is a value and not a count. That is also the
+first program that needs real QPU instruction encoding rather than six
+words copied from this plan.
+.PP
+.B "One hazard the test created:"
+submission 2 had no end, so a QPU is occupied by it until the next
+reset. There are twelve and the firmware is not involved, so it cost
+nothing \(em but a non\-terminating program leaks a QPU, and that is a
+property of this interface rather than a surprise.
+.NH 2
+What the sections below are now
+.LP
+Everything after this point was written while the mailbox was the only
+known way in. It is kept because the elimination is what made the
+register path the obvious thing to try, and because its method \(em one
+question per boot, a control for every claim, and a readback that cannot
+distinguish the writer from the reader is not evidence about the reader
+\(em is the reason this result is trustworthy. But
+.B "EXECUTE_QPU is no longer worth another board cycle."
+.NH 1
 h2 ANSWERED, and the answer is no: firmware memory was not the fault
 .PP
 With the reachability bound corrected, h2 could finally be asked. Two
