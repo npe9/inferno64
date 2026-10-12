@@ -17944,7 +17944,49 @@ on the SD card and
 .CW board.cmd
 is gitignored, so nothing in the repository needs a credential to test.
 .NH 2
-What this session cannot do, and why
+RESOLVED: the workflows are installed, and the suite now has a split arm
+.LP
+.B "The scope was granted and the files went in."
+.CW .github/workflows
+holds
+.CW host-gates.yml
+and
+.CW boardsuite.yml ,
+all 25 release tags are on the remote \(em checked by name and not by
+count, which matters because an annotated tag shows up twice in
+.CW "git ls-remote --tags"
+and 47 refs reads as "about right" for 25 tags either way \(em and
+.CW "continue-on-error: true"
+is gone from
+.CW quick-smoke.yml
+\(em the one change this section called the most valuable and it needed
+no new file.
+.PP
+.B "And the nightly suite gained the arm that can see a split defect."
+.CW raspi3b-split
+needs
+.CW tools/qemu-patches
+0028 and 0029, which the image builds from source, so it arrives in CI
+by the same path as every other device model. The whole series was
+checked the way the Dockerfile applies it \(em
+.CW "git am"
+one patch at a time against a worktree of pristine v10.1.3, stopping on
+the first rejection \(em and
+.B "all 29 applied in series order."
+Nothing else in the tree or in the other patches touches
+.CW hw/usb/dev-hub.c ,
+and only 0020 touches
+.CW hw/usb/hcd-dwc2.c ,
+so position in the series is not load\-bearing for either.
+.PP
+Also:
+.CW docker/Qemu.Dockerfile
+counts the patches it applied rather than asserting a number, so adding
+two needed no edit there. That was worth checking rather than assuming,
+because a hardcoded count is exactly the kind of thing that fails only
+in CI.
+.NH 2
+Superseded \(em what this session could not do, and why
 .LP
 .B "The workflow files cannot be committed from here."
 This session's GitHub credential is an OAuth App token without
