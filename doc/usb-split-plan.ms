@@ -1217,6 +1217,147 @@ so
 .CW splitcontinue()
 never promotes. The failure is in the same place and has a different
 shape, which is precisely the discrepancy a translator has to close.
+.NH 2
+PHASE 2 IS DONE. The acceptance list, answered row by row
+.LP
+.B "Committed:"
+.CW tools/qemu-patches/0029 ,
+a transaction translator in
+.CW hcd-dwc2.c .
+One buffered result per channel: a start\-split performs the transaction
+against the downstream device and reports the hub's
+.CW ACK|CHHLTD
+with no data; the matching complete\-split delivers the buffered answer
+through the existing
+.CW "send == false"
+tail, so the DMA write\-back and the
+.CW "HCTSIZ / HCDMA"
+bookkeeping happen exactly once; nothing buffered is answered
+.CW NYET .
+.NH 3
+Row by row
+.IP 1.
+.B "The stale accumulator: STRUCTURALLY UNREACHABLE, and that is the
+.B "answer rather than a failure to try."
+It is a
+.B race
+\(em the handler ORs sticky bits into
+.CW ctlr->hcintr
+and a later stage consumes an earlier stage's event \(em and a model
+that runs the whole transfer
+.I synchronously
+inside the
+.CW CHEN
+store has no race to hit. Mutated out and measured: both arms green.
+This row can never be met by this model and asking for it again would
+be work with no possible result.
+.IP 2.
+.B "The periodic complete-split NAK: MET, exactly."
+With the translator the guest prints
+.P1
+usbd: ep2.0: port 2: full ep4.0 vid 0627 did 0001 class 0
+usbd: ep4.0: boot mouse on ep4.1
+usbdwc: ep4.1 INTR-IN NAK 1: hcint 00000012 COMPLETE-split
+.P2
+which is what a real Pi 3B prints. Before the translator the
+.I start\-split
+was the thing NAK'd, because the model never raised
+.CW ACK
+and
+.CW splitcontinue()
+never promoted. The word
+.CW COMPLETE
+is now an evidence line in
+.CW tools/boardsuite/run ,
+and it was checked that it rejects the pre\-translator text.
+.IP 3.
+.B "The 4001 attempts: RUN, AND NOT REPRODUCIBLE HERE \(em a finding
+.B "about the acceptance list."
+With
+.CW Maxiters
+restored to its old form the configuration stayed green and no
+.CW "4001 attempts"
+appeared, because the harness drives the mouse, the keyboard
+.I and
+the tablet, so every periodic endpoint has data within a few polls: the
+highest
+.CW iters
+in the whole log is 5, against the 4000 the bound needs. The row needs
+an interrupt endpoint nobody touches, and this configuration has none.
+.IP 4.
+.B "A high-speed device unchanged: MET."
+.CW raspi3b-usb
+reported 52 markers and one known \-FAIL before and after every change
+here, including under all three mutations.
+.NH 3
+The mutation table, which is what the phase is actually worth
+.P1
+mutant                              split cfg   plain cfg
+----------------------------------  ---------   ---------
+none                                ok 49       ok 52
+stale interrupt accumulator (RACE)  ok 49       ok 52
+exact-equality split phase test     FAIL        ok 52
+old Maxiters (no Tintr IN exempt)   ok 49       ok 52
+.P2
+.B "The third row is the whole return on this phase."
+The exact\-equality phase test is the real defect that kept every full\-
+and low\-speed device off the board's hub until 11 October, and
+.B "only the split configuration notices it."
+That is the coverage hole closed: a change to the split path can fail in
+CI for the first time.
+.PP
+.B "The second and fourth rows are the bound, and recording them is as
+.B "valuable as the third."
+This catches protocol defects and not timing ones, and it cannot see a
+defect in an endpoint the harness is busy driving.
+.NH 3
+Three things in the translator had to be got right, each after being got wrong
+.IP \(bu
+.B NYET ,
+not
+.CW NAK ,
+when nothing is buffered. For a periodic endpoint they are different
+answers: NYET is "the translator has not finished" and NAK is the
+.I device's
+"nothing to report", which is terminal and sends the guest back to a
+fresh start\-split.
+.IP \(bu
+.B "A complete-split is answered BEFORE the device lookup,"
+because on the wire it is addressed to the hub.
+.B "SET_ADDRESS is the proof."
+qemu applies the address at the SETUP stage, so the device moves during
+that stage's start\-split and the matching complete\-split, still
+correctly addressed to 0, finds nothing. With the lookup first \(em and a
+failure returning silently, with no interrupt \(em every full\-speed
+device wedged at its new address:
+.P1
+usb_set_addr dev 4
+usb_dwc2_enable_chan ch 0 dev 0x0 ep 0
+no device at addr 0 ep 0 hcsplt 8001c102
+usbdwc: ep4.0 completion timeout channel 0
+.P2
+.IP \(bu
+.B "The ctrl/bulk NAK auto-retry is skipped on a split channel."
+It leaves the channel enabled and sets
+.CW needs_service ,
+so
+.CW dwc2_work_bh
+re\-issues every 250\ \(mcs \(em right when the model is the only one
+retrying, wrong when the guest's split state machine is.
+.NH 3
+What the model still cannot be used to judge
+.LP
+.B "The NYET path in the model is dead code today."
+A start\-split buffers its answer synchronously, so the matching
+complete\-split always finds one and the
+.CW NYET
+branch never runs. That means
+.CW Splitretries
+cannot be judged here, and
+.B "neither can the microframe deferral"
+\(em the four attempts recorded above were all on silicon and would show
+nothing under qemu, which has no usable microframe clock anyway. Both
+remain board\-only questions.
 .NH 3
 The change list
 .IP 1.
