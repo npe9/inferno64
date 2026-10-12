@@ -91,6 +91,23 @@ enum
 	Splterr		= Stall|Xacterr|Bblerr|Datatglerr|Ahberr|Frmovrun,
 };
 
+/*
+ * The split counters, as a struct so that a global POINTER to one is
+ * enough for a reader outside the kernel -- tools/jtag/splittrace reads
+ * dwcsplitstat, follows it, and takes six ulongs in this order.  Adding
+ * a field here without changing that reader would shift everything
+ * after it, so the size is asserted beside the array sizes below.
+ */
+typedef struct Splitstat Splitstat;
+struct Splitstat {
+	ulong	ok;		/* split transfers that completed */
+	ulong	okdata;		/* ... that actually MOVED bytes */
+	ulong	bytes;		/* ... how many, in total */
+	ulong	empty;		/* asked for bytes and moved none */
+	ulong	promote;	/* start-split ACKs promoted to complete-split */
+	ulong	term;		/* start-split events taken as TERMINAL */
+};
+
 typedef struct Ctlr Ctlr;
 typedef struct Epio Epio;
 
@@ -136,12 +153,25 @@ struct Ctlr {
 	 * and one reading `splits ok 0 (0 with data)' are different faults
 	 * and the difference is not otherwise visible.
 	 */
-	ulong	splitok;		/* split transfers that completed */
-	ulong	splitokdata;		/* ... that actually MOVED bytes */
-	ulong	splitbytes;		/* ... how many, in total */
-	ulong	splitempty;		/* asked for bytes and moved none */
-	ulong	splitpromote;		/* start-split ACKs promoted to complete-split */
-	ulong	splitterm;		/* start-split events taken as TERMINAL */
+	/*
+	 * THE SPLIT COUNTERS, in a struct of their own so a reader
+	 * outside the kernel can find them.
+	 *
+	 * They were six fields of Ctlr, which is malloc'd, so JTAG could
+	 * not resolve them and the ONLY way to see them was a print --
+	 * and those prints are capped at a handful per boot, which makes
+	 * a regression an absence rather than a number.  doc/usb-split-
+	 * plan.ms, Phase 4, asked for them to be readable.
+	 *
+	 * A STRUCT AND A POINTER, not six globals, because six globals
+	 * would silently attribute one controller's counts to whichever
+	 * controller happened to bump them.  A Pi 3B has exactly one
+	 * dwc2, so nothing here could tell the difference -- which is
+	 * precisely why it is worth not writing it that way.  The layout
+	 * is the struct's, so the reader needs no offsets, and its size
+	 * is asserted below the way Splitev's is.
+	 */
+	Splitstat ss;
 };
 
 struct Epio {
@@ -343,6 +373,12 @@ struct Splitev {
  * all 512 of them.
  */
 static char splitevsize[sizeof(Splitev) == 32? 1: -1];
+/*
+ * Six ulongs, and ulong is 32 bits here, so 24.  tools/jtag/splittrace
+ * takes them in declaration order; a field added without updating that
+ * reader would be decoded as the one after it.
+ */
+static char splitstatsize[sizeof(Splitstat) == 24? 1: -1];
 
 Splitev	splitev[Nsplitev];
 uint	nsplitev;		/* records written, ever; head = % Nsplitev */
@@ -363,6 +399,15 @@ uint	periodicpoll;
 uint	periodicnak;
 uint	periodicnyet;
 uint	periodicdata;		/* complete-splits that carried Xfercomp */
+/*
+ * The one controller's split counters, for a reader that has only the
+ * symbol table and no struct layout.  Set in reset(); nil until then,
+ * and splittrace says so rather than reading address zero.  A second controller would
+ * overwrite this, and the day there is one this becomes an array --
+ * which is the whole reason the counters stayed inside Ctlr instead of
+ * becoming six globals.
+ */
+Splitstat *dwcsplitstat;
 
 /*
  * Its own lock.  Every call site today already holds the controller's
@@ -1018,7 +1063,7 @@ splitcontinue(Ctlr *ctlr, Hostchan *hc, int v, int n)
 	 */
 	if((v & (Chhltd|Splterr)) != Chhltd){
 		if((hc->hcsplt & Compsplt) == 0)
-			ctlr->splitterm++;
+			ctlr->ss.term++;
 		splitlog(hc, ctlr->regs, Evterm, v);
 		return 0;			/* halted with an error: terminal */
 	}
@@ -1064,13 +1109,13 @@ splitcontinue(Ctlr *ctlr, Hostchan *hc, int v, int n)
 		 * tools/jtag/splittrace answers it.
 		 */
 		if((v & Ack) == 0){
-			ctlr->splitterm++;
+			ctlr->ss.term++;
 			splitlog(hc, ctlr->regs, Evterm, v);
 			return 0;
 		}
 		hc->hcsplt |= Compsplt;
 		ctlr->splitretry[n] = 0;
-		ctlr->splitpromote++;
+		ctlr->ss.promote++;
 		tag = Evprom;
 	}else{
 		if((v & Nyet) == 0){
@@ -1770,10 +1815,10 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 						hc->hctsiz & Xfersize,
 						(hc->hctsiz & Pid)>>29,
 						maxpkt, ep->dev->speed,
-						ctlr->splitok,
-						ctlr->splitokdata,
-						ctlr->splitbytes,
-						ctlr->splitempty,
+						ctlr->ss.ok,
+						ctlr->ss.okdata,
+						ctlr->ss.bytes,
+						ctlr->ss.empty,
 						hc->hcchar, hc->hcsplt,
 						hc->hctsiz);
 				/*
@@ -2067,8 +2112,8 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 						iters, nyets,
 						cmpl? "was a COMPLETE-split":
 						  "was a START-split",
-						ctlr->splitpromote,
-						ctlr->splitterm);
+						ctlr->ss.promote,
+						ctlr->ss.term);
 			}
 			if((i & Xfercomp) || (hc->hctsiz & Pktcnt) != (hctsiz & Pktcnt))
 				break;
@@ -2120,7 +2165,7 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 	 * transfer that then raised.
 	 */
 	if(split){
-		ctlr->splitok++;
+		ctlr->ss.ok++;
 		/*
 		 * BYTES MOVED, NOT BYTES ASKED FOR, and the difference is the
 		 * whole finding.
@@ -2134,10 +2179,10 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		 * it in the way that mattered.
 		 */
 		if(len - nleft > 0){
-			ctlr->splitokdata++;
-			ctlr->splitbytes += len - nleft;
+			ctlr->ss.okdata++;
+			ctlr->ss.bytes += len - nleft;
 		}else if(len > 0)
-			ctlr->splitempty++;
+			ctlr->ss.empty++;
 	}
 	return len - nleft;
 }
@@ -2913,6 +2958,13 @@ reset(Hci *hp)
 	print("DWC-PROBE-OK id %#ux\n", id);
 	dprint("usbdwc: DWC OTG rev %d.%3.3x at %#p\n",
 		(id>>12)&0xF, id&0xFFF, (void*)USBREGS);
+
+	/*
+	 * Publish the counters' address now, before anything can bump
+	 * them, so a reader that arrives early gets zeroes rather than a
+	 * nil pointer it has to special-case.
+	 */
+	dwcsplitstat = &ctlr->ss;
 
 	hp->aux = ctlr;
 	hp->port = USBREGS;

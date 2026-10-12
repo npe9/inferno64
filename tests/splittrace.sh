@@ -147,7 +147,7 @@ PYEOF
 # nring=520 nctl=4 lost=8, no endpoint filter, both arrays, no tail cap.
 #
 python3 "$T/dec.py" "$T/ring.bin" "$T/ctl.bin" 520 4 8 "" 1 1 0 32 \
-	"$T/wait.bin" 2 1 900 898 31 1 >"$T/out.txt" 2>"$T/err.txt"
+	"$T/wait.bin" 2 1 900 898 31 1 "0x1f4 0x1f0 0x7d0 0x3 0x1f4 0x7" >"$T/out.txt" 2>"$T/err.txt"
 rc=$?
 if [ $rc -ne 0 ]; then
 	echo "splittrace.sh: the decoder exited $rc" >&2
@@ -238,7 +238,7 @@ fi
 
 # Endpoint filtering: ask for 5.1 and the control array's 5.0 must go.
 python3 "$T/dec.py" "$T/ring.bin" "$T/ctl.bin" 520 4 8 "5.1" 1 1 0 32 \
-	"$T/wait.bin" 2 1 900 898 31 1 >"$T/out2.txt" 2>&1
+	"$T/wait.bin" 2 1 900 898 31 1 "0x1f4 0x1f0 0x7d0 0x3 0x1f4 0x7" >"$T/out2.txt" 2>&1
 if grep -q "nothing for ep5.1" "$T/out2.txt" &&
    ! grep -q "^   .*ep5.0" "$T/out2.txt"; then
 	echo "  ok   filter: -e 5.1 drops ep5.0 and says so for the control"
@@ -254,7 +254,7 @@ T = sys.argv[1]
 open(T + "/zero.bin", "wb").write(bytes(32 * 512))
 PYEOF
 python3 "$T/dec.py" "$T/zero.bin" "$T/zero.bin" 0 0 0 "" 1 1 0 32 \
-	"$T/wait0.bin" 0 1 0 0 0 0 >"$T/out3.txt" 2>&1
+	"$T/wait0.bin" 0 1 0 0 0 0 "" >"$T/out3.txt" 2>&1
 if grep -q "NOTHING WAS RECORDED" "$T/out3.txt"; then
 	echo "  ok   empty: an unrecorded trace says so"
 else
@@ -264,7 +264,7 @@ fi
 
 # And the case that matters for the control: ring busy, control empty.
 python3 "$T/dec.py" "$T/ring.bin" "$T/zero.bin" 520 0 8 "" 1 1 0 32 \
-	"$T/wait0.bin" 0 1 0 0 0 0 >"$T/out4.txt" 2>&1
+	"$T/wait0.bin" 0 1 0 0 0 0 "" >"$T/out4.txt" 2>&1
 if grep -q "CONTROL array is empty while the ring is not" "$T/out4.txt"; then
 	echo "  ok   no control: an empty control array is called out"
 else
@@ -283,13 +283,21 @@ ck "wait: the data record's five bytes show as dma advanced"	"dma c40407c5"
 ck "wait: a NYET on a periodic endpoint is kept"		"Chhltd|Nyet"
 ck "wait: the periodic denominators are printed"	"900 start-splits armed; complete-splits answered NAK 898, NYET 31, DATA 1"
 ck "wait: a nonzero DATA says the path delivers reports"	"the split path DOES deliver reports"
+#
+# THE SIX SPLIT COUNTERS, and the two verdicts drawn from them -- the
+# only lines in this part of the tool that say more than the numbers
+# do, so the ones that can mislead.
+#
+ck "counters: the six are decoded in declaration order"	"splits completed 500, of them moving bytes 496 (2000 bytes), MOVING NOTHING 3"
+ck "counters: promoted and terminal are printed"	"promoted to complete-split 500, taken as terminal 7"
+ck "counters: a nonzero moving-nothing is called out"	"signature of a split that was"
 ck "wait: a non-empty wait says the path can now be judged"	"NON-EMPTY"
 nk "wait: and does NOT call a non-empty wait an idle mouse"	"WHAT AN IDLE MOUSE LOOKS LIKE"
 
 # The empty-wait branch, from out3 (nothing at all) and a third run with
 # polls but no interesting event -- the state the board is actually in.
 python3 "$T/dec.py" "$T/ring.bin" "$T/ctl.bin" 520 4 8 "" 1 1 0 32 \
-	"$T/wait0.bin" 0 1 4196 4195 32 0 >"$T/out5.txt" 2>&1
+	"$T/wait0.bin" 0 1 4196 4195 32 0 "0x1064 0x1060 0x4e20 0x0 0x1064 0x9" >"$T/out5.txt" 2>&1
 if grep -q "WHAT AN IDLE MOUSE LOOKS LIKE" "$T/out5.txt" &&
    grep -q "NEEDS THE MOUSE MOVED" "$T/out5.txt" &&
    grep -q "has never moved a byte" "$T/out5.txt" &&
@@ -300,6 +308,37 @@ else
 	echo "  FAIL wait: an empty wait with polls on the clock did not say"
 	echo "       that it is an idle mouse rather than a broken path --"
 	echo "       which is the exact misreading this array exists to stop"
+	fail=`expr $fail + 1`
+fi
+python3 "$T/dec.py" "$T/ring.bin" "$T/ctl.bin" 520 4 8 "" 1 1 0 32 \
+	"$T/wait0.bin" 0 1 100 99 1 0 "0x64 0x0 0x0 0x64 0x0 0x64" \
+	>"$T/out7.txt" 2>&1
+if grep -q "two-phase handshake is not" "$T/out7.txt" &&
+   grep -q "MOVING NOTHING 100" "$T/out7.txt"; then
+	echo "  ok   counters: splits completed with nothing promoted is"
+	echo "       reported as the handshake not running"
+else
+	echo "  FAIL counters: 100 completions with 0 promotions passed in"
+	echo "       silence -- which is a split path running one-phase"
+	fail=`expr $fail + 1`
+fi
+# and six words are required: five must refuse rather than mis-decode
+python3 "$T/dec.py" "$T/ring.bin" "$T/ctl.bin" 520 4 8 "" 1 1 0 32 \
+	"$T/wait0.bin" 0 1 100 99 1 0 "0x1 0x2 0x3 0x4 0x5" \
+	>"$T/out8.txt" 2>&1
+if grep -q "read back 5 word(s), not 6" "$T/out8.txt"; then
+	echo "  ok   counters: a short read refuses instead of decoding"
+else
+	echo "  FAIL counters: five words were decoded as six"
+	fail=`expr $fail + 1`
+fi
+# the kernel must assert the struct size the reader assumes
+if grep -q 'sizeof(Splitstat) == 24' "$ROOT/os/inferno/raspi3b/usbdwc.c"; then
+	echo "  ok   kernel: usbdwc.c asserts the 24-byte Splitstat"
+else
+	echo "  FAIL kernel: usbdwc.c does not assert sizeof(Splitstat),"
+	echo "       so a field could be added and the six counters above"
+	echo "       would each be decoded as the next one"
 	fail=`expr $fail + 1`
 fi
 if grep -q "NO PERIODIC SPLIT HAS BEEN ARMED" "$T/out3.txt"; then

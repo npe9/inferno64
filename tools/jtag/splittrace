@@ -118,6 +118,7 @@ A_PPOLL=`sym periodicpoll`
 A_PNAK=`sym periodicnak`
 A_PNYET=`sym periodicnyet`
 A_PDATA=`sym periodicdata`
+A_SSPTR=`sym dwcsplitstat`
 A_LOST=`sym splitevlost`
 
 for v in A_RING A_NRING A_CTL A_NCTL A_WAIT A_NWAIT A_PPOLL A_PNAK \
@@ -183,6 +184,7 @@ trap 'rm -f "$TMP" "$RINGBIN" "$CTLBIN" "$WAITBIN"' 0 1 2 15
 	-c "echo \"ST-PNAK\"; mdw $A_PNAK 1" \
 	-c "echo \"ST-PNYET\"; mdw $A_PNYET 1" \
 	-c "echo \"ST-PDATA\"; mdw $A_PDATA 1" \
+	-c "echo \"ST-SSPTR\"; mdd ${A_SSPTR:-0} 1" \
 	-c "echo \"ST-LOST\"; mdw ${A_LOST:-0} 1" \
 	-c "dump_image $RINGBIN $A_RING `expr $NRINGMAX \* $ESZ`" \
 	-c "dump_image $CTLBIN $A_CTL `expr $NCTLMAX \* $ESZ`" \
@@ -232,12 +234,31 @@ PPOLL=`dec \`val ST-PPOLL\``
 PNAK=`dec \`val ST-PNAK\``
 PNYET=`dec \`val ST-PNYET\``
 PDATA=`dec \`val ST-PDATA\``
+#
+# THE SIX SPLIT COUNTERS, through a pointer.  usbdwc.c keeps them in a
+# Splitstat inside its Ctlr and publishes the address in dwcsplitstat,
+# so no struct layout is assumed here: follow the pointer, take six
+# 32-bit words in declaration order.  doc/usb-split-plan.ms Phase 4
+# asked for these because the only other way to see them is a print,
+# and those are capped at a handful per boot -- which makes a
+# regression an absence rather than a number.
+#
+SSPTR=`val ST-SSPTR`
+SS=
+if [ -n "$SSPTR" ] && [ "`dec $SSPTR`" != 0 ]; then
+	SS=`cd "$ROOT" && timeout 60 openocd -f "$ADAPTER" \
+		-f tools/jtag/raspi3b.cfg \
+		-c "init; halt; targets bcm2837.cpu0" \
+		-c "echo \"ST-SS\"; mdw 0x$SSPTR 6" \
+		-c "resume; exit" 2>&1 |
+		awk '/ST-SS/{s=1;next} s&&/^0x/{sub(/^[^:]*: */,"");print;exit}'`
+fi
 LOST=`dec \`val ST-LOST\``
 
 exec python3 - "$RINGBIN" "$CTLBIN" "$NRING" "$NCTL" "$LOST" \
 	"$EPFILT" "$WANTRING" "$WANTCTL" "$NLAST" "$ESZ" \
 	"$WAITBIN" "$NWAIT" "$WANTWAIT" "$PPOLL" "$PNAK" \
-	"$PNYET" "$PDATA" <<'DECODER'
+	"$PNYET" "$PDATA" "$SS" <<'DECODER'
 import struct, sys
 
 ringf, ctlf = sys.argv[1], sys.argv[2]
@@ -251,6 +272,7 @@ nwait = int(sys.argv[12])
 wantwait = sys.argv[13] == "1"
 ppoll, pnak = int(sys.argv[14]), int(sys.argv[15])
 pnyet, pdata = int(sys.argv[16]), int(sys.argv[17])
+ss = [int(x, 16) for x in sys.argv[18].split()] if len(sys.argv) > 18 else []
 
 FMT = "<6I2H4x"
 assert struct.calcsize(FMT) == esz, (struct.calcsize(FMT), esz)
@@ -363,6 +385,38 @@ print("splittrace: ring wrote %d records (cap 512, %d overwritten); "
 # room, which the first version's did -- that filter admitted NYETs and
 # filled 64 entries in seconds.
 #
+#
+# THE SIX SPLIT COUNTERS.  Printed before the periodic line because
+# they cover EVERY split, not just the periodic ones, and because
+# `empty' is the one that said the stale-accumulator bug was there: a
+# transfer that asked for bytes, completed, and moved none.
+#
+if len(ss) == 6:
+    ok, okdata, nbytes, empty, promote, term = ss
+    print("splittrace: splits completed %d, of them moving bytes %d "
+          "(%d bytes), MOVING NOTHING %d" % (ok, okdata, nbytes, empty))
+    print("splittrace: start-splits promoted to complete-split %d, "
+          "taken as terminal %d" % (promote, term))
+    if empty:
+        print("splittrace:   a NONZERO `moving nothing' is the signature"
+              " of a split that was")
+        print("splittrace:   reported complete without the data stage"
+              " having run -- which is")
+        print("splittrace:   what the stale interrupt accumulator did to"
+              " every IN transfer.")
+    if ok and promote == 0:
+        print("splittrace:   splits completed with NOTHING promoted: no"
+              " start-split was ever")
+        print("splittrace:   followed by a complete-split, so the"
+              " two-phase handshake is not")
+        print("splittrace:   running at all.")
+elif ss:
+    print("splittrace: dwcsplitstat read back %d word(s), not 6 -- not"
+          " decoding them" % len(ss))
+else:
+    print("splittrace: the split counters were not read (dwcsplitstat"
+          " nil, or this kernel predates them)")
+
 print("splittrace: periodic ep: %d start-splits armed; complete-splits "
       "answered NAK %d, NYET %d, DATA %d"
       % (ppoll, pnak, pnyet, pdata))
