@@ -556,6 +556,40 @@ printed as the denominator. Both branches of that verdict are in
 because those are the only lines in the tool that draw a conclusion
 rather than print a field.
 .NH 2
+And the three states past the controller, which one number cannot separate
+.LP
+.CW pointerevents
+and
+.CW pointerreads
+in
+.CW devpointer.c
+count a decoded event reaching the queue and something taking it off.
+With the controller's
+.CW DATA
+they give:
+.P1
+QUEUED 0, DATA 0        the device reported nothing
+QUEUED 0, DATA nonzero  usbd read the report and did not write it
+QUEUED n, read 0        the USB path works, nothing is consuming
+both nonzero, DATA 0    NOT the mouse -- an injected or boot event
+all three nonzero       the chain carried events from the device
+.P2
+.B "The fourth row is there because the tool got it wrong first."
+The board came back
+.CW "1 queued and 1 read"
+with
+.CW "DATA 0"
+and the verdict said the whole chain had carried events \(em the
+strongest possible confirmation, about an event that did not come from
+the mouse.
+.CW pointerwrite()
+accepts an injected event and the boot checks make one or two of their
+own. It cross\-checks the controller now, and
+.CW tests/splittrace.sh
+asserts the misleading line is
+.I absent
+on that input.
+.NH 2
 The measurement, in two parts, and what each part can say alone
 .LP
 .B "The controller half"
@@ -599,10 +633,30 @@ PTRWATCH-NONE, periodicdata > 0   lost between the controller
                                   and /dev/pointer
 PTRWATCH-NONE, periodicdata == 0  the device never answered
 .P2
-.B "The procedure is now one command:"
+.B "The procedure needs no timing at all now."
+Move the mouse whenever, then:
 .P1
-sh tools/jtag/mousecapture
+sh tools/jtag/splittrace
 .P2
+.CW periodicdata ,
+.CW pointerevents
+and
+.CW pointerreads
+all persist until the board reboots, so nothing has to be watching at
+the moment of the movement.
+.B "That replaced a tool that did,"
+and it was replaced because three timed windows in a row missed a
+movement \(em two minutes of JTAG reads each to learn nothing. An
+instrument that has to be present when the event happens is one that can
+miss it.
+.PP
+.CW mousecapture
+is still there and still useful when somebody
+.I is
+at the keyboard: it differences the counters around a window and runs
+.CW ptrwatch
+inside it, which is the only way to see individual events rather than a
+count.
 It reads the counters, says
 .B "MOVE THE MOUSE NOW
 for twenty seconds, watches
