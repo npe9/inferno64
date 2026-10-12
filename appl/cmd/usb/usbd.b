@@ -740,7 +740,7 @@ hidstart(d: ref Dev, iface, proto, replen, epn, maxpkt, ival: int)
 		spawn kbdreader(d, ep);
 	2 =>
 		sys->print("usbd: %s: boot mouse on %s\n", d.name, ep.name);
-		spawn mousereader(d, ep);
+		spawn mousereader(d, ep, maxpkt);
 	Preport =>
 		spawn hidreader(d, ep, rep);
 	* =>
@@ -1151,7 +1151,7 @@ keysym(k, mod: int): string
 	return nil;		# caps lock, function and arrow keys: not mapped yet
 }
 
-mousereader(d: ref Dev, ep: ref Dev)
+mousereader(d: ref Dev, ep: ref Dev, maxpkt: int)
 {
 	mfd := sys->open("/dev/pointer", Sys->OWRITE);
 	if(mfd == nil){
@@ -1160,9 +1160,39 @@ mousereader(d: ref Dev, ep: ref Dev)
 	}
 	x := 0;
 	y := 0;
+	#
+	# READ ONE PACKET, NOT EIGHT BYTES, and the difference is a
+	# silently dropped report on every poll.
+	#
+	# This asked for 8 whatever the endpoint's wMaxPacketSize was.  An
+	# interrupt IN transfer ends when the requested length is satisfied
+	# OR a short packet arrives, so on a device whose report fills its
+	# packet exactly the host is entitled to keep going -- and does.
+	#
+	# Measured on a Pi 3B with an IBM boot mouse, maxpkt 5, over a
+	# 60-second window with the mouse moving: 898 completed split
+	# transfers moved 7184 bytes, which is 8.000 each.  Every read
+	# returned a full 5-byte report FOLLOWED BY the first 3 bytes of
+	# the next one, and the decode below uses rep[0..2] and throws the
+	# rest away.  So one report in two reached /dev/pointer and the
+	# pointer moved at half the rate with half the motion.
+	#
+	# Reading maxpkt makes one transfer one report.  Clamped at 8
+	# because that is this buffer's size and a boot report is 3 or 4
+	# bytes; a device claiming more than 8 has nothing extra this
+	# decode could use.  And not below 3, or the `n < 3' test below
+	# would reject every report -- a maxpkt of 1 or 2 cannot carry a
+	# boot report at all, and asking for 3 from such an endpoint fails
+	# visibly rather than looping on `continue' for ever.
+	#
+	want := maxpkt;
+	if(want > 8)
+		want = 8;
+	if(want < 3)
+		want = 3;
 	rep := array[8] of byte;
 	for(;;){
-		n := sys->read(ep.dfd, rep, len rep);
+		n := sys->read(ep.dfd, rep, want);
 		if(n < 0){
 			sys->fprint(sys->fildes(2), "usbd: %s: mouse gone: %r\n", d.name);
 			return;
