@@ -61,6 +61,16 @@ static struct {
 } ptrq;
 
 /*
+ * How far a pointer event got, and both halves are needed.  Not static:
+ * tools/jtag/splittrace resolves them in the symbol table, and they
+ * persist until the board is rebooted -- which is the point, because an
+ * instrument that has to be running at the moment of the event is one
+ * that can miss it.
+ */
+uint	pointerevents;		/* written to the queue by a producer */
+uint	pointerreads;		/* taken off it by a reader */
+
+/*
  * called by any source of pointer data
  */
 void
@@ -84,6 +94,24 @@ mousetrack(int b, int x, int y, int isdelta)
 	}
 	if(x == mouse.x && y == mouse.y && mouse.b == b)
 		return;
+	/*
+	 * EVENTS THAT REACHED THIS QUEUE, counted so that the question
+	 * "did a pointer event get this far" can be answered WITHOUT
+	 * anything reading the queue at the same moment.
+	 *
+	 * Why it exists: on the Pi 3B the whole chain from a moved mouse
+	 * to a moving pointer had to be measured, and the only
+	 * instruments were a kernel counter at the USB controller and a
+	 * bounded reader of this file -- so the reader had to be running
+	 * during the movement, and three capture windows in a row missed
+	 * it.  A counter does not have to be there when it happens.
+	 *
+	 * pointerevents is "usbd decoded a report and wrote it here";
+	 * pointerreads below is "something took it off the queue".  The
+	 * pair separates a device that said nothing from a consumer that
+	 * was not listening, which no single number can.
+	 */
+	pointerevents++;
 	lastb = mouse.b;
 	mouse.x = x;
 	mouse.y = y;
@@ -260,6 +288,7 @@ pointerread(Chan* c, void* a, s32 n, s64)
 			nexterror();
 		}
 		mt = mouseconsume();
+	pointerreads++;
 		poperror();
 		qunlock(&mouse.q);
 		/*

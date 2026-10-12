@@ -74,6 +74,16 @@ mouseresize(int w, int h)
 }
 
 /*
+ * How far a pointer event got, and both halves are needed: one says a
+ * producer wrote to this queue, the other that something took it off.
+ * They persist for the life of the process, so neither has to be
+ * watched at the moment of the event -- see the kernel copy, where
+ * three capture windows in a row missed a mouse being moved.
+ */
+uint	pointerevents;
+uint	pointerreads;
+
+/*
  * called by any source of pointer data
  */
 void
@@ -93,6 +103,15 @@ mousetrack(int b, int x, int y, int isdelta)
 	mouse.v.y = y;
 	mouse.v.b = b;
 	mouse.v.msec = msec;
+	/*
+	 * Counted here, where this version of the function has no
+	 * no-change early exit -- the kernel's does, so its count omits
+	 * events that moved nothing.  The pair is still "reached the
+	 * queue" against "taken off it"; only the definition of an event
+	 * differs between the two, and it differs because the functions
+	 * do.
+	 */
+	pointerevents++;
 	if(!ptrq.full && lastb != b){
 		e = mouse.v;
 		ptrq.clicks[ptrq.wr] = e;
@@ -257,6 +276,7 @@ pointerread(Chan* c, void* a, long n, vlong off)
 			nexterror();
 		}
 		mt = mouseconsume();
+	pointerreads++;
 		type = 'm';
 		if(mouse.resize){
 			type = 'r';

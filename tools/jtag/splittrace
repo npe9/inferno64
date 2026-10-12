@@ -119,6 +119,8 @@ A_PNAK=`sym periodicnak`
 A_PNYET=`sym periodicnyet`
 A_PDATA=`sym periodicdata`
 A_SSPTR=`sym dwcsplitstat`
+A_PEV=`sym pointerevents`
+A_PRD=`sym pointerreads`
 A_LOST=`sym splitevlost`
 
 for v in A_RING A_NRING A_CTL A_NCTL A_WAIT A_NWAIT A_PPOLL A_PNAK \
@@ -185,6 +187,8 @@ trap 'rm -f "$TMP" "$RINGBIN" "$CTLBIN" "$WAITBIN"' 0 1 2 15
 	-c "echo \"ST-PNYET\"; mdw $A_PNYET 1" \
 	-c "echo \"ST-PDATA\"; mdw $A_PDATA 1" \
 	-c "echo \"ST-SSPTR\"; mdd ${A_SSPTR:-0} 1" \
+	-c "echo \"ST-PEV\"; mdw ${A_PEV:-0} 1" \
+	-c "echo \"ST-PRD\"; mdw ${A_PRD:-0} 1" \
 	-c "echo \"ST-LOST\"; mdw ${A_LOST:-0} 1" \
 	-c "dump_image $RINGBIN $A_RING `expr $NRINGMAX \* $ESZ`" \
 	-c "dump_image $CTLBIN $A_CTL `expr $NCTLMAX \* $ESZ`" \
@@ -234,6 +238,8 @@ PPOLL=`dec \`val ST-PPOLL\``
 PNAK=`dec \`val ST-PNAK\``
 PNYET=`dec \`val ST-PNYET\``
 PDATA=`dec \`val ST-PDATA\``
+PEV=`dec \`val ST-PEV\``
+PRD=`dec \`val ST-PRD\``
 #
 # THE SIX SPLIT COUNTERS, through a pointer.  usbdwc.c keeps them in a
 # Splitstat inside its Ctlr and publishes the address in dwcsplitstat,
@@ -258,7 +264,7 @@ LOST=`dec \`val ST-LOST\``
 exec python3 - "$RINGBIN" "$CTLBIN" "$NRING" "$NCTL" "$LOST" \
 	"$EPFILT" "$WANTRING" "$WANTCTL" "$NLAST" "$ESZ" \
 	"$WAITBIN" "$NWAIT" "$WANTWAIT" "$PPOLL" "$PNAK" \
-	"$PNYET" "$PDATA" "$SS" <<'DECODER'
+	"$PNYET" "$PDATA" "$SS" "${PEV:-0}" "${PRD:-0}" <<'DECODER'
 import struct, sys
 
 ringf, ctlf = sys.argv[1], sys.argv[2]
@@ -273,6 +279,8 @@ wantwait = sys.argv[13] == "1"
 ppoll, pnak = int(sys.argv[14]), int(sys.argv[15])
 pnyet, pdata = int(sys.argv[16]), int(sys.argv[17])
 ss = [int(x, 16) for x in sys.argv[18].split()] if len(sys.argv) > 18 else []
+pev = int(sys.argv[19]) if len(sys.argv) > 19 else -1
+prd = int(sys.argv[20]) if len(sys.argv) > 20 else -1
 
 FMT = "<6I2H4x"
 assert struct.calcsize(FMT) == esz, (struct.calcsize(FMT), esz)
@@ -435,6 +443,60 @@ elif ss:
 else:
     print("splittrace: the split counters were not read (dwcsplitstat"
           " nil, or this kernel predates them)")
+
+#
+# THE REST OF THE CHAIN, past the controller.  These two persist until
+# the board reboots, so the mouse can be moved at ANY time and this read
+# at any later one -- which is the whole reason they exist: three timed
+# capture windows in a row missed a movement, and a counter does not
+# have to be there when it happens.
+#
+if pev >= 0:
+    print("splittrace: pointer events QUEUED %d, taken off by a reader %d"
+          % (pev, prd))
+    if pev == 0:
+        print("splittrace:   QUEUED 0 -- nothing has written a decoded"
+              " event to /dev/pointer")
+        print("splittrace:   since boot.  If the controller's DATA count"
+              " below is also 0 the")
+        print("splittrace:   device has reported nothing; if DATA is"
+              " nonzero, usbd read the")
+        print("splittrace:   report and did not write it, which is"
+              " usbd's decode, not USB.")
+    elif prd == 0:
+        print("splittrace:   QUEUED %d but NOTHING READ THEM.  The whole"
+              " USB path works and" % pev)
+        print("splittrace:   the events are sitting in devpointer's"
+              " queue with no consumer --")
+        print("splittrace:   mousecheck() gives up 25s after boot, so"
+              " after that nothing on")
+        print("splittrace:   this board reads /dev/pointer unless"
+              " something is started.")
+    elif pdata == 0:
+        #
+        # CROSS-CHECK AGAINST THE CONTROLLER, because events in this
+        # queue do not have to have come from USB.  pointerwrite()
+        # accepts an injected event, and the boot checks produce one or
+        # two of their own, so a small nonzero count with DATA 0 is not
+        # the mouse -- and reporting it as "the whole chain works" is a
+        # verdict that reads as the strongest possible confirmation
+        # while being about something else entirely.  The first version
+        # of this did exactly that, on a board showing 1 and 1 with
+        # DATA 0.
+        #
+        print("splittrace:   %d queued and %d read, BUT THE CONTROLLER"
+              " MOVED NO BYTES (DATA 0)." % (pev, prd))
+        print("splittrace:   So those events did not come from the"
+              " mouse: something else wrote")
+        print("splittrace:   them -- a boot-time check, or an injected"
+              " write to /dev/pointer.")
+        print("splittrace:   It says the QUEUE works, and nothing about"
+              " the device.")
+    else:
+        print("splittrace:   %d queued and %d read, with %d"
+              " complete-splits carrying data:" % (pev, prd, pdata))
+        print("splittrace:   THE WHOLE CHAIN FROM THE DEVICE TO A"
+              " CONSUMER HAS CARRIED EVENTS.")
 
 print("splittrace: periodic ep: %d start-splits armed; complete-splits "
       "answered NAK %d, NYET %d, DATA %d"

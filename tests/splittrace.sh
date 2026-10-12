@@ -147,7 +147,7 @@ PYEOF
 # nring=520 nctl=4 lost=8, no endpoint filter, both arrays, no tail cap.
 #
 python3 "$T/dec.py" "$T/ring.bin" "$T/ctl.bin" 520 4 8 "" 1 1 0 32 \
-	"$T/wait.bin" 2 1 900 898 31 1 "0x1f4 0x1f0 0x7d0 0x3 0x1f4 0x7 0x1f4 0x0" >"$T/out.txt" 2>"$T/err.txt"
+	"$T/wait.bin" 2 1 900 898 31 1 "0x1f4 0x1f0 0x7d0 0x3 0x1f4 0x7 0x1f4 0x0" 120 118 >"$T/out.txt" 2>"$T/err.txt"
 rc=$?
 if [ $rc -ne 0 ]; then
 	echo "splittrace.sh: the decoder exited $rc" >&2
@@ -238,7 +238,7 @@ fi
 
 # Endpoint filtering: ask for 5.1 and the control array's 5.0 must go.
 python3 "$T/dec.py" "$T/ring.bin" "$T/ctl.bin" 520 4 8 "5.1" 1 1 0 32 \
-	"$T/wait.bin" 2 1 900 898 31 1 "0x1f4 0x1f0 0x7d0 0x3 0x1f4 0x7 0x1f4 0x0" >"$T/out2.txt" 2>&1
+	"$T/wait.bin" 2 1 900 898 31 1 "0x1f4 0x1f0 0x7d0 0x3 0x1f4 0x7 0x1f4 0x0" 120 118 >"$T/out2.txt" 2>&1
 if grep -q "nothing for ep5.1" "$T/out2.txt" &&
    ! grep -q "^   .*ep5.0" "$T/out2.txt"; then
 	echo "  ok   filter: -e 5.1 drops ep5.0 and says so for the control"
@@ -254,7 +254,7 @@ T = sys.argv[1]
 open(T + "/zero.bin", "wb").write(bytes(32 * 512))
 PYEOF
 python3 "$T/dec.py" "$T/zero.bin" "$T/zero.bin" 0 0 0 "" 1 1 0 32 \
-	"$T/wait0.bin" 0 1 0 0 0 0 "" >"$T/out3.txt" 2>&1
+	"$T/wait0.bin" 0 1 0 0 0 0 "" 0 0 >"$T/out3.txt" 2>&1
 if grep -q "NOTHING WAS RECORDED" "$T/out3.txt"; then
 	echo "  ok   empty: an unrecorded trace says so"
 else
@@ -264,7 +264,7 @@ fi
 
 # And the case that matters for the control: ring busy, control empty.
 python3 "$T/dec.py" "$T/ring.bin" "$T/zero.bin" 520 0 8 "" 1 1 0 32 \
-	"$T/wait0.bin" 0 1 0 0 0 0 "" >"$T/out4.txt" 2>&1
+	"$T/wait0.bin" 0 1 0 0 0 0 "" 0 0 >"$T/out4.txt" 2>&1
 if grep -q "CONTROL array is empty while the ring is not" "$T/out4.txt"; then
 	echo "  ok   no control: an empty control array is called out"
 else
@@ -291,6 +291,12 @@ ck "wait: a nonzero DATA says the path delivers reports"	"the split path DOES de
 ck "counters: the six are decoded in declaration order"	"splits completed 500, of them moving bytes 496 (2000 bytes), MOVING NOTHING 3"
 ck "counters: promoted and terminal are printed"	"promoted to complete-split 500, taken as terminal 7"
 ck "counters: a nonzero moving-nothing is called out"	"signature of a split that was"
+#
+# THE CHAIN PAST THE CONTROLLER.  Three states and they must not be
+# confused: nothing queued, queued-but-unread, and queued-and-read.
+#
+ck "chain: queued and read are both printed"	"pointer events QUEUED 120, taken off by a reader 118"
+ck "chain: queued+read WITH controller data is the whole chain"	"THE WHOLE CHAIN FROM THE DEVICE TO A"
 ck "counters: the packet programming is printed"	"programmed ONE packet 500, more than one 0"
 ck "wait: a non-empty wait says the path can now be judged"	"NON-EMPTY"
 nk "wait: and does NOT call a non-empty wait an idle mouse"	"WHAT AN IDLE MOUSE LOOKS LIKE"
@@ -298,7 +304,7 @@ nk "wait: and does NOT call a non-empty wait an idle mouse"	"WHAT AN IDLE MOUSE 
 # The empty-wait branch, from out3 (nothing at all) and a third run with
 # polls but no interesting event -- the state the board is actually in.
 python3 "$T/dec.py" "$T/ring.bin" "$T/ctl.bin" 520 4 8 "" 1 1 0 32 \
-	"$T/wait0.bin" 0 1 4196 4195 32 0 "0x1064 0x1060 0x4e20 0x0 0x1064 0x9 0x1064 0x0" >"$T/out5.txt" 2>&1
+	"$T/wait0.bin" 0 1 4196 4195 32 0 "0x1064 0x1060 0x4e20 0x0 0x1064 0x9 0x1064 0x0" 0 0 >"$T/out5.txt" 2>&1
 if grep -q "WHAT AN IDLE MOUSE LOOKS LIKE" "$T/out5.txt" &&
    grep -q "NEEDS THE MOUSE MOVED" "$T/out5.txt" &&
    grep -q "has never moved a byte" "$T/out5.txt" &&
@@ -312,13 +318,14 @@ else
 	fail=`expr $fail + 1`
 fi
 python3 "$T/dec.py" "$T/ring.bin" "$T/ctl.bin" 520 4 8 "" 1 1 0 32 \
-	"$T/wait0.bin" 0 1 100 99 1 0 "0x64 0x0 0x0 0x64 0x0 0x64 0x0 0x64" \
+	"$T/wait0.bin" 0 1 100 99 1 0 "0x64 0x0 0x0 0x64 0x0 0x64 0x0 0x64" 55 0 \
 	>"$T/out7.txt" 2>&1
-if grep -q "NOT ONE split was programmed for a single" "$T/out7.txt" &&
+if grep -q "QUEUED 55 but NOTHING READ THEM" "$T/out7.txt" &&
+   grep -q "NOT ONE split was programmed for a single" "$T/out7.txt" &&
    grep -q "two-phase handshake is not" "$T/out7.txt" &&
    grep -q "MOVING NOTHING 100" "$T/out7.txt"; then
-	echo "  ok   counters: nothing promoted AND no one-packet split are"
-	echo "       both called out"
+	echo "  ok   counters: nothing promoted, no one-packet split, AND"
+	echo "       events queued with no reader are all called out"
 else
 	echo "  FAIL counters: 100 completions with 0 promotions passed in"
 	echo "       silence -- which is a split path running one-phase"
@@ -326,7 +333,7 @@ else
 fi
 # and six words are required: five must refuse rather than mis-decode
 python3 "$T/dec.py" "$T/ring.bin" "$T/ctl.bin" 520 4 8 "" 1 1 0 32 \
-	"$T/wait0.bin" 0 1 100 99 1 0 "0x1 0x2 0x3 0x4 0x5 0x6 0x7" \
+	"$T/wait0.bin" 0 1 100 99 1 0 "0x1 0x2 0x3 0x4 0x5 0x6 0x7" 0 0 \
 	>"$T/out8.txt" 2>&1
 if grep -q "read back 7 word(s), not 8" "$T/out8.txt"; then
 	echo "  ok   counters: a short read refuses instead of decoding"
@@ -341,6 +348,26 @@ else
 	echo "  FAIL kernel: usbdwc.c does not assert sizeof(Splitstat) == 32,"
 	echo "       so a field could be added and the six counters above"
 	echo "       would each be decoded as the next one"
+	fail=`expr $fail + 1`
+fi
+python3 "$T/dec.py" "$T/ring.bin" "$T/ctl.bin" 520 4 8 "" 1 1 0 32 \
+	"$T/wait0.bin" 0 1 4196 4195 32 0 \
+	"0x1064 0x1060 0x4e20 0x0 0x1064 0x9 0x1064 0x0" 1 1 \
+	>"$T/out9.txt" 2>&1
+if grep -q "BUT THE CONTROLLER MOVED NO BYTES" "$T/out9.txt" &&
+   ! grep -q "THE WHOLE CHAIN FROM THE DEVICE" "$T/out9.txt"; then
+	echo "  ok   chain: events with no controller data are NOT reported"
+	echo "       as the whole chain working"
+else
+	echo "  FAIL chain: 1 queued and 1 read with DATA 0 was reported as"
+	echo "       the whole chain working -- which is the exact reading"
+	echo "       the board produced and it was about a boot-time event"
+	fail=`expr $fail + 1`
+fi
+if grep -q "QUEUED 0 -- nothing has written a decoded" "$T/out3.txt"; then
+	echo "  ok   chain: zero queued is distinguished from unread"
+else
+	echo "  FAIL chain: zero events queued was not called out"
 	fail=`expr $fail + 1`
 fi
 if grep -q "NO PERIODIC SPLIT HAS BEEN ARMED" "$T/out3.txt"; then
