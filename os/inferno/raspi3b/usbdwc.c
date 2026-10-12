@@ -1344,7 +1344,47 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		 * transfer allowed to take unbounded time, and it waits in
 		 * chanwait rather than spinning here.
 		 */
-		if(++iters > Maxiters && !(ep->ttype == Tbulk && dir == Epin)){
+		/*
+		 * AN INTERRUPT IN IS EXEMPT, LIKE A BULK IN, and it was not,
+		 * and that is why the mouse has never been polled for more
+		 * than forty seconds after a boot.
+		 *
+		 * An idle interrupt endpoint NAKs for ever -- correctly; it
+		 * is how a device says "nothing to report" -- and a blocking
+		 * read on it is supposed to wait.  With pollival 10 ms, 4000
+		 * attempts is forty seconds, so every read(ep5.1/data) ended
+		 * in Eio forty seconds in and usbd's mouse reader stopped.
+		 *
+		 * MEASURED, and the tell was a number that would not move:
+		 * periodicpoll read 4000 on four separate JTAG reads of the
+		 * same boot, minutes apart, with periodicnak pinned at 3997
+		 * beside it.  Maxiters is 4000.  The ring had the proof all
+		 * along --
+		 *
+		 *   usbdwc: ep5.1 type 4 dir in: 4001 attempts, last intr
+		 *   00000012 hcchar 215e8805 hctsiz 00100008 hcsplt 8000c104
+		 *
+		 * -- and nobody had looked for it, because a counter that
+		 * has stopped looks exactly like a counter that is high.
+		 *
+		 * The NAK bound two lines down already had this right:
+		 *
+		 *   if(((ep->ttype != Tbulk && ep->ttype != Tintr)
+		 *   || dir != Epin) && naks > Maxnak)
+		 *
+		 * -- Tintr IN exempted, for exactly this reason.  The two
+		 * bounds now agree.  A spin count is not a timeout, and this
+		 * one was being used as a deadline on a device that is
+		 * entitled to say nothing indefinitely.
+		 *
+		 * WHAT THIS MEANS FOR EVERYTHING WRITTEN ABOUT THE SPLIT
+		 * PATH: the eight capped NAK prints that the whole "the
+		 * device NAKs while being moved" reading rests on came from
+		 * the first eighty milliseconds of a reader that then died,
+		 * and the mouse was moved long afterwards, into nothing.
+		 */
+		if(++iters > Maxiters
+		&& ((ep->ttype != Tbulk && ep->ttype != Tintr) || dir != Epin)){
 			print("usbdwc: ep%d.%d type %d dir %s: %d attempts, last intr %8.8ux "
 				"hcchar %8.8ux hctsiz %8.8ux hcsplt %8.8ux\n",
 				ep->dev->nb, ep->nb, ep->ttype, dir == Epin? "in": "out",
