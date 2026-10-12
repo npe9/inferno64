@@ -492,11 +492,50 @@ if pev >= 0:
               " write to /dev/pointer.")
         print("splittrace:   It says the QUEUE works, and nothing about"
               " the device.")
+    elif prd <= 2 and pev > 10:
+        #
+        # A NONZERO READ COUNT IS NOT A CONSUMER, and this branch is
+        # here because the previous version said it was: the board
+        # returned 204 queued and 1 read, with 213 complete-splits
+        # carrying data, and the tool announced that the whole chain
+        # from the device to a consumer had carried events.  The 1 was a
+        # boot-time read from twenty minutes earlier; the 204 mouse
+        # events were never taken off.
+        #
+        # That is the third time a verdict here has been satisfied by a
+        # nonzero count from an unrelated source.  The pattern is
+        # always the same -- a number that is nonzero for a reason that
+        # has nothing to do with the question.
+        #
+        print("splittrace:   %d queued, %d complete-splits carried data,"
+              " and only %d read." % (pev, pdata, prd))
+        print("splittrace:   THE USB PATH WORKS END TO END and nothing"
+              " is consuming the")
+        print("splittrace:   result.  A read count this small against"
+              " that many events is")
+        print("splittrace:   one read long ago, not a reader keeping up"
+              " -- which is the")
+        print("splittrace:   board's normal state more than 25 seconds"
+              " after boot, because")
+        print("splittrace:   mousecheck() has given up by then and"
+              " nothing else reads it.")
     else:
-        print("splittrace:   %d queued and %d read, with %d"
-              " complete-splits carrying data:" % (pev, prd, pdata))
-        print("splittrace:   THE WHOLE CHAIN FROM THE DEVICE TO A"
-              " CONSUMER HAS CARRIED EVENTS.")
+        print("splittrace:   %d queued, %d read, %d complete-splits"
+              " carrying data." % (pev, prd, pdata))
+        print("splittrace:   The chain from the device to a consumer HAS"
+              " carried events.")
+        #
+        # These are cumulative and devpointer is a STATE device, not a
+        # stream: mouseconsume() hands back the current position, so a
+        # reader that reads once gets the latest state and the two
+        # counts are not meant to match.  Say so, or someone will read
+        # queued-minus-read as events lost.
+        print("splittrace:   The counts are cumulative and need not"
+              " match: devpointer hands")
+        print("splittrace:   back the CURRENT position, so one read"
+              " collects whatever the")
+        print("splittrace:   last event left.  Use mousecapture for a"
+              " difference over a window.")
 
 print("splittrace: periodic ep: %d start-splits armed; complete-splits "
       "answered NAK %d, NYET %d, DATA %d"

@@ -296,7 +296,8 @@ ck "counters: a nonzero moving-nothing is called out"	"signature of a split that
 # confused: nothing queued, queued-but-unread, and queued-and-read.
 #
 ck "chain: queued and read are both printed"	"pointer events QUEUED 120, taken off by a reader 118"
-ck "chain: queued+read WITH controller data is the whole chain"	"THE WHOLE CHAIN FROM THE DEVICE TO A"
+ck "chain: queued+read with data reads as the chain carrying events"	"The chain from the device to a consumer HAS"
+ck "chain: and says the counts need not match"	"back the CURRENT position"
 ck "counters: the packet programming is printed"	"programmed ONE packet 500, more than one 0"
 ck "wait: a non-empty wait says the path can now be judged"	"NON-EMPTY"
 nk "wait: and does NOT call a non-empty wait an idle mouse"	"WHAT AN IDLE MOUSE LOOKS LIKE"
@@ -355,13 +356,28 @@ python3 "$T/dec.py" "$T/ring.bin" "$T/ctl.bin" 520 4 8 "" 1 1 0 32 \
 	"0x1064 0x1060 0x4e20 0x0 0x1064 0x9 0x1064 0x0" 1 1 \
 	>"$T/out9.txt" 2>&1
 if grep -q "BUT THE CONTROLLER MOVED NO BYTES" "$T/out9.txt" &&
-   ! grep -q "THE WHOLE CHAIN FROM THE DEVICE" "$T/out9.txt"; then
+   ! grep -q "chain from the device to a consumer HAS" "$T/out9.txt"; then
 	echo "  ok   chain: events with no controller data are NOT reported"
 	echo "       as the whole chain working"
 else
 	echo "  FAIL chain: 1 queued and 1 read with DATA 0 was reported as"
 	echo "       the whole chain working -- which is the exact reading"
 	echo "       the board produced and it was about a boot-time event"
+	fail=`expr $fail + 1`
+fi
+python3 "$T/dec.py" "$T/ring.bin" "$T/ctl.bin" 520 4 8 "" 1 1 0 32 \
+	"$T/wait0.bin" 0 1 4196 4195 32 213 \
+	"0x1064 0x1060 0x4e20 0x0 0x1064 0x9 0x1064 0x0" 204 1 \
+	>"$T/out10.txt" 2>&1
+if grep -q "THE USB PATH WORKS END TO END and nothing" "$T/out10.txt" &&
+   ! grep -q "chain from the device to a consumer HAS" "$T/out10.txt"; then
+	echo "  ok   chain: 204 queued / 1 read / 213 data reads as NOTHING"
+	echo "       CONSUMING, not as a working consumer -- the board's own"
+	echo "       numbers, which the first version got wrong"
+else
+	echo "  FAIL chain: 204 queued with 1 read was reported as a"
+	echo "       consumer.  That 1 is a boot-time read and the 204 mouse"
+	echo "       events were never taken off."
 	fail=`expr $fail + 1`
 fi
 if grep -q "QUEUED 0 -- nothing has written a decoded" "$T/out3.txt"; then
