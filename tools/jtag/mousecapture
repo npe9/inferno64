@@ -1,0 +1,263 @@
+#!/bin/sh
+#
+# The one USB experiment left, as one command.
+#
+#	sh tools/jtag/mousecapture [-t secs]
+#
+# It reads the split counters, asks for the mouse to be moved, watches
+# /dev/pointer for that window, reads the counters again, and says what
+# the DIFFERENCE means.
+#
+# WHY IT EXISTS.  doc/usb-split-plan.ms.  Phases 0, 1, 2 and 4 are done
+# and Phase 3 -- restructuring chanio's split path to program one packet
+# per split, dwc2's shape -- is the only one left.  It is a large change
+# and ONE FACT DECIDES WHETHER IT IS NEEDED AT ALL: does a moved mouse
+# deliver an interrupt report on this board?  Nobody has measured it.
+# The claim that it does not rests on eight capped prints from the first
+# eighty milliseconds of a reader that then died of a spin count being
+# used as a deadline (fixed; usbdwc.c, Maxiters).
+#
+# TWO HALVES, AND NEITHER IS ENOUGH ALONE:
+#
+#   periodicdata, in the kernel, counts complete-splits that carried
+#	Xfercomp.  It counts at the CONTROLLER, so it does not need any
+#	Dis process to be alive -- which matters, because on this board
+#	none is: mousecheck() in the init gives up after twenty-five
+#	seconds and nothing reads /dev/pointer afterwards.
+#
+#   ptrwatch(1), on the board, says whether a DECODED event reached
+#	/dev/pointer.  That is the whole path: controller, split
+#	transaction, usbd's HID decode, and the device.
+#
+# Together they locate the loss.  Apart, each has a reading it cannot
+# distinguish from the other.
+#
+# A DIFFERENCE, NOT A VALUE.  The counters are read before and after, and
+# the verdict is on the delta.  An absolute reading cannot tell a report
+# delivered during this window from one delivered an hour ago, and this
+# tree has already published one conclusion from an absolute counter that
+# had stopped moving.
+#
+# SEQUENTIAL ON PURPOSE.  splittrace halts the processor over JTAG and
+# boardrun talks Styx to a running board, so overlapping them would stall
+# the very reader being measured -- and tools/jtag/boardlock.sh would
+# refuse the second one anyway.  So: read, watch, read.  The counters
+# persist until the board is rebooted, so nothing is lost by reading them
+# after.
+#
+set -u
+HERE=`cd \`dirname "$0"\` && pwd`
+ROOT=`cd "$HERE/../.." && pwd`
+SECS=${SECS:-20}
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-t)	SECS=$2; shift 2;;
+	-h|--help)
+		sed -n '2,47p' "$0" | sed 's/^#//;s/^ //'
+		exit 0;;
+	*)	echo "mousecapture: unknown argument $1" >&2; exit 2;;
+	esac
+done
+
+T=${TMPDIR:-/tmp}/mousecapture.$$
+trap 'rm -f "$T".*' 0 1 2 15
+
+#
+# A helper rather than two copies, because the two reads have to be
+# parsed the same way or the difference is between two different things.
+#
+counters() {	# -> "data poll nak nyet ok okdata bytes empty promote term"
+	#
+	# NAMED PATTERNS, NOT FIELD NUMBERS.  The first version of this
+	# counted words -- $(i-1) for the armed count, $3 for the
+	# completions -- and got three of the ten wrong while looking
+	# entirely plausible: it read the ARMED total as the NAK total,
+	# and 0 for two others.  A positional parser against a
+	# human-readable line is a wrong number that looks right, and
+	# every number here is about to be subtracted from another.
+	#
+	#
+	# THE WHOLE OUTPUT TO A FILE, and the extractor reads the file.
+	# The first version piped splittrace into the extractor and sent
+	# only stderr to a file, then grepped that file for `kernel
+	# matches the board' -- which splittrace prints on STDOUT.  So the
+	# stamp check could never pass and the tool refused every read,
+	# with an empty message under it because the file it printed was
+	# empty too.  Two streams, one of them the wrong one.
+	#
+	sh "$HERE/splittrace" -w >"$T.out" 2>"$T.err"
+	python3 -c '
+import re, sys
+t = sys.stdin.read()
+pats = {
+ "data":    r"DATA (\d+)",
+ "poll":    r"periodic ep: (\d+) start-splits armed",
+ "nak":     r"answered NAK (\d+)",
+ "nyet":    r"NYET (\d+)",
+ "ok":      r"splits completed (\d+)",
+ "okdata":  r"of them moving bytes (\d+)",
+ "bytes":   r"moving bytes \d+ \((\d+) bytes\)",
+ "empty":   r"MOVING NOTHING (\d+)",
+ "promote": r"promoted to complete-split (\d+)",
+ "term":    r"taken as terminal (\d+)",
+}
+out = []
+for k in ("data","poll","nak","nyet","ok","okdata","bytes","empty",
+          "promote","term"):
+    m = re.search(pats[k], t)
+    out.append(m.group(1) if m else "-1")
+print(" ".join(out))
+' <"$T.out"
+}
+
+#
+# A -1 ANYWHERE MEANS A PATTERN DID NOT MATCH, which is a parser failure
+# and not a zero.  Checked before either read is used, because the
+# verdict below subtracts these and two unmatched patterns would
+# subtract to a confident 0.
+#
+checkcounters() {	# $1 label, $2 the ten numbers
+	case " $2 " in
+	*" -1 "*)
+		echo "mousecapture: the $1 read could not be parsed:" >&2
+		echo "mousecapture:   got: $2" >&2
+		echo "mousecapture: a -1 is a pattern in counters() that did" >&2
+		echo "mousecapture: not match splittrace's output -- its" >&2
+		echo "mousecapture: wording changed, or this kernel predates" >&2
+		echo "mousecapture: one of the counters.  Refusing to subtract" >&2
+		echo "mousecapture: numbers that were not read." >&2
+		exit 2;;
+	esac
+}
+
+echo "mousecapture: reading the counters before the window"
+before=`counters`
+checkcounters before "$before"
+if ! grep -q 'kernel matches the board' "$T.out" 2>/dev/null; then
+	#
+	# REFUSE RATHER THAN READ.  splittrace's own stamp check is the
+	# thing that stops addresses from one kernel being read in
+	# another, and if it did not pass there is nothing here worth
+	# printing.  Its message is on stderr and is reproduced.
+	#
+	echo "mousecapture: splittrace would not vouch for this read:" >&2
+	cat "$T.out" "$T.err" 2>/dev/null | sed 's/^/mousecapture:   /' >&2
+	exit 2
+fi
+set -- $before
+echo "mousecapture:   polls $2, NAK $3, NYET $4, DATA $1;" \
+	"splits ok $5 moved-nothing $8 promoted $9"
+
+cat <<EOF
+
+======================================================================
+  MOVE THE MOUSE NOW, for the next $SECS seconds.
+  Any movement will do -- a few centimetres, or a button press.
+======================================================================
+
+EOF
+
+#
+# ptrwatch is bounded, which is why it is used here rather than `cat
+# /dev/pointer': boardrun runs one command and waits for it, so a read
+# that never returns wedges the board's remote-command poller and the
+# board answers nothing afterwards.
+#
+echo "mousecapture: watching /dev/pointer for ${SECS}s"
+sh "$HERE/boardrun" "ptrwatch -t $SECS -n 40" >"$T.ptr" 2>&1 || true
+ptr=`grep -o 'PTRWATCH-[A-Z]*' "$T.ptr" | head -1`
+grep -E 'ptrwatch [0-9]+:|PTRWATCH-' "$T.ptr" | sed 's/^/mousecapture:   /'
+
+echo "mousecapture: reading the counters after the window"
+after=`counters`
+checkcounters after "$after"
+set -- $after
+echo "mousecapture:   polls $2, NAK $3, NYET $4, DATA $1;" \
+	"splits ok $5 moved-nothing $8 promoted $9"
+
+#
+# The verdict, on the DIFFERENCE.
+#
+exec python3 - "$before" "$after" "${ptr:-PTRWATCH-UNKNOWN}" "$SECS" <<'VERDICT'
+import sys
+
+names = ("data", "poll", "nak", "nyet", "ok", "okdata", "bytes",
+         "empty", "promote", "term")
+b = dict(zip(names, (int(x) for x in sys.argv[1].split())))
+a = dict(zip(names, (int(x) for x in sys.argv[2].split())))
+ptr = sys.argv[3]
+secs = int(sys.argv[4])
+d = {k: a[k] - b[k] for k in names}
+
+print()
+print("== what changed during the window ==")
+for k in names:
+    print("   %-8s %8d -> %-8d  %+d" % (k, b[k], a[k], d[k]))
+print()
+
+#
+# THE INSTRUMENT IS CHECKED BEFORE THE RESULT IS READ.  A window in
+# which the endpoint was not polled at all says nothing about the
+# mouse, and that reading is indistinguishable from a silent device
+# unless it is named.
+#
+if d["poll"] <= 0:
+    print("CANNOT SAY: the endpoint was not polled during the window")
+    print("  (start-splits armed did not move).  Either usbd's reader is")
+    print("  gone again -- the Maxiters bound used to kill it forty")
+    print("  seconds into every boot -- or no mouse is attached.  This is")
+    print("  a statement about the instrument, not about the device.")
+    sys.exit(2)
+
+print("the endpoint WAS polled: %d start-splits in %ds" % (d["poll"], secs))
+print()
+
+if d["data"] > 0 and ptr == "PTRWATCH-OK":
+    print("THE WHOLE PATH WORKS.  %d complete-split(s) carried data and the"
+          % d["data"])
+    print("decoded events reached /dev/pointer.  Phase 3's per-packet")
+    print("restructure has nothing to fix on this evidence: write it up and")
+    print("close it.  What remains is why mousecheck() in the board's init")
+    print("reported USB-MOUSE-NONE -- a twenty-five second window, not the")
+    print("split path.")
+elif d["data"] > 0:
+    print("THE SPLIT PATH DELIVERS AND THE LOSS IS DOWNSTREAM.  %d"
+          % d["data"])
+    print("complete-split(s) carried data at the controller, and ptrwatch")
+    print("said %s.  So the bytes arrive and something between the" % ptr)
+    print("controller and /dev/pointer drops them: usbd's HID decode, the")
+    print("report length, or the devpointer queue.  Phase 3 is NOT the")
+    print("next piece of work.")
+elif ptr == "PTRWATCH-OK":
+    print("CONTRADICTORY, and the instrument is the suspect.  Events")
+    print("reached /dev/pointer but no complete-split was counted as")
+    print("carrying data.  periodicdata is bumped only for tag Evcs with")
+    print("Xfercomp set, so either the reports came from another device")
+    print("(a second pointer attached?) or that counter's condition is")
+    print("wrong.  Do not draw a conclusion about the split path from")
+    print("this run.")
+else:
+    print("THE DEVICE REPORTED NOTHING, with %d polls and %d NAKs in the"
+          % (d["poll"], d["nak"]))
+    print("window.  That is a correctly working host asking an endpoint")
+    print("that answers `nothing' -- which is also what an untouched mouse")
+    print("looks like, so this is only a result IF THE MOUSE WAS ACTUALLY")
+    print("MOVED during those %d seconds." % secs)
+    print()
+    print("If it was, the next discriminator is NOT Phase 3: it is a")
+    print("GET_REPORT(Input) over the mouse's control endpoint, which every")
+    print("HID device must answer.  A report over the control pipe while")
+    print("the interrupt pipe NAKs puts the fault on the interrupt pipe;")
+    print("nothing over either puts it on the HID set-up payloads, and in")
+    print("neither case is the split path implicated -- its control half is")
+    print("demonstrably working, which is how the device was enumerated.")
+
+if d["empty"] > 0:
+    print()
+    print("AND NOTE: moved-nothing went up by %d.  That counter is the"
+          % d["empty"])
+    print("signature of a split reported complete without its data stage")
+    print("having run, which is what the stale interrupt accumulator did to")
+    print("every IN transfer.  It has read 0 since that was fixed.")
+VERDICT
