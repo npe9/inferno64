@@ -859,6 +859,33 @@ config_evidence() {
 		#
 		# It is also exactly what a real Pi 3B prints.
 		echo 'INTR-IN NAK 1: hcint 00000012 COMPLETE-split'
+		#
+		# AND ONE PACKET PER PERIODIC SPLIT.  A transaction
+		# translator buffers one transaction per periodic endpoint
+		# per microframe, so a periodic split programmed for two
+		# packets asks for something no hub will provide.  This arm
+		# used to print `asked 4 got 8' -- eight bytes out of a
+		# 4-byte endpoint, which only happens because qemu's
+		# usb-mouse does not enforce wMaxPacketSize, so the 8 is a
+		# property of the model.
+		#
+		# AND IT IS NOT THE GATE.  The suite asserts that a pattern
+		# is PRESENT, and `got 4' is present even with the clamp
+		# removed, because a device that happens to return one
+		# packet's worth still moves exactly maxpkt.  Measured
+		# twice, two ways: with the clamp out, one run printed
+		# `got 8' and `got 4' in the same boot and stayed green, and
+		# a second run printed only `got 8' and went red.  A
+		# presence check cannot assert an absence, and a gate that
+		# fires on one run in two is not a gate.
+		#
+		# USB-SPLITPKT-OK is the gate: the driver says which
+		# programming it used, once per boot, and -OK and -FAIL are
+		# different markers so the diff catches the flip.  This line
+		# stays because it does assert something true and cheap --
+		# that a periodic split delivered a full packet -- but
+		# nothing rests on it.
+		echo 'INTR split: asked 4 got 4'
 		;;
 	raspi3b-4g)
 		echo 'sdhost: card rca 0x[0-9a-f]+ block 8388608 sectors, core clock 350000000 Hz, 4-bit'

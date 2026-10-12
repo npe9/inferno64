@@ -249,7 +249,7 @@ if [ -n "$SSPTR" ] && [ "`dec $SSPTR`" != 0 ]; then
 	SS=`cd "$ROOT" && timeout 60 openocd -f "$ADAPTER" \
 		-f tools/jtag/raspi3b.cfg \
 		-c "init; halt; targets bcm2837.cpu0" \
-		-c "echo \"ST-SS\"; mdw 0x$SSPTR 6" \
+		-c "echo \"ST-SS\"; mdw 0x$SSPTR 8" \
 		-c "resume; exit" 2>&1 |
 		awk '/ST-SS/{s=1;next} s&&/^0x/{sub(/^[^:]*: */,"");print;exit}'`
 fi
@@ -391,12 +391,31 @@ print("splittrace: ring wrote %d records (cap 512, %d overwritten); "
 # `empty' is the one that said the stale-accumulator bug was there: a
 # transfer that asked for bytes, completed, and moved none.
 #
-if len(ss) == 6:
-    ok, okdata, nbytes, empty, promote, term = ss
+if len(ss) == 8:
+    ok, okdata, nbytes, empty, promote, term, pkt1, pktn = ss
     print("splittrace: splits completed %d, of them moving bytes %d "
           "(%d bytes), MOVING NOTHING %d" % (ok, okdata, nbytes, empty))
     print("splittrace: start-splits promoted to complete-split %d, "
           "taken as terminal %d" % (promote, term))
+    #
+    # THE PROGRAMMING, which is the one thing about this path that can
+    # be checked without the device cooperating.  A translator buffers
+    # one transaction per periodic endpoint per microframe, so a
+    # periodic split programmed for two packets asks for something no
+    # hub will provide.
+    #
+    print("splittrace: split transfers programmed ONE packet %d, more "
+          "than one %d" % (pkt1, pktn))
+    if pkt1 + pktn == 0:
+        print("splittrace:   neither counted: no split transfer has been"
+              " programmed since boot.")
+    elif pkt1 == 0:
+        print("splittrace:   NOT ONE split was programmed for a single"
+              " packet.  If the periodic")
+        print("splittrace:   clamp in chanio is meant to be in this"
+              " kernel, it is not taking")
+        print("splittrace:   effect -- which a marker cannot see and this"
+              " counter can.")
     if empty:
         print("splittrace:   a NONZERO `moving nothing' is the signature"
               " of a split that was")
@@ -411,7 +430,7 @@ if len(ss) == 6:
               " two-phase handshake is not")
         print("splittrace:   running at all.")
 elif ss:
-    print("splittrace: dwcsplitstat read back %d word(s), not 6 -- not"
+    print("splittrace: dwcsplitstat read back %d word(s), not 8 -- not"
           " decoding them" % len(ss))
 else:
     print("splittrace: the split counters were not read (dwcsplitstat"

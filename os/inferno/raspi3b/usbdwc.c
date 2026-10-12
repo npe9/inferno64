@@ -106,6 +106,22 @@ struct Splitstat {
 	ulong	empty;		/* asked for bytes and moved none */
 	ulong	promote;	/* start-split ACKs promoted to complete-split */
 	ulong	term;		/* start-split events taken as TERMINAL */
+	/*
+	 * How many packets a split transfer was PROGRAMMED for, which is
+	 * the one thing about the split path that can be checked without
+	 * the device cooperating.  A transaction translator buffers one
+	 * transaction per periodic endpoint per microframe, so a periodic
+	 * split programmed for two packets is asking for something no hub
+	 * will provide; dwc2 programs num_packets = 1 for every split.
+	 *
+	 * Counted rather than printed because the print beside it is
+	 * capped at twelve lines a boot and the board's markers cannot
+	 * see prints at all.  These two say whether a change to the
+	 * programming actually took effect on silicon, whether or not
+	 * anybody moves the mouse.
+	 */
+	ulong	pkt1;		/* split transfers programmed ONE packet */
+	ulong	pktn;		/* ... programmed more than one */
 };
 
 typedef struct Ctlr Ctlr;
@@ -172,6 +188,7 @@ struct Ctlr {
 	 * is asserted below the way Splitev's is.
 	 */
 	Splitstat ss;
+	int	splitpktsaid;		/* the USB-SPLITPKT marker is once per boot */
 };
 
 struct Epio {
@@ -374,11 +391,13 @@ struct Splitev {
  */
 static char splitevsize[sizeof(Splitev) == 32? 1: -1];
 /*
- * Six ulongs, and ulong is 32 bits here, so 24.  tools/jtag/splittrace
- * takes them in declaration order; a field added without updating that
- * reader would be decoded as the one after it.
+ * EIGHT ulongs, and ulong is 32 bits here, so 32.  It was six and 24
+ * until pkt1/pktn; this assertion is what forced tools/jtag/splittrace
+ * to be updated in the same commit, which is the whole reason it is
+ * here.  A field added without updating that reader would be decoded
+ * as the one after it.
  */
-static char splitstatsize[sizeof(Splitstat) == 24? 1: -1];
+static char splitstatsize[sizeof(Splitstat) == 32? 1: -1];
 
 Splitev	splitev[Nsplitev];
 uint	nsplitev;		/* records written, ever; head = % Nsplitev */
@@ -1293,10 +1312,93 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 	 * did not agree with HOWMANY's packet count.  Harmless, and
 	 * confusing to read.
 	 */
+	split = hc->hcsplt & Spltena;
+	/*
+	 * ONE PACKET PER PERIODIC SPLIT.  dwc2 programs num_packets = 1
+	 * for EVERY split and xfer_len = max_packet for an IN
+	 * (dwc2_hc_start_transfer, the `if (chan->do_split)' arm); this
+	 * does it for periodic splits only, and the restriction is
+	 * deliberate rather than timid.
+	 *
+	 * WHY PERIODIC ONLY.  A translator buffers one transaction per
+	 * PERIODIC endpoint per microframe, so a periodic split asking
+	 * for two packets is asking for something no hub will provide.
+	 * Control splits are asynchronous: the hub performs them when it
+	 * can and the core re-issues the start-split for the next packet,
+	 * and that path has a measured, working baseline on this board --
+	 * 45 completions, 401 bytes, zero moving nothing.  Changing it
+	 * would trade a known-good path for specification conformance
+	 * with nothing observable to gain, which is how the previous
+	 * eight attempts were chosen.
+	 *
+	 * WHAT IT WAS DOING.  ep5.1 is maxpkt 5 with usbd reading into an
+	 * 8-byte buffer, so HOWMANY(8,5) is 2: two packets out of one
+	 * split.  Under qemu with the translator the same programming
+	 * produced
+	 *
+	 *   usbdwc: ep4.1 INTR split: asked 4 got 8
+	 *
+	 * -- eight bytes out of a 4-byte endpoint, which only happens
+	 * because qemu's usb-mouse does not enforce wMaxPacketSize.  On
+	 * silicon the translator forwards one full-speed transaction and
+	 * the device answers once, so that figure is a property of the
+	 * model and not a reproduction of the defect.  What it does prove
+	 * is the programming, and pkt1/pktn above count that directly.
+	 *
+	 * WHY IT IS SAFE FOR THE READ.  The loop below already terminates
+	 * an interrupt transfer after one packet: a short packet breaks
+	 * on `(n % maxpkt) != 0' and a full one breaks on
+	 * `(i & Xfercomp) && ep->ttype != Tctl'.  So asking for one
+	 * packet does not make usbd's 8-byte read go round again for the
+	 * other four.
+	 */
+	if(split && (ep->ttype == Tintr || ep->ttype == Tiso)){
+		if(dir == Epin)
+			n = maxpkt;
+		else if(n > maxpkt)
+			n = maxpkt;
+		npkt = 1;
+	}
+	if(split){
+		if(npkt == 1)
+			ctlr->ss.pkt1++;
+		else
+			ctlr->ss.pktn++;
+		/*
+		 * AND A MARKER, ONCE, for the first PERIODIC split -- because
+		 * a counter in the kernel is readable over JTAG and invisible
+		 * to tools/boardsuite, and this is the one property of the
+		 * split path a configuration can check without the device
+		 * cooperating.
+		 *
+		 * An evidence line was tried first and does not work: the
+		 * suite asserts that a pattern is PRESENT, and
+		 * `INTR split: asked 4 got 4' is present even with the clamp
+		 * removed, because a device that happens to return one
+		 * packet's worth still moves exactly maxpkt.  Measured --
+		 * the mutant printed `got 8' and `got 4' in the same run and
+		 * the arm stayed green.  A presence check cannot assert an
+		 * absence, and the number that distinguishes them is the
+		 * PROGRAMMING, not the result.
+		 *
+		 * So the driver says which it did, and the marker diff does
+		 * the rest: -OK and -FAIL are different markers.
+		 */
+		if((ep->ttype == Tintr || ep->ttype == Tiso)
+		&& ctlr->ss.pkt1 + ctlr->ss.pktn > 0 && !ctlr->splitpktsaid){
+			ctlr->splitpktsaid = 1;
+			if(npkt == 1)
+				print("USB-SPLITPKT-OK periodic split programmed"
+					" 1 packet of %ld\n", ep->maxpkt);
+			else
+				print("USB-SPLITPKT-FAIL periodic split programmed"
+					" %d packets of %ld -- a translator"
+					" buffers one\n", npkt, ep->maxpkt);
+		}
+	}
 	hc->hctsiz = n | npkt<<OPktcnt | pid;
 	hc->hcdma  = dmaaddr(a);
 
-	split = hc->hcsplt & Spltena;
 	/*
 	 * A non-split bulk IN lets the core retry NAKs itself (DMA mode)
 	 * and only reports the halt; nothing else waits on it.  A split
