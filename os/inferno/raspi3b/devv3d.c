@@ -184,6 +184,55 @@ enum {
 	V3dident1 = 1,
 	V3dident2 = 2,
 
+	/*
+	 * THE USER SHADER REQUEST QUEUE, which is how a QPU program is
+	 * started WITHOUT the firmware -- and which this plan had never
+	 * considered: a grep for SRQ in doc/qpu-plan.ms and in this file
+	 * found nothing before these lines.
+	 *
+	 * EXECUTE_QPU is the firmware doing this on the ARM's behalf, and
+	 * the plan has eliminated everything reachable through it: the
+	 * message is accepted, a four-byte reply header is written, and
+	 * the job never completes.  Its own last section says the
+	 * remaining space is "between the submission and the QPU" and
+	 * names the V3D registers as the way in.  These four are that
+	 * way in.
+	 *
+	 * Offsets taken from Linux's drivers/gpu/drm/vc4/vc4_regs.h,
+	 * which is the only copy of them on this disk.  Note that vc4
+	 * only DUMPS these registers -- its DRM driver submits through
+	 * the binning and rendering pipeline instead -- so Linux is an
+	 * authority on the addresses and not on the protocol.
+	 *
+	 * SRQCS's FIELD LAYOUT IS NOT IN THAT HEADER and is not assumed
+	 * here.  The whole word is reported before and after a
+	 * submission and nothing decodes it, because a decoded field is
+	 * exactly the thing that would look right while being wrong.
+	 */
+	V3dsrqpc = 0x430/4,	/* program counter: writing it QUEUES */
+	V3dsrqua = 0x434/4,	/* uniforms address */
+	V3dsrqul = 0x438/4,	/* uniforms length */
+	V3dsrqcs = 0x43c/4,	/* control and status */
+
+	/*
+	 * Cache control, used exactly as Linux's vc4_flush_caches() does
+	 * before a job: clear L2, then flush all four slice caches.
+	 *
+	 * L2CENA IS DELIBERATELY NOT WRITTEN.  Linux enables L2
+	 * somewhere this reading did not locate, and a program fetched
+	 * through a disabled L2 goes straight to memory -- which for a
+	 * 24-byte test is what is wanted, because there is then no cache
+	 * state to have got wrong.  If the program runs with L2 off, L2
+	 * is a later optimisation; if it does not, L2 was not the
+	 * reason.
+	 */
+	V3dl2cactl = 0x20/4,
+	V3dslcactl = 0x24/4,
+	L2cclr	= 1<<2,
+	Slcflushall = 0x0f0f0f0f,	/* T1CC|T0CC|UCC|ICC, 4 bits each */
+
+	Identv3d = 0x02443356,	/* what IDENT0 reads when ungated */
+
 	Tagalloc = 0x0003000c,	/* ALLOCATE_MEMORY: size, align, flags */
 	Taglock	= 0x0003000d,	/* LOCK_MEMORY: handle -> bus address */
 	Tagunlock = 0x0003000e,	/* UNLOCK_MEMORY: handle */
@@ -292,6 +341,18 @@ static struct {
 	 * time and default to one.
 	 */
 	int	identtried;
+	/*
+	 * The user shader request queue, before and after a submission.
+	 * Three reads and not two: srqcs2 is taken after the loop ended
+	 * for ANY reason, so a timeout still records what the register
+	 * finally said rather than only what it said while equal.
+	 */
+	int	srqtried;
+	int	srqtimeout;
+	u32	srqcs0, srqcs1, srqcs2;
+	u32	srqpc0;
+	uvlong	srqus;
+	u32	srqblk[6];
 } v3d;
 
 static Lock v3dlk;
@@ -731,6 +792,120 @@ v3dident(int nwords)
 	return 0;
 }
 
+/*
+ * Submit a QPU program through the V3D user shader request queue,
+ * bypassing the firmware's EXECUTE_QPU entirely.
+ *
+ * WHAT EACH OUTCOME MEANS, written before the first run so that the
+ * reading is not chosen after seeing the number:
+ *
+ *   completed count rises by one, queued stays 0   the QPU RAN IT
+ *   queued stuck nonzero                           dispatched and never
+ *                                                  finished -- the same
+ *                                                  shape as the mailbox
+ *                                                  failure, one layer down
+ *   errored field nonzero                          the hardware rejected
+ *                                                  the request
+ *   the whole word unchanged                       the write did not reach
+ *                                                  the block, or SRQ is not
+ *                                                  the dispatch path
+ *   the board stops answering                      a wedge; hardreset, and
+ *                                                  that is a result too
+ *
+ * SRQCS IS NOT WRITTEN BY THIS FUNCTION.  If it is write-to-clear, as
+ * the architecture guide is remembered to say, then writing it between
+ * the two reads would destroy the comparison this is built on.  Read,
+ * submit, read.
+ */
+static void
+v3dsrq(uvlong waitus)
+{
+	u32 *r = (u32*)(uintptr)V3dbase;
+	u32 *m, pa, ubus, kbus;
+	uvlong t0;
+	int i;
+
+	/*
+	 * REFUSE UNLESS THE BLOCK WAS SEEN UNGATED IN THIS BOOT.  A
+	 * stale `enable' from an earlier session cannot be trusted: the
+	 * ungated state survives a JTAG boot and does not survive
+	 * hardreset, so the only safe evidence is an IDENT0 read that
+	 * returned the right word since this kernel started.  Writing a
+	 * program counter into a gated block is how the mailbox path is
+	 * believed to have wedged.
+	 */
+	if(v3d.ident[0] != Identv3d)
+		error("srq: IDENT0 has not read 0x02443356 in this boot -- `enable' then `ident force' first");
+	if(v3d.memhandle == 0 || v3d.membus == 0 || (v3d.membus & Busalias) == 0)
+		error("srq: no firmware GPU memory -- `gpualloc' first");
+	if(v3d.ncode == 0)
+		error("srq: no code loaded -- `code ...' first");
+	if(2*4 + sizeof v3d.unif + v3d.ncode > v3d.memsize)
+		error("srq: code and uniforms do not fit the allocation");
+
+	pa = v3d.membus & ~Busalias;
+	if(pa == 0 || pa + v3d.memsize > BCMPERIPH)
+		error("srq: gpu memory is not in RAM this kernel maps");
+	m = (u32*)(uintptr)pa;
+
+	/*
+	 * The same layout v3dexecraw writes, and duplicated rather than
+	 * factored out on purpose: that function is the one path with
+	 * measurements attached to it in doc/qpu-plan.ms, and a
+	 * refactor shared with it would put those measurements in doubt
+	 * for the sake of eight lines.
+	 */
+	ubus = v3d.membus + 2*4;
+	kbus = v3d.membus + 2*4 + sizeof v3d.unif;
+	for(i = 0; i < 4; i++)
+		m[2 + i] = v3d.unif[i];
+	memmove((uchar*)m + 2*4 + sizeof v3d.unif, v3d.code, v3d.ncode);
+	m[0] = ubus;
+	m[1] = kbus;
+	cacheflush(m, 2*4 + sizeof v3d.unif + v3d.ncode);
+
+	v3d.srqcs0 = r[V3dsrqcs];
+	v3d.srqpc0 = r[V3dsrqpc];
+
+	/*
+	 * Flush the GPU's caches between the write and the dispatch,
+	 * exactly as Linux does before a job.  The ARM's own cacheflush
+	 * above does not touch these.
+	 */
+	r[V3dl2cactl] = L2cclr;
+	r[V3dslcactl] = Slcflushall;
+
+	/*
+	 * Uniforms first, then the program counter LAST, because writing
+	 * SRQPC is what queues the request -- the other two have to be
+	 * in place before it.  SRQUL is nonzero even though `thrend plus
+	 * two nops' reads no uniforms, because the scheduler reads these
+	 * when it dispatches and a null uniform pointer is one of the
+	 * two plausible reasons the firmware path hangs.  Its UNITS ARE
+	 * NOT VERIFIED: 4 is a small nonzero value and is recorded as a
+	 * guess, not a fact.
+	 */
+	r[V3dsrqua] = ubus;
+	r[V3dsrqul] = 4;
+	r[V3dsrqpc] = kbus;
+	v3d.srqtried = 1;
+
+	t0 = todget(nil);
+	for(;;){
+		v3d.srqcs1 = r[V3dsrqcs];
+		if(v3d.srqcs1 != v3d.srqcs0)
+			break;
+		if(todget(nil) - t0 > waitus){
+			v3d.srqtimeout = 1;
+			break;
+		}
+	}
+	v3d.srqus = todget(nil) - t0;
+	v3d.srqcs2 = r[V3dsrqcs];
+	for(i = 0; i < nelem(v3d.srqblk); i++)
+		v3d.srqblk[i] = m[i];
+}
+
 static Chan*
 v3dattach(char *spec)
 {
@@ -804,6 +979,8 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			"gpumem %s handle %#ux bus %#ux size %d ctlbus %#ux\n"
 			"gpualloc %s alloc %s lock %s\n"
 			"block %#ux %#ux %#ux %#ux %#ux %#ux\n"
+			"srq %s cs %#ux -> %#ux (final %#ux) pc0 %#ux %llud us\n"
+			"srqblk %#ux %#ux %#ux %#ux %#ux %#ux\n"
 			"ident %s tried %d read %d %#ux %#ux %#ux\n"
 			"value %#ux %#ux %#ux %#ux\n",
 			v3d.clockok? "hz" : "unknown", v3d.clock,
@@ -855,6 +1032,23 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			 * halted target read over JTAG says which word
 			 * died.
 			 */
+			/*
+			 * SRQ, and the word is reported RAW on purpose:
+			 * SRQCS's field layout is not in the only copy of
+			 * the register definitions on this disk, so a
+			 * decoded "completed count" here would be the kind
+			 * of number that looks right while being wrong.
+			 * `moved' says the register changed and nothing
+			 * more; what it changed to is for a reader with the
+			 * architecture guide.
+			 */
+			!v3d.srqtried? "untried" :
+			  v3d.srqtimeout? "OUT OF TIME (cs unchanged)" :
+			  "moved",
+			v3d.srqcs0, v3d.srqcs1, v3d.srqcs2, v3d.srqpc0,
+			v3d.srqus,
+			v3d.srqblk[0], v3d.srqblk[1], v3d.srqblk[2],
+			v3d.srqblk[3], v3d.srqblk[4], v3d.srqblk[5],
 			!v3d.identtried? "untried" :
 			  v3d.identread < v3d.identtried? "STALLED" :
 			  (v3d.ident[0] == 0x02443356? "V3D" :
@@ -991,6 +1185,11 @@ v3dwrite(Chan *c, void *a, int n, vlong offset)
 			if(cb->nf < 2 || strcmp(cb->f[1], "force") != 0)
 				error("ident reads a block whose clock is never set; not shown safe, and a wedge costs a power cycle -- say `ident force [nwords]'");
 			v3dident(cb->nf > 2? (int)strtol(cb->f[2], nil, 0) : 1);
+		}else if(strcmp(cb->f[0], "srq") == 0){
+			/* srq [waitms] -- dispatch through the V3D registers */
+			v3dsrq(cb->nf > 1?
+				(uvlong)strtoul(cb->f[1], nil, 0)*1000 :
+				(uvlong)100*1000);
 		}else if(strcmp(cb->f[0], "gpufake") == 0){
 			v3dgpufake();
 		}else if(strcmp(cb->f[0], "gpufree") == 0){
