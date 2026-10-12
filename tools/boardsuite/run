@@ -59,7 +59,7 @@ verbose=false
 record=false
 force=false
 
-configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-msi virtarm64-nvme virtarm64-xhci virtarm64-gicv3 virtarm64-gicr virtarm64-efi virtarm64-noscan virtarm64-acpi virtarm64-smmu virtarm64-peer sifiveu sifiveu-stdout virt virts virt32 virt32s virt-peer peer-mixed'
+configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-split raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-msi virtarm64-nvme virtarm64-xhci virtarm64-gicv3 virtarm64-gicr virtarm64-efi virtarm64-noscan virtarm64-acpi virtarm64-smmu virtarm64-peer sifiveu sifiveu-stdout virt virts virt32 virt32s virt-peer peer-mixed'
 
 # Each configuration: the kernel, the QEMU arguments, the line that
 # says the board is done printing, and the evidence lines that make
@@ -208,7 +208,7 @@ newer_source_than() {
 
 config_kernel() {
 	case $1 in
-	raspi3b|raspi3b-4g|raspi3b-usb|raspi3b-2eth)
+	raspi3b|raspi3b-4g|raspi3b-usb|raspi3b-split|raspi3b-2eth)
 				echo "$root/os/inferno/raspi3b/iraspi3b";;
 	raspi4|raspi4-hot|raspi4-usb|raspi4-2eth)
 				echo "$root/os/inferno/raspi4/iraspi4";;
@@ -292,6 +292,61 @@ config_args() {
 		# lines of vendor requests, command words and receive
 		# status -- has no other way to execute.
 		echo "-M raspi3b -m 1G -drive file=$work/sd16dp.img,if=sd,format=raw -drive if=none,id=d0,file=$work/usb16.img,format=raw -device usb-storage,drive=d0 -netdev user,id=n0 -device usb-lan9514,netdev=n0 -device usb-mouse -device usb-kbd -device usb-tablet";;
+	raspi3b-split)
+		#
+		# THE ONLY CONFIGURATION IN THIS SUITE THAT CAN FAIL WHEN
+		# SPLIT TRANSACTIONS BREAK, which is why it exists:
+		# raspi3b-usb was 52 markers green while no full- or
+		# low-speed device could enumerate behind the hub on the
+		# real board, and it would be green again if the split path
+		# were deleted outright.
+		#
+		# THREE THINGS MAKE IT DIFFERENT and all three are
+		# load-bearing:
+		#
+		#  - `usb-hub,usbver=2' is this tree's own option
+		#    (qemu-patches): a USB 2.0 hub, high-speed, reporting
+		#    bDeviceProtocol 1 for a single transaction translator.
+		#    Without it qemu's hub is a 1.1 device at 12 Mb/s.
+		#
+		#  - IT COMES FIRST ON THE LINE.  qemu has one dwc2 port,
+		#    so usb_claim_port() creates a hub of its own as soon as
+		#    a non-hub device finds the last port free -- with
+		#    DEFAULT properties, i.e. full speed.  Put the hub after
+		#    the other devices and that is exactly what happens: the
+		#    auto-created full-speed hub takes the root port, every
+		#    device lands behind it, and `usbver=2' ends up on an
+		#    EMPTY hub hanging off port 4.  Measured, and it read as
+		#    a clean pass -- the option was accepted and did nothing.
+		#
+		#  - `usb_version=1' on the mouse and keyboard.  Both carry
+		#    .high descriptors, so behind a high-speed hub
+		#    usb_pick_speed() gives them high speed and no split is
+		#    needed.  Forced to full speed they are what the real
+		#    board has: a full-speed device behind a high-speed
+		#    hub's translator.
+		#
+		# No usb-storage: this configuration is about the split
+		# path and raspi3b-usb already covers the stick.  Four
+		# devices keeps every one of them on the hub's first four
+		# ports, which is the shape the real LAN9514 has.
+		#
+		# The TABLET IS HERE and was left out of the first version,
+		# which cost a marker: the pointer check reports USB-TABLET
+		# and USB-MOUSE out of one window, and the harness sends
+		# tablet positions through the monitor whatever is attached.
+		# With no tablet the mouse's own events arrived instead and
+		# the check reported
+		#
+		#   USB-TABLET-FAIL 36 events, wanted 479 119 on 640x480,
+		#   nearest 96 0
+		#
+		# -- a -FAIL rather than a -NONE, because events DID arrive,
+		# just not the ones it wanted.  A configuration that carries
+		# a permanent known -FAIL is one whose baseline teaches
+		# people to ignore a red line.
+		#
+		echo "-M raspi3b -m 1G -drive file=$work/sd16sp.img,if=sd,format=raw -device usb-hub,usbver=2,ports=5 -netdev user,id=n0 -device usb-lan9514,netdev=n0 -device usb-mouse,usb_version=1 -device usb-kbd,usb_version=1 -device usb-tablet,usb_version=1";;
 	raspi4)
 		echo "-M raspi4b -m 2G -drive file=$work/sd16b.img,if=sd,format=raw";;
 	raspi4-hot)
@@ -651,6 +706,7 @@ config_peer_evidence() {
 config_qmp() {
 	case $1 in
 	raspi3b-usb)	echo 14447;;
+	raspi3b-split)	echo 14449;;
 	raspi4-usb)	echo 14448;;
 	esac
 }
@@ -694,6 +750,13 @@ config_last() {
 	# right either way; it is not the explanation.
 	#
 	raspi3b-usb)		echo 'RASPI3B-SH-OK'; echo 'ETHER-PING-DONE'; echo 'DISK-WRITE'; echo 'USB-KBD'; echo 'TIME-';;
+	#
+	# No DISK-WRITE: this configuration has no usb stick.  USB-MOUSE
+	# is required and is the whole point -- it is the marker that goes
+	# from -OK to -NONE when the split path cannot reach a full-speed
+	# device behind a high-speed hub.
+	#
+	raspi3b-split)		echo 'RASPI3B-SH-OK'; echo 'USB-MOUSE'; echo 'TIME-';;
 	# Two markers, both required, because on these two neither one is
 	# reliably last.  The pointer check reports when its own timeout
 	# runs out and the shell marker comes after the kfs ream, and the
@@ -1556,6 +1619,7 @@ config_card() {
 	raspi3b)	echo "sd16p.img 16m pi";;
 	raspi3b-4g)	echo "sd4gp.img 4g pi";;
 	raspi3b-usb)	echo "sd16dp.img 16m pi";;
+	raspi3b-split)	echo "sd16sp.img 16m pi";;
 	raspi3b-2eth)	echo "sd16fp.img 16m pi";;
 	raspi4-2eth)	echo "sd16g.img 16m";;
 	raspi4)		echo "sd16b.img 16m";;

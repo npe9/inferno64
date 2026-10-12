@@ -1095,3 +1095,58 @@ attached, a default kernel prints:
 	ETHERBIND-OK
 	ETHER-DHCP-OK ip=10.0.2.15 gw=10.0.2.2
 	ETHER-PING-DONE
+
+0028 hw/usb/dev-hub: a USB 2.0 hub, opt-in per device.  usbver=2 gives
+	usb-hub a .high descriptor with bDeviceProtocol 1 (single
+	transaction translator) and downstream ports that admit a
+	high-speed child.  OFF BY DEFAULT, because a hub that comes up
+	high-speed changes what its children are -- a full- or low-speed
+	child behind a high-speed hub is reached by SPLIT TRANSACTIONS,
+	and hcd-dwc2.c never reads HCSPLT at all.
+
+	It exists so that the one thing no Pi configuration in
+	tools/boardsuite could exercise -- the dwc2 split path -- can be
+	driven off the board.  raspi3b-usb was 52 markers green while no
+	full- or low-speed device could enumerate behind the hub on real
+	silicon, and it would be green again if the split path were
+	deleted outright; see doc/usb-split-plan.ms.
+
+	TWO THINGS THE COMMAND LINE HAS TO GET RIGHT, both measured
+	rather than assumed:
+
+	  - the hub must come FIRST.  qemu's dwc2 has one port, so
+	    usb_claim_port() creates a hub of its own as soon as a
+	    non-hub device finds the last port free -- with DEFAULT
+	    properties, i.e. full speed.  Put `usbver=2' after the other
+	    devices and that auto-created full-speed hub takes the root
+	    port, everything lands behind it, and the option ends up on
+	    an EMPTY hub hanging off port 4.  It read as a clean pass.
+
+	  - usb_version=1 on the HID devices.  They carry .high
+	    descriptors, so behind a high-speed hub usb_pick_speed()
+	    gives them high speed and no split is needed.
+
+	With both right, a guest reports
+
+		usbd: ep1.0: port 1: high ep2.0 vid 0409 did 55aa class 9
+		usbd: ep2.0: port 1 status 0x10501 (high-speed (no split))
+		usbd: ep2.0: port 2 status 0x10101 (full-speed (needs split))
+		usbd: ep2.0: port 2: full ep4.0 vid 0627 did 0001 class 0
+		usbd: ep4.0: boot mouse on ep4.1
+
+	-- and that is the first time a full-speed device has enumerated
+	over split transactions anywhere but on the board.  It is also
+	the first time the LAN9514 model has run at high speed; behind
+	the auto-created full-speed hub it never could, so every
+	ethernet number this suite has produced for the Pi boards is a
+	full-speed number.
+
+	WHAT IT DOES NOT YET DO, proven by mutation and not left to
+	hope: with the per-transfer accumulator clear removed from
+	chanio() -- the defect that kept every full-speed device off the
+	real board's hub until 11 October 2026 -- raspi3b-split still
+	reported 49 markers and raspi3b-usb still reported 52.  Neither
+	noticed.  So this patch makes the split path RUN; it does not
+	make it OBSERVABLE.  That needs the translator in
+	hcd-dwc2.c, which never reads HCSPLT and never raises ACK or
+	NYET: Phase 2 of doc/usb-split-plan.ms.

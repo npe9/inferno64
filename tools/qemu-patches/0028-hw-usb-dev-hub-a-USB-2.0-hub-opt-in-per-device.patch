@@ -1,0 +1,284 @@
+From 25d5aac173cddcccb174648c2ea9a8d463d15717 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Mon, 12 Oct 2026 05:42:34 -0400
+Subject: [PATCH] hw/usb/dev-hub: a USB 2.0 hub, opt-in per device
+
+usbver=2 makes usb-hub a high-speed hub: a .high device descriptor with
+bDeviceProtocol 1 (single transaction translator), a matching .full
+descriptor with protocol 0 for the case where it comes up on a 1.1
+upstream port, and downstream ports that admit a high-speed child.
+
+WHY IT IS OFF BY DEFAULT.  A hub that comes up high-speed changes what
+its children are: usb_pick_speed() takes the fastest speed the port and
+the device agree on, so every board in the tree would start seeing a
+high-speed hub where it had a full-speed one -- and a full- or low-speed
+child behind a high-speed hub is reached by SPLIT TRANSACTIONS, which is
+the point of the option and is also a path most host-controller models
+do not implement.  hcd-dwc2.c, for one, never reads HCSPLT at all.
+
+Three details that are not arbitrary:
+
+  - TWO device descriptors, not one.  A 2.0 hub reports
+    bDeviceProtocol 1 when OPERATING at high speed and 0 when it has
+    come up at full speed, and the other-speed configuration descriptor
+    is built from whichever of .full and .high is not in use, so both
+    have to be right.  bcdUSB is 0x0200 in both: that is the
+    specification it conforms to, not the speed it runs at.
+
+  - bInterval is 12, not the full-speed descriptor's 0xff.  At high
+    speed the field is an exponent -- the period is 2^(bInterval-1)
+    microframes -- so 0xff is not a long interval, it is out of range.
+    12 gives 2048 microframes, about 256 ms, the same order as the
+    full-speed 255 ms.
+
+  - usb_hub_port_update() reports THREE speeds where it reported two.
+    A guest reads the LOW/HIGH pair as a three-way answer and neither
+    bit set means full speed -- which behind a high-speed hub is also
+    "this child needs splits".  HIGH_SPEED is set only when the hub
+    itself is operating at high speed: a hub that came up full speed
+    has no high-speed downstream signalling to offer, whatever its
+    child claims, and a guest that saw the bit there would schedule for
+    a bus that is not running.
+
+Per-instance descriptors via USBDevice.usb_desc, which exists for this,
+rather than a second device type -- so `-device usb-hub,usbver=2' is the
+whole opt-in and nothing changes for anyone who does not write it.
+
+The downstream speed mask is gated on the OPTION and not on dev->speed,
+because dev->speed is not known at realize: usb_desc_init() sets it to
+USB_SPEED_FULL as a placeholder and usb_pick_speed() chooses the real
+value at attach.  A 2.0 hub landing on a 1.1 upstream port may therefore
+accept a high-speed child that usb_hub_port_update() then declines to
+report as high-speed; that is a misconfiguration this model states
+rather than guards, because the guard would need a hook between attach
+and the first port status read.
+
+Tested with qemu-system-aarch64 -M raspi3b.  `info usb' without the
+option:
+
+  Device 0.0, Port 1,   Speed 12 Mb/s, Product QEMU USB Hub
+  Device 0.0, Port 1.1, Speed 12 Mb/s, Product QEMU USB MSD
+  ...
+
+and with `-device usb-hub,usbver=2,ports=5' first on the line, plus
+usb_version=1 on the HID devices:
+
+  Device 0.0, Port 1,   Speed 480 Mb/s, Product QEMU USB Hub
+  Device 0.0, Port 1.1, Speed 480 Mb/s, SMSC LAN9514 Ethernet
+  Device 0.0, Port 1.2, Speed 12 Mb/s,  Product QEMU USB Mouse
+  Device 0.0, Port 1.3, Speed 12 Mb/s,  Product QEMU USB Keyboard
+
+A guest then reports the hub as high-speed, its ethernet child as
+"high-speed (no split)" and its HID children as "full-speed (needs
+split)", and drives the dwc2 split path for the first time.
+---
+ hw/usb/dev-hub.c | 156 ++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 153 insertions(+), 3 deletions(-)
+
+diff --git a/hw/usb/dev-hub.c b/hw/usb/dev-hub.c
+index a19350d..e8847a7 100644
+--- a/hw/usb/dev-hub.c
++++ b/hw/usb/dev-hub.c
+@@ -47,6 +47,21 @@ struct USBHubState {
+     USBEndpoint *intr;
+     uint32_t num_ports;
+     bool port_power;
++    /*
++     * usbver=2 makes this a USB 2.0 hub: a high-speed device descriptor
++     * with bDeviceProtocol 1 (single transaction translator), and
++     * downstream ports that admit a high-speed child.
++     *
++     * OFF BY DEFAULT, and that is deliberate rather than cautious.  A
++     * hub that comes up high-speed changes what its children are:
++     * usb_pick_speed() takes the fastest speed the port and the device
++     * agree on, so every board in the tree would start seeing a
++     * high-speed hub where it had a full-speed one, and a full- or
++     * low-speed child behind a high-speed hub is reached by SPLIT
++     * TRANSACTIONS -- which is the entire point of this option and is
++     * also a path most host-controller models do not implement.
++     */
++    uint32_t usbver;
+     QEMUTimer *port_timer;
+     USBHubPort ports[MAX_PORTS];
+ };
+@@ -153,6 +168,89 @@ static const USBDesc desc_hub = {
+     .str  = desc_strings,
+ };
+ 
++/*
++ * The USB 2.0 descriptors, used only when usbver=2.
++ *
++ * Two device descriptors are needed and not one.  A 2.0 hub reports
++ * bDeviceProtocol 1 -- "single transaction translator" -- when it is
++ * OPERATING at high speed, and 0 when it has come up at full speed on a
++ * 1.1 upstream port; the other-speed configuration descriptor is built
++ * from whichever of .full and .high is not in use, so both have to be
++ * right.  bcdUSB is 0x0200 in both: that is the specification the hub
++ * conforms to, not the speed it is running at.
++ *
++ * bMaxPacketSize0 is 64 because high speed has no other legal value.
++ *
++ * bInterval is 12, not 0xff.  At high speed the field is an exponent --
++ * the period is 2^(bInterval-1) microframes -- so 0xff is not a long
++ * interval, it is out of range (the maximum is 16).  12 gives 2048
++ * microframes, about 256 ms, which is the same order as the full-speed
++ * descriptor's 255 ms and is what a status-change endpoint wants.
++ */
++static const USBDescIface desc_iface_hub_high = {
++    .bInterfaceNumber              = 0,
++    .bNumEndpoints                 = 1,
++    .bInterfaceClass               = USB_CLASS_HUB,
++    .eps = (USBDescEndpoint[]) {
++        {
++            .bEndpointAddress      = USB_DIR_IN | 0x01,
++            .bmAttributes          = USB_ENDPOINT_XFER_INT,
++            .wMaxPacketSize        = 1 + DIV_ROUND_UP(MAX_PORTS, 8),
++            .bInterval             = 12,
++        },
++    }
++};
++
++static const USBDescDevice desc_device_hub2_full = {
++    .bcdUSB                        = 0x0200,
++    .bDeviceClass                  = USB_CLASS_HUB,
++    .bDeviceProtocol               = 0,     /* full-speed operation */
++    .bMaxPacketSize0               = 64,
++    .bNumConfigurations            = 1,
++    .confs = (USBDescConfig[]) {
++        {
++            .bNumInterfaces        = 1,
++            .bConfigurationValue   = 1,
++            .bmAttributes          = USB_CFG_ATT_ONE | USB_CFG_ATT_SELFPOWER |
++                                     USB_CFG_ATT_WAKEUP,
++            .nif = 1,
++            .ifs = &desc_iface_hub,
++        },
++    },
++};
++
++static const USBDescDevice desc_device_hub2_high = {
++    .bcdUSB                        = 0x0200,
++    .bDeviceClass                  = USB_CLASS_HUB,
++    .bDeviceProtocol               = 1,     /* single transaction translator */
++    .bMaxPacketSize0               = 64,
++    .bNumConfigurations            = 1,
++    .confs = (USBDescConfig[]) {
++        {
++            .bNumInterfaces        = 1,
++            .bConfigurationValue   = 1,
++            .bmAttributes          = USB_CFG_ATT_ONE | USB_CFG_ATT_SELFPOWER |
++                                     USB_CFG_ATT_WAKEUP,
++            .nif = 1,
++            .ifs = &desc_iface_hub_high,
++        },
++    },
++};
++
++static const USBDesc desc_hub2 = {
++    .id = {
++        .idVendor          = 0x0409,
++        .idProduct         = 0x55aa,
++        .bcdDevice         = 0x0200,
++        .iManufacturer     = STR_MANUFACTURER,
++        .iProduct          = STR_PRODUCT,
++        .iSerialNumber     = STR_SERIALNUMBER,
++    },
++    .full = &desc_device_hub2_full,
++    .high = &desc_device_hub2_high,
++    .str  = desc_strings,
++};
++
+ static const uint8_t qemu_hub_hub_descriptor[] =
+ {
+         0x00,                   /*  u8  bLength; patched in later */
+@@ -200,11 +298,31 @@ static bool usb_hub_port_update(USBHubPort *port)
+     bool notify = false;
+ 
+     if (port->port.dev && port->port.dev->attached) {
++        USBHubState *s = port->port.opaque;
++
+         notify = usb_hub_port_set(port, PORT_STAT_CONNECTION);
++        /*
++         * THREE SPEEDS, NOT TWO, and a guest reads the pair of bits as
++         * a three-way answer: LOW set means low speed, HIGH set means
++         * high speed, and NEITHER set means full speed -- which is also
++         * the "this child needs split transactions" case when the hub
++         * itself is running at high speed.  Reporting only LOW_SPEED,
++         * as this did, makes a high-speed child indistinguishable from
++         * a full-speed one.
++         *
++         * HIGH_SPEED is reported only when the hub is OPERATING at high
++         * speed.  A hub that came up full speed on a 1.1 port has no
++         * high-speed downstream signalling to offer, whatever its child
++         * claims to be, and a guest that saw the bit set there would
++         * schedule for a bus that is not running.
++         */
++        usb_hub_port_clear(port, PORT_STAT_LOW_SPEED);
++        usb_hub_port_clear(port, PORT_STAT_HIGH_SPEED);
+         if (port->port.dev->speed == USB_SPEED_LOW) {
+             usb_hub_port_set(port, PORT_STAT_LOW_SPEED);
+-        } else {
+-            usb_hub_port_clear(port, PORT_STAT_LOW_SPEED);
++        } else if (port->port.dev->speed == USB_SPEED_HIGH &&
++                   s->dev.speed == USB_SPEED_HIGH) {
++            usb_hub_port_set(port, PORT_STAT_HIGH_SPEED);
+         }
+     }
+     return notify;
+@@ -605,6 +723,20 @@ static void usb_hub_realize(USBDevice *dev, Error **errp)
+         return;
+     }
+ 
++    if (s->usbver != 1 && s->usbver != 2) {
++        error_setg(errp, "usbver must be 1 or 2");
++        return;
++    }
++    /*
++     * Per-instance descriptors, which USBDevice.usb_desc exists for:
++     * it overrides the class's when non-NULL.  Chosen here rather than
++     * by a second device type so that `-device usb-hub,usbver=2' is the
++     * whole opt-in and nothing changes for anybody who does not write
++     * it.
++     */
++    if (s->usbver == 2) {
++        dev->usb_desc = &desc_hub2;
++    }
+     usb_desc_create_serial(dev);
+     usb_desc_init(dev);
+     s->port_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
+@@ -612,9 +744,26 @@ static void usb_hub_realize(USBDevice *dev, Error **errp)
+     s->intr = usb_ep_get(dev, USB_TOKEN_IN, 1);
+     for (i = 0; i < s->num_ports; i++) {
+         port = &s->ports[i];
++        /*
++         * The downstream speed mask is gated on the OPTION and not on
++         * dev->speed, because dev->speed is not known yet: usb_desc_init
++         * above sets it to USB_SPEED_FULL as a placeholder and the real
++         * value is chosen by usb_pick_speed() when this hub is attached,
++         * which is after realize.  So `usbver=2' is read as an assertion
++         * that this hub will come up high-speed.
++         *
++         * If it does not -- a 2.0 hub on a 1.1 upstream port -- a
++         * high-speed child may still attach here, and
++         * usb_hub_port_update() above will then decline to report
++         * PORT_STAT_HIGH_SPEED for it, so the guest sees full speed.
++         * That is a misconfiguration this model does not police, and it
++         * is stated rather than guarded because the guard would need a
++         * hook that runs between attach and the first port status read.
++         */
+         usb_register_port(usb_bus_from_device(dev),
+                           &port->port, s, i, &usb_hub_port_ops,
+-                          USB_SPEED_MASK_LOW | USB_SPEED_MASK_FULL);
++                          USB_SPEED_MASK_LOW | USB_SPEED_MASK_FULL |
++                          (s->usbver == 2 ? USB_SPEED_MASK_HIGH : 0));
+         usb_port_location(&port->port, dev->port, i+1);
+     }
+     usb_hub_handle_reset(dev);
+@@ -668,6 +817,7 @@ static const VMStateDescription vmstate_usb_hub = {
+ static const Property usb_hub_properties[] = {
+     DEFINE_PROP_UINT32("ports", USBHubState, num_ports, 8),
+     DEFINE_PROP_BOOL("port-power", USBHubState, port_power, false),
++    DEFINE_PROP_UINT32("usbver", USBHubState, usbver, 1),
+ };
+ 
+ static void usb_hub_class_initfn(ObjectClass *klass, const void *data)
