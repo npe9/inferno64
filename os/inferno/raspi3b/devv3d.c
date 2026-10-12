@@ -980,6 +980,7 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			"gpualloc %s alloc %s lock %s\n"
 			"block %#ux %#ux %#ux %#ux %#ux %#ux\n"
 			"srq %s cs %#ux -> %#ux (final %#ux) pc0 %#ux %llud us\n"
+			"srqcount dispatched %ud completed %ud queued %ud\n"
 			"srqblk %#ux %#ux %#ux %#ux %#ux %#ux\n"
 			"ident %s tried %d read %d %#ux %#ux %#ux\n"
 			"value %#ux %#ux %#ux %#ux\n",
@@ -1047,6 +1048,32 @@ v3dread(Chan *c, void *a, int n, vlong offset)
 			  "moved",
 			v3d.srqcs0, v3d.srqcs1, v3d.srqcs2, v3d.srqpc0,
 			v3d.srqus,
+			/*
+			 * THESE FIELD POSITIONS WERE ESTABLISHED BY
+			 * DIFFERENTIAL, not read out of a document -- the
+			 * architecture guide is not on this disk and
+			 * Linux's header has the register and no fields.
+			 * Three submissions on silicon:
+			 *
+			 *   thrend + 2 nops   0x010100   15:8 = 1  23:16 = 1
+			 *   garbage, no end   0x010200   15:8 = 2  23:16 = 1
+			 *   thrend + 2 nops   0x020300   15:8 = 3  23:16 = 2
+			 *
+			 * 15:8 rises on every submission; 23:16 rises ONLY
+			 * for a program containing thrend.  The third run
+			 * was predicted before it ran and matched.  So
+			 * 15:8 counts requests DISPATCHED and 23:16 counts
+			 * requests that RAN TO THE END -- and because the
+			 * second depends on the instruction content, the
+			 * QPU is executing the instructions.
+			 *
+			 * The raw word is still printed above it.  A name
+			 * inferred from three points is worth having and
+			 * is not worth hiding the evidence behind.
+			 */
+			(v3d.srqcs2 >> 8) & 0xff,
+			(v3d.srqcs2 >> 16) & 0xff,
+			v3d.srqcs2 & 0xff,
 			v3d.srqblk[0], v3d.srqblk[1], v3d.srqblk[2],
 			v3d.srqblk[3], v3d.srqblk[4], v3d.srqblk[5],
 			!v3d.identtried? "untried" :
