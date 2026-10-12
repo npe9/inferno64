@@ -19459,18 +19459,50 @@ paths, and the controller's ability to run an interrupt endpoint.
 for two independent reasons, and on silicon the split path is the only
 way any of this reaches a real mouse.
 .IP \(bu
-.B "The devices are on the root port."
-The configuration attaches
-.CW "-device usb-mouse -device usb-kbd -device usb-tablet"
-with no
+.B "They are behind a hub, and it is a FULL\-SPEED one."
+.B "THIS SAID `THE DEVICES ARE ON THE ROOT PORT' AND THAT WAS WRONG"
+\(em corrected here rather than quietly, because the conclusion
+survives and the reason does not, and a right answer resting on a wrong
+reason is the thing this document keeps paying for.
+.PP
+The configuration attaches five devices with no
 .CW bus=
-argument, so they sit on the controller's own port and not behind the
-.CW usb-lan9514 .
-There is no transaction translator between them and the host, so
+argument and the dwc2 model has
+.B one
+port, so
+.CW usb_claim_port()
+.CW "(hw/usb/bus.c:412)"
+creates a
+.CW usb-hub
+and chains it on \(em with default properties, which is a USB 1.1 hub.
+.CW "info usb"
+on that configuration says so outright:
+.P1
+Device 0.0, Port 1,   Speed 12 Mb/s, Product QEMU USB Hub
+Device 0.0, Port 1.1, Speed 12 Mb/s, Product QEMU USB MSD
+Device 0.0, Port 1.2, Speed 12 Mb/s, Product SMSC LAN9514 Ethernet
+Device 0.0, Port 1.3, Speed 12 Mb/s, Product QEMU USB Mouse
+Device 0.0, Port 1.4, Speed 12 Mb/s, Product QEMU USB Keyboard
+Device 0.0, Port 1.5, Speed 12 Mb/s, Product QEMU USB Tablet
+.P2
+Twelve megabits is full speed, all the way down. A split transaction is
+what a host does for a full\- or low\-speed device behind a
+.B high\-speed
+hub, so there is still no translator in the path and
 .CW Spltena
-is never set for them and
-.CW usbdwc.c 's
-split path is never entered.
+is still never set \(em but because the hub is slow, not because the
+hub is absent.
+.PP
+.B "And it means the LAN9514 model has never run at high speed either,"
+although it is high\-speed capable
+.CW "(.bcdUSB"
+.CW 0x0200
+and a
+.CW .high
+descriptor): behind a full\-speed hub,
+.CW usb_pick_speed()
+can only give it full speed. Every ethernet number this suite has
+produced for the Pi boards is a full\-speed number.
 .IP \(bu
 .B "And qemu's dwc2 model has no split support to enter."
 .CW hw/usb/hcd-dwc2.c

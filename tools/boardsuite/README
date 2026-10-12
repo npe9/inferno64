@@ -561,14 +561,38 @@ usbd's HID-to-devpointer remap went.  Both boards report 6.
 AND NEITHER MARKER SAYS ANYTHING ABOUT SPLIT TRANSACTIONS, which is
 worth stating here because for weeks it was read as though it did.
 
-The devices are attached with "-device usb-mouse -device usb-kbd
--device usb-tablet" and no bus= argument, so they sit on the
-controller's own port rather than behind the usb-lan9514.  With no
-transaction translator between them and the host, Spltena is never set
-for them and usbdwc.c's split path is never entered.  And the model
-could not run it anyway: hw/usb/hcd-dwc2.c mentions HCSPLT exactly once,
-in the array of register names used for tracing, and hcd-dwc2.h once
-more as the accessor macro -- nothing in it reads Spltena or Compsplt.
+THIS PARAGRAPH SAID "THEY SIT ON THE CONTROLLER'S OWN PORT" AND THAT WAS
+WRONG.  The conclusion survives; the reason does not, and a right answer
+resting on a wrong reason is what this file keeps paying for.
+
+They are behind a hub, and it is a FULL-SPEED one.  Five devices are
+attached with no bus= argument and the dwc2 model has ONE port, so
+usb_claim_port() (hw/usb/bus.c:412) creates a usb-hub and chains it on,
+with default properties -- a USB 1.1 hub.  `info usb' on that
+configuration says so outright:
+
+	Device 0.0, Port 1,   Speed 12 Mb/s, Product QEMU USB Hub
+	Device 0.0, Port 1.1, Speed 12 Mb/s, Product QEMU USB MSD
+	Device 0.0, Port 1.2, Speed 12 Mb/s, SMSC LAN9514 Ethernet
+	Device 0.0, Port 1.3, Speed 12 Mb/s, Product QEMU USB Mouse
+	Device 0.0, Port 1.4, Speed 12 Mb/s, Product QEMU USB Keyboard
+	Device 0.0, Port 1.5, Speed 12 Mb/s, Product QEMU USB Tablet
+
+Twelve megabits is full speed, all the way down.  A split transaction is
+what a host does for a full- or low-speed device behind a HIGH-SPEED
+hub, so Spltena is still never set -- but because the hub is slow, not
+because the hub is absent.
+
+And it means the LAN9514 model has never run at high speed either,
+though it is high-speed capable (.bcdUSB 0x0200 and a .high descriptor):
+behind a full-speed hub usb_pick_speed() can only give it full speed.
+Every ethernet number this suite has produced for the Pi boards is a
+full-speed number.
+
+The model could not run the split path anyway: hw/usb/hcd-dwc2.c
+mentions HCSPLT exactly once, in the array of register names used for
+tracing, and hcd-dwc2.h once more as the accessor macro -- nothing in it
+reads Spltena or Compsplt.
 
 So raspi3b-usb was 52 markers green while no full- or low-speed device
 could enumerate behind the hub on the real board, and it would be green
