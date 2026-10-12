@@ -1458,7 +1458,121 @@ triple, which EHCI copies. USB core's
 .CW usb_ep_combine_input_packets()
 and friends are pipelining aids, not schedulers.
 .NH 1
-Phase 3.  Fix it
+PHASE 3: the first piece has landed, and the rest still waits on one hand
+.LP
+.B "Landed:"
+one packet per periodic split, with
+.CW USB-SPLITPKT-OK
+as a marker that can fail.
+.PP
+A translator buffers one transaction per periodic endpoint per
+microframe, and dwc2 programs
+.CW "num_packets = 1"
+for every split. ep5.1 is
+.CW maxpkt
+5 and usbd reads into an 8\-byte buffer, so
+.CW HOWMANY(8,5)
+is 2: this driver had been asking for two packets out of one split on
+every mouse poll since the path was written.
+.B "Periodic only,"
+because control splits are asynchronous and have a measured working
+baseline on this board \(em 45 completions, 401 bytes, zero moving
+nothing \(em and changing them would trade a known\-good path for
+conformance with nothing observable to gain, which is how the previous
+eight attempts were chosen.
+.PP
+.B "This is the first change on this path with a gate that was shown to
+.B "fail."
+It was also the first with a gate that was shown
+.I not
+to:
+.NH 2
+The gate was wrong first, and the mutation test is what found it
+.LP
+An evidence line
+.CW "INTR split: asked 4 got 4"
+was tried. The suite asserts that a pattern is
+.B PRESENT ,
+and
+.CW "got 4"
+is present even with the clamp removed, because a device that happens to
+return one packet's worth still moves exactly
+.CW maxpkt .
+With the clamp out, one run printed
+.CW "got 8"
+and
+.CW "got 4"
+in the same boot and stayed
+.B GREEN ;
+a second printed only
+.CW "got 8"
+and went red.
+.PP
+.B "A presence check cannot assert an absence, and a gate that fires on
+.B "one run in two is not a gate."
+So the driver says which programming it used, once per boot \(em
+.CW USB-SPLITPKT-OK
+or
+.CW -FAIL ,
+two different markers, so the diff catches the flip. Re\-run with the
+clamp removed it now fails three ways: the marker diff, the known\-FAIL
+set, and the evidence line. Baseline 50 markers.
+.PP
+And two counters for the board, where no marker diff exists:
+.CW pkt1
+and
+.CW pktn ,
+read by
+.CW splittrace .
+.B "They count PROGRAMMINGS, one per transfer and not one per attempt,"
+so 37 and 9 against 4659 periodic start\-splits armed is not an
+inconsistency \(em one blocking
+.CW read()
+of the mouse is a single programming that has looped thousands of times.
+.PP
+On silicon, build 1791803556:
+.CW "USB-SPLITPKT-OK periodic split programmed 1 packet of 5" .
+.NH 2
+What is left of Phase 3, and why it is not started
+.LP
+dwc2's full shape is the restructure Phase 0 described: keep
+.CW chan->xfer_count
+and
+.CW chan->xfer_buf
+and advance them per packet, re\-programming the channel each time,
+instead of programming
+.CW hctsiz
+once and measuring
+.CW "n = hc->hcdma - hcdma" .
+The one\-packet clamp above is the part of it that could be judged
+without the device cooperating; the rest cannot.
+.PP
+.B "And three measurements now argue it may not be needed at all:"
+.IP \(bu
+the control half of the split path demonstrably works \(em 45
+completions, 401 bytes,
+.CW "MOVING NOTHING 0" ;
+.IP \(bu
+every start\-split promotes:
+.CW "taken as terminal 0"
+over thousands of polls, so the handshake is not the problem;
+.IP \(bu
+and the periodic failure is the
+.I device
+answering NAK, which is the correct answer from an endpoint with nothing
+to report.
+.PP
+So the evidence that would justify the restructure is narrow and
+specific: a moved mouse delivering data at the controller with the bytes
+short or lost, or delivering nothing at all while
+.CW GET_REPORT
+over its control pipe succeeds. One command now produces that evidence
+\(em
+.CW "sh tools/jtag/mousecapture" \(em
+and until it is run, building the restructure would be the ninth change
+on this path chosen by reading rather than by measurement.
+.NH 1
+Phase 3 as originally written \(em kept for the record
 .LP
 With Phase 0's table and Phase 1's trace, and ideally Phase 2's model:
 change the driver until the trace matches the table.
