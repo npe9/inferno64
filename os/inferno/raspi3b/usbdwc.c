@@ -1108,15 +1108,55 @@ splitcontinue(Ctlr *ctlr, Hostchan *hc, int v, int n)
 		 * hfnum values (969.4 and 969.4, 1004.4 and 1004.4,
 		 * 1043.1 and 1043.1).
 		 *
-		 * WHY IT IS NOT FIXED HERE.  splitcontinue runs in the
-		 * interrupt handler and cannot sleep, so deferring to the
-		 * next microframe needs the SOF interrupt to re-arm the
-		 * channel -- a real change to this path, and Phase 3's
-		 * shape, not a line.  And the measurement says it would buy
-		 * 32 polls in 2180: 98.5% of this endpoint's
-		 * complete-splits are answered Nak on the FIRST one, with
-		 * no NYET anywhere near them.  Fixing the 1.5% first is how
-		 * the previous eight attempts were chosen.
+		 * IT WAS ATTEMPTED FOUR WAYS AND ALL FOUR WERE REVERTED,
+		 * which is written out because the mechanism is not
+		 * obvious and the next reader will otherwise try them
+		 * again in the same order.
+		 *
+		 * splitcontinue runs in the interrupt handler and cannot
+		 * sleep, so the deferral has to come from the SOF
+		 * interrupt: put the channel in a mask, unmask Sofintr,
+		 * and let the Sofintr arm of dwcinterrupt() re-enable it.
+		 * That was built, with hfnum sampled at the NYET and again
+		 * at the re-arm so the claim could be checked rather than
+		 * assumed.  Eight samples each time:
+		 *
+		 *   unmask Sofintr                     6 of 8 SAME uframe
+		 *   unmask and clear gintsts first     8 of 8 SAME uframe
+		 *   hand the mask over at handler end  7 of 8 SAME uframe
+		 *   hand over AND clear at the hand-over  8 of 8 SAME
+		 *
+		 * The reason is structural. dwcinterrupt() reads gintsts
+		 * ONCE into a local and then services Hcintr and Sofintr
+		 * from that one value, so a deferral raised in the Hcintr
+		 * arm is serviced by the Sofintr arm of the same call, in
+		 * the microframe it was deferred from. Handing the mask
+		 * over at the end of the handler does not help either: the
+		 * BCM interrupt controller has no EOI and gintsts.Sofintr
+		 * is still latched from the SOF that began the current
+		 * microframe, so unmasking re-enters immediately. Clearing
+		 * that latch does not help, because the next SOF is only
+		 * 125 microseconds away and the whole NYET-to-re-arm path
+		 * is shorter than that.
+		 *
+		 * The two samples that DID move were both in microframe 6,
+		 * where the existing (hfnum&7) != 6 guard makes the
+		 * handler wait -- which is what identified the mechanism.
+		 *
+		 * AND THE LAST ATTEMPT MADE IT MEASURABLY WORSE: the NYET
+		 * rate went from 173 in 4000 polls to 680 in 1004, a
+		 * sixteenfold rise, with DATA still 0. So it is not a
+		 * neutral change that happens not to help.
+		 *
+		 * WHY NOT PUSH HARDER.  Because of the denominator. 96% of
+		 * this endpoint's complete-splits are answered Nak on the
+		 * FIRST one with no NYET anywhere near them, so a correct
+		 * deferral would alter 4% of the traffic and is NOT the
+		 * reason the mouse does not move. Doing it properly means
+		 * a microframe schedule the channel is re-queued against
+		 * -- dwc2's next_active_frame and num_hs_transfers -- which
+		 * is Phase 3's restructure and belongs there, with the
+		 * per-packet programming, not in front of it.
 		 */
 		tag = Evretry;
 	}

@@ -479,6 +479,137 @@ printed as the denominator. Both branches of that verdict are in
 because those are the only lines in the tool that draw a conclusion
 rather than print a field.
 .NH 2
+The periodic NYET deferral: four attempts, four reverts, and why
+.LP
+Phase 1 found a real protocol error and it was fixed four ways, none of
+which held. The attempts are written out because the reason is
+structural and the next reader will otherwise repeat them in the same
+order.
+.PP
+.B "The error."
+On a NYET,
+.CW splitcontinue
+re-enables the channel at once, for every transfer type. Linux's dwc2
+is explicit that this is right only for control and bulk \(em the
+comment at the head of
+.CW dwc2_hc_nyet_intr
+reads
+.I "NYET on CSPLIT / re-do the CSPLIT immediately on non-periodic"
+\(em and routes interrupt and isochronous endpoints to
+.CW dwc2_halt_channel
+with
+.CW DWC2_HC_XFER_NYET ,
+which re-queues the channel at the endpoint's
+.I next
+scheduled microframe, or calls it a transaction error if the scheduled
+window has already passed. One complete\-split per microframe, under a
+schedule, with an end.
+.PP
+The trace confirms the error rather than suggesting it: a periodic NYET
+and its retry carry identical
+.CW hfnum
+values.
+.PP
+.B "The four attempts."
+.CW splitcontinue
+runs in the interrupt handler and cannot sleep, so the deferral has to
+come from the SOF interrupt: put the channel in a mask, unmask
+.CW Sofintr ,
+and let the
+.CW Sofintr
+arm of
+.CW dwcinterrupt()
+re-enable it.
+.B "Each attempt was judged by sampling"
+.CW hfnum
+.B "at the NYET and again at the re-arm,"
+eight pairs at a time, so the claim could be checked instead of
+believed:
+.P1
+unmask Sofintr                        6 of 8 SAME uframe
+unmask, clearing gintsts first        8 of 8 SAME uframe
+hand the mask over at handler end     7 of 8 SAME uframe
+hand over AND clear at the hand-over  8 of 8 SAME uframe
+.P2
+.B "The reason."
+.CW dwcinterrupt()
+reads
+.CW gintsts
+once into a local and then services
+.CW Hcintr
+and
+.CW Sofintr
+from that one value, so a deferral raised in the
+.CW Hcintr
+arm is serviced by the
+.CW Sofintr
+arm of the same call \(em in the microframe it was deferred from.
+Handing the mask over at the end of the handler does not help, because
+the BCM interrupt controller has no EOI and
+.CW gintsts.Sofintr
+is still latched from the SOF that began the current microframe, so
+unmasking re-enters at once. Clearing that latch does not help either:
+the next SOF is 125 microseconds away and the whole NYET-to-re-arm path
+is shorter than that. The two samples that
+.I did
+move were both in microframe 6, where the existing
+.CW "(hfnum&7) != 6"
+guard makes the handler wait \(em which is what identified the
+mechanism.
+.PP
+.B "And the last attempt made it measurably worse."
+The NYET rate went from 173 in 4000 polls to 680 in 1004 \(em
+sixteenfold \(em with
+.CW DATA
+still 0. Reverting restored 80 in 4000, so that is a real regression and
+not a change that merely failed to help.
+.PP
+.B "Why it is not pursued further, and this is the part that is a
+.B "decision rather than a measurement."
+96% of this endpoint's complete\-splits are answered Nak on the
+.I first
+one with no NYET anywhere near them. A correct deferral would alter 4%
+of the traffic and is not the reason the mouse does not move. Doing it
+properly needs a microframe schedule the channel is re-queued against
+\(em dwc2's
+.CW next_active_frame
+and
+.CW num_hs_transfers
+\(em which is Phase 3's restructure and belongs
+.I in
+it rather than in front of it. The finding is recorded in
+.CW splitcontinue()
+beside the code it describes.
+.PP
+.B "What was kept:"
+nothing in the driver's behaviour, and two things otherwise \(em this
+section, and the note in
+.CW splitcontinue() .
+.B "What the instrument cost in defects of its own:"
+two. A
+.CW words()
+helper was called without being defined, so two register dumps came
+back empty and a loop over
+.CW min(n,\ len(d),\ len(r))
+ran zero times and printed
+.I "all 8 moved to a later microframe"
+from no samples at all \(em the only hint being a
+.CW "command not found"
+two lines above the verdict. And the comparison was
+.CW d[i]\ ==\ r[i]
+on the raw register, where
+.CW hfnum
+carries
+.CW FRREM
+\(em the time left in the microframe \(em in its top half, so two reads
+in the same microframe differ almost always: it printed
+.CW ok
+beside eight pairs of which six showed
+.I identical
+frame.uframe one column to the left. Both are fixed in the reader; a
+verdict is now refused outright when the samples read back are fewer
+than the count claimed.
+.NH 2
 The two branches, and what each one makes the next piece of work
 .IP \(bu
 .B "Non\-NAK events appear with motion."
