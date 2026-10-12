@@ -1106,6 +1106,117 @@ device is high\-speed
 1 ms otherwise, and that HFIR writes are accepted and ignored
 .CW "(:893)"
 \(em the interval is not guest\-programmable.
+.NH 2
+Phase 2's first half is DONE, and a mutation test says it is not enough
+.LP
+.B "Committed:"
+.CW tools/qemu-patches/0028 ,
+a USB 2.0 hub for
+.CW usb-hub
+behind
+.CW usbver=2 ,
+and
+.CW raspi3b-split
+in
+.CW tools/boardsuite \(em
+.B "the first configuration in this tree that runs the dwc2 split path
+.B "at all."
+.PP
+The board's real topology, in qemu, for the first time: a high\-speed hub
+with a high\-speed ethernet child and full\-speed HID children behind its
+translator. The guest says so itself:
+.P1
+usbd: ep1.0: port 1: high ep2.0 vid 0409 did 55aa class 9
+usbd: ep2.0: port 1 status 0x10501 (high-speed (no split))
+usbd: ep2.0: port 2 status 0x10101 (full-speed (needs split))
+usbd: ep2.0: port 2: full ep4.0 vid 0627 did 0001 class 0
+usbd: ep4.0: boot mouse on ep4.1
+.P2
+Baseline 49 markers, mouse, keyboard and tablet all \-OK, and the one
+known \-FAIL the other Pi arms already carry. It is also the first time
+the LAN9514 model has run at high speed \(em behind the auto\-created
+full\-speed hub it never could, so
+.B "every ethernet number this suite has produced for the Pi boards is a
+.B "full-speed number."
+.NH 3
+Two things in the command line were wrong first, and both looked fine
+.IP \(bu
+.B "The hub has to come FIRST."
+qemu's dwc2 has one port, so
+.CW usb_claim_port()
+creates a hub of its own as soon as a non\-hub device finds the last port
+free \(em with
+.I default
+properties, which is full speed. Written after the other devices,
+.CW usbver=2
+ended up on an
+.B empty
+hub hanging off port 4 while the auto\-created full\-speed hub took the
+root port and everything landed behind it. The boot looked entirely
+normal and the guest reported "full\-speed (needs split)" about the
+children of a full\-speed hub.
+.B "An option accepted and doing nothing."
+.IP \(bu
+.B "The tablet has to be there."
+Left out, and it cost a marker: the pointer check reports
+.CW USB-TABLET
+and
+.CW USB-MOUSE
+out of one window and the harness sends tablet positions whatever is
+attached, so the mouse's own events arrived instead and the check said
+.CW USB-TABLET-FAIL
+\(em a \-FAIL and not a \-NONE, because events
+.I did
+arrive. A configuration carrying a permanent known \-FAIL teaches people
+to ignore a red line.
+.NH 3
+AND THE MUTATION TEST FAILS, which is the result worth having
+.LP
+The per\-transfer accumulator clear was removed from
+.CW chanio() \(em
+the defect that kept every full\- and low\-speed device off the real
+board's hub until 11 October, and the one this plan's acceptance row 1
+names \(em and both configurations were run against the mutant:
+.P1
+raspi3b-split: ok 49 markers and 1 known -FAIL
+raspi3b-usb:   ok 52 markers and 1 known -FAIL
+.P2
+.B "Neither noticed."
+So the hub makes the split path
+.I run ;
+it does not make it
+.I observable .
+.PP
+That is exactly the outcome this phase's acceptance list was written to
+force \(em "if it cannot reproduce them, the model is wrong and says
+nothing, and that is a result worth having early rather than after a fix
+built on it" \(em and it arrived before any fix was built on it. The
+remaining work is the translator in
+.CW hcd-dwc2.c ,
+which never reads
+.CW HCSPLT
+and never raises
+.CW ACK
+or
+.CW NYET ,
+so every split currently succeeds by accident: the model simply performs
+the transfer the start\-split asked for and reports it done.
+.PP
+.B "One difference from silicon, already visible and worth keeping:"
+on the board a periodic start\-split is answered
+.CW Ack
+and the complete\-split is answered
+.CW Nak ;
+under this configuration the
+.I start\-split
+is answered
+.CW Nak
+\(em because the model never raises
+.CW ACK ,
+so
+.CW splitcontinue()
+never promotes. The failure is in the same place and has a different
+shape, which is precisely the discrepancy a translator has to close.
 .NH 3
 The change list
 .IP 1.
